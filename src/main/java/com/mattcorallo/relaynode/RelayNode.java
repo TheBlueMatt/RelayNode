@@ -17,6 +17,78 @@ import java.net.InetSocketAddress;
 import java.util.*;
 
 /**
+ * Keeps a peer and a set of invs which it has told us about (ie that it has data for)
+ */
+class PeerAndInvs {
+    Peer p;
+    Set<InventoryItem> invs = new LinkedHashSet<InventoryItem>() {
+        @Override
+        public boolean add(InventoryItem e) {
+            boolean res = super.add(e);
+            if (size() > 5000)
+                super.remove(super.iterator().next());
+            return res;
+        }
+    };
+
+    public PeerAndInvs(Peer p) {
+        this.p = p;
+        p.addEventListener(new AbstractPeerEventListener() {
+            @Override
+            public Message onPreMessageReceived(Peer p, Message m) {
+                if (m instanceof InventoryMessage) {
+                    for (InventoryItem item : ((InventoryMessage) m).getItems())
+                        invs.add(item);
+                }
+                return m;
+            }
+        }, Threading.SAME_THREAD);
+    }
+
+    public void maybeRelay(Message m) {
+        Preconditions.checkArgument(m instanceof Block || m instanceof Transaction);
+
+        InventoryItem item;
+        if (m instanceof Block)
+            item = new InventoryItem(InventoryItem.Type.Block, m.getHash());
+        else
+            item = new InventoryItem(InventoryItem.Type.Transaction, m.getHash());
+
+        if (!invs.contains(item)) {
+            try {
+                p.sendMessage(m);
+                invs.add(item);
+            } catch (IOException e) { /* Oops, lost them */ }
+        }
+    }
+}
+
+/**
+ * Keeps track of a set of PeerAndInvs
+ */
+class Peers {
+    public Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
+
+    public boolean add(Peer p) {
+        final PeerAndInvs peerAndInvs = new PeerAndInvs(p);
+        peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
+            @Override
+            public void onPeerDisconnected(Peer peer, int peerCount) {
+                peers.remove(peerAndInvs);
+            }
+        });
+        return peers.add(peerAndInvs);
+    }
+
+    public int size() { return peers.size(); }
+
+    public void relayObject(Message m) {
+        for (PeerAndInvs p : peers)
+            p.maybeRelay(m);
+    }
+}
+
+/**
  * Keeps track of the set of known blocks and transactions for relay
  */
 abstract class Pool<Type extends Message> {
@@ -33,6 +105,9 @@ abstract class Pool<Type extends Message> {
         }
     };
 
+    Peers trustedOutboundPeers;
+    public Pool(Peers trustedOutboundPeers) { this.trustedOutboundPeers = trustedOutboundPeers; }
+
     public synchronized boolean shouldRequestInv(Sha256Hash hash) {
         return !objectsRelayed.contains(hash) && !objects.containsKey(hash);
     }
@@ -40,17 +115,14 @@ abstract class Pool<Type extends Message> {
     public synchronized void provideObject(Type m) {
         if (!objectsRelayed.contains(m.getHash()))
             objects.put(m.getHash(), m);
+        trustedOutboundPeers.relayObject(m);
     }
 
-    public synchronized void invGood(Set<Peer> clients, Sha256Hash hash) {
+    public synchronized void invGood(Peers clients, Sha256Hash hash) {
         Type o = objects.get(hash);
         Preconditions.checkState(o != null);
         if (!objectsRelayed.contains(hash)) {
-            for (Peer p : clients) {
-                try {
-                    p.sendMessage(o);
-                } catch (IOException e) { /* Oops, lost them */ }
-            }
+            clients.relayObject(o);
             objectsRelayed.add(hash);
         }
         objects.remove(hash);
@@ -58,6 +130,10 @@ abstract class Pool<Type extends Message> {
 }
 
 class BlockPool extends Pool<Block> {
+    public BlockPool(Peers trustedOutboundPeers) {
+        super(trustedOutboundPeers);
+    }
+
     @Override
     int relayedCacheSize() {
         return 100;
@@ -65,6 +141,10 @@ class BlockPool extends Pool<Block> {
 }
 
 class TransactionPool extends Pool<Transaction> {
+    public TransactionPool(Peers trustedOutboundPeers) {
+        super(trustedOutboundPeers);
+    }
+
     @Override
     int relayedCacheSize() {
         return 10000;
@@ -89,43 +169,42 @@ public class RelayNode {
         new RelayNode().run(8334, 8335);
     }
 
-    final NetworkParameters params = MainNetParams.get();
-    final VersionMessage versionMessage = new VersionMessage(params, 0);
+    NetworkParameters params = MainNetParams.get();
+    VersionMessage versionMessage = new VersionMessage(params, 0);
 
-    final TransactionPool txPool = new TransactionPool();
-    final BlockPool blockPool = new BlockPool();
+    Peers trustedOutboundPeers = new Peers();
+
+    TransactionPool txPool = new TransactionPool(trustedOutboundPeers);
+    BlockPool blockPool = new BlockPool(trustedOutboundPeers);
 
 
     /******************************************
      ***** Stuff to keep track of clients *****
      ******************************************/
-    final Set<Peer> txnClients = Collections.synchronizedSet(new HashSet<Peer>());
-    final Set<Peer> blocksClients = Collections.synchronizedSet(new HashSet<Peer>());
+    final Peers txnClients = new Peers();
+    final Peers blocksClients = new Peers();
     PeerEventListener clientPeerListener = new AbstractPeerEventListener() {
         @Override
         public Message onPreMessageReceived(Peer p, Message m) {
             if (m instanceof InventoryMessage) {
                 GetDataMessage getDataMessage = new GetDataMessage(params);
                 for (InventoryItem item : ((InventoryMessage)m).getItems()) {
-                    if (item.type == InventoryItem.Type.Block)
+                    if (item.type == InventoryItem.Type.Block) {
                         if (blockPool.shouldRequestInv(item.hash))
                             getDataMessage.addBlock(item.hash);
-                        else if (item.type == InventoryItem.Type.Transaction)
-                            if (txPool.shouldRequestInv(item.hash))
-                                getDataMessage.addTransaction(item.hash);
+                    } else if (item.type == InventoryItem.Type.Transaction) {
+                        if (txPool.shouldRequestInv(item.hash))
+                            getDataMessage.addTransaction(item.hash);
+                    }
                 }
                 if (!getDataMessage.getItems().isEmpty())
                     try {
                         p.sendMessage(getDataMessage);
                     } catch (IOException e) { /* Oops, lost them */ }
-                return null;
-            } else if (m instanceof Transaction) {
+            } else if (m instanceof Transaction)
                 txPool.provideObject((Transaction) m);
-                return null;
-            } else if (m instanceof Block) {
+            else if (m instanceof Block)
                 blockPool.provideObject((Block) m);
-                return null;
-            }
             return m;
         }
     };
@@ -158,22 +237,19 @@ public class RelayNode {
                     try {
                         p.sendMessage(getDataMessage);
                     } catch (IOException e) { /* Oops, lost them, we'll pick them back up in onPeerDisconnected */ }
-                return null;
             } else if (m instanceof Transaction) {
                 txPool.provideObject((Transaction) m);
                 txPool.invGood(txnClients, m.getHash());
-                return null;
             } else if (m instanceof Block) {
                 blockPool.provideObject((Block) m);
                 blockPool.invGood(blocksClients, m.getHash());
-                return null;
             }
             return m;
         }
 
         @Override
         public void onPeerDisconnected(Peer peer, int peerCount) {
-            //TODO
+            ConnectToTrustedPeer(peer.getAddress().toSocketAddress());
         }
     };
 
@@ -182,7 +258,7 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() {
-        versionMessage.appendToSubVer("RelayNode", "bicurious bison", null);
+        versionMessage.appendToSubVer("RelayNode", "contemplative caribou", null);
         trustedPeerManager.startAndWait();
     }
 
@@ -249,7 +325,7 @@ public class RelayNode {
                     if (addr.isUnresolved())
                         LogLine("Unable to resolve host");
                     else
-                        AddTrustedPeer(addr);
+                        ConnectToTrustedPeer(addr);
                 } catch (NumberFormatException e) {
                     LogLine("Invalid argument");
                 }
@@ -257,13 +333,20 @@ public class RelayNode {
         }
     }
 
-    public void AddTrustedPeer(InetSocketAddress address) {
-        TrustedPeerConnections connections = new TrustedPeerConnections();
+    public void ConnectToTrustedPeer(InetSocketAddress address) {
+        TrustedPeerConnections connections = trustedPeerConnectionsMap.get(address);
+        if (connections != null) {
+            connections.inbound.close();
+            connections.outbound.close();
+        }
+        connections = new TrustedPeerConnections();
+
         connections.inbound = new Peer(params, versionMessage, null, address);
         connections.inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
         trustedPeerManager.openConnection(address, connections.inbound);
 
         connections.outbound = new Peer(params, versionMessage, null, address);
+        trustedOutboundPeers.add(connections.outbound);
         trustedPeerManager.openConnection(address, connections.outbound);
 
         trustedPeerConnectionsMap.put(address, connections);
