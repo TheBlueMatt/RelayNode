@@ -86,7 +86,7 @@ class TrustedPeerConnections {
  */
 public class RelayNode {
     public static void main(String[] args) {
-        new RelayNode().run(8444);
+        new RelayNode().run(8334, 8335);
     }
 
     final NetworkParameters params = MainNetParams.get();
@@ -99,7 +99,8 @@ public class RelayNode {
     /******************************************
      ***** Stuff to keep track of clients *****
      ******************************************/
-    final Set<Peer> clients = Collections.synchronizedSet(new HashSet<Peer>());
+    final Set<Peer> txnClients = Collections.synchronizedSet(new HashSet<Peer>());
+    final Set<Peer> blocksClients = Collections.synchronizedSet(new HashSet<Peer>());
     PeerEventListener clientPeerListener = new AbstractPeerEventListener() {
         @Override
         public Message onPreMessageReceived(Peer p, Message m) {
@@ -145,12 +146,12 @@ public class RelayNode {
                         if (blockPool.shouldRequestInv(item.hash))
                             getDataMessage.addBlock(item.hash);
                         else
-                            blockPool.invGood(clients, item.hash);
+                            blockPool.invGood(blocksClients, item.hash);
                     } else if (item.type == InventoryItem.Type.Transaction) {
                         if (txPool.shouldRequestInv(item.hash))
                             getDataMessage.addTransaction(item.hash);
                         else
-                            txPool.invGood(clients, item.hash);
+                            txPool.invGood(txnClients, item.hash);
                     }
                 }
                 if (!getDataMessage.getItems().isEmpty())
@@ -160,11 +161,11 @@ public class RelayNode {
                 return null;
             } else if (m instanceof Transaction) {
                 txPool.provideObject((Transaction) m);
-                txPool.invGood(clients, m.getHash());
+                txPool.invGood(txnClients, m.getHash());
                 return null;
             } else if (m instanceof Block) {
                 blockPool.provideObject((Block) m);
-                blockPool.invGood(clients, m.getHash());
+                blockPool.invGood(blocksClients, m.getHash());
                 return null;
             }
             return m;
@@ -181,26 +182,40 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() {
-        versionMessage.appendToSubVer("RelayNode", "adventurous aardvark", null);
+        versionMessage.appendToSubVer("RelayNode", "bicurious bison", null);
         trustedPeerManager.startAndWait();
     }
 
-    public void run(int listenPort) {
+    public void run(int onlyBlocksListenPort, int bothListenPort) {
         // Listen for incoming client connections
         try {
-            NioServer server = new NioServer(new StreamParserFactory() {
+            NioServer onlyBlocksServer = new NioServer(new StreamParserFactory() {
                 @Nullable
                 @Override
                 public StreamParser getNewParser(InetAddress inetAddress, int port) {
                     Peer p = new Peer(params, versionMessage, null, new InetSocketAddress(inetAddress, port));
                     p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
-                    clients.add(p);
+                    blocksClients.add(p);
                     return p;
                 }
-            }, new InetSocketAddress(listenPort));
-            server.startAndWait();
+            }, new InetSocketAddress(onlyBlocksListenPort));
+
+            NioServer bothServer = new NioServer(new StreamParserFactory() {
+                @Nullable
+                @Override
+                public StreamParser getNewParser(InetAddress inetAddress, int port) {
+                    Peer p = new Peer(params, versionMessage, null, new InetSocketAddress(inetAddress, port));
+                    p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
+                    blocksClients.add(p);
+                    txnClients.add(p);
+                    return p;
+                }
+            }, new InetSocketAddress(bothListenPort));
+
+            onlyBlocksServer.startAndWait();
+            bothServer.startAndWait();
         } catch (IOException e) {
-            System.err.println("Failed to bind to port " + listenPort);
+            System.err.println("Failed to bind to port");
             System.exit(1);
         }
 
@@ -267,7 +282,7 @@ public class RelayNode {
     public void printStats() {
         while (true) {
             synchronized (printLock) {
-                System.out.print("\0332J"); // Clear screen, move to top-left
+                System.out.print("\033[2J"); // Clear screen, move to top-left
 
                 if (trustedPeerConnectionsMap.isEmpty()) {
                     System.out.println("Relaying will not start until you add some trusted nodes");
@@ -285,7 +300,8 @@ public class RelayNode {
                 }
 
                 System.out.println();
-                System.out.println("Connected clients: " + clients.size());
+                System.out.println("Connected block+transaction clients: " + txnClients.size());
+                System.out.println("Connected block-only clients: " + (blocksClients.size() - txnClients.size()));
 
                 System.out.println();
                 System.out.println("Commands:");
@@ -294,7 +310,7 @@ public class RelayNode {
             }
 
             try {
-                Thread.sleep(5000);
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 System.err.println("Stats printing thread interrupted");
                 System.exit(1);
