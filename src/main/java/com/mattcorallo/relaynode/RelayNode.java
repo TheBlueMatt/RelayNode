@@ -49,7 +49,7 @@ abstract class Pool<Type extends Message> {
             for (Peer p : clients) {
                 try {
                     p.sendMessage(o);
-                } catch (IOException e) { } // Oops, lost them
+                } catch (IOException e) { /* Oops, lost them */ }
             }
             objectsRelayed.add(hash);
         }
@@ -117,7 +117,7 @@ public class RelayNode {
                 if (!getDataMessage.getItems().isEmpty())
                     try {
                         p.sendMessage(getDataMessage);
-                    } catch (IOException e) { } // Oops, lost them
+                    } catch (IOException e) { /* Oops, lost them */ }
                 return null;
             } else if (m instanceof Transaction) {
                 txPool.provideObject((Transaction) m);
@@ -157,7 +157,7 @@ public class RelayNode {
                 if (!getDataMessage.getItems().isEmpty())
                     try {
                         p.sendMessage(getDataMessage);
-                    } catch (IOException e) { } // Oops, lost them, we'll pick them back up in onPeerDisconnected
+                    } catch (IOException e) { /* Oops, lost them, we'll pick them back up in onPeerDisconnected */ }
                 return null;
             } else if (m instanceof Transaction) {
                 txPool.provideObject((Transaction) m);
@@ -270,7 +270,7 @@ public class RelayNode {
     }
 
     public static final int LOG_LINES = 10;
-    Queue<String> logLines = EvictingQueue.create(LOG_LINES);
+    final Queue<String> logLines = EvictingQueue.create(LOG_LINES);
     public void LogLine(String line) {
         synchronized (logLines) {
             logLines.add(line);
@@ -278,7 +278,7 @@ public class RelayNode {
     }
 
     // Wouldn't want to print from multiple threads, would we?
-    Object printLock = new Object();
+    final Object printLock = new Object();
     public void printStats() {
         while (true) {
             synchronized (printLock) {
