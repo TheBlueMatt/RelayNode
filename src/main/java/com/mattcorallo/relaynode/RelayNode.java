@@ -162,9 +162,9 @@ class TrustedPeerConnections {
     public Peer inbound;
     /** We only send messages here (send unvalidated data) */
     public Peer outbound;
-}/**
+}
 
-
+/**
  * A RelayNode which is designed to relay blocks/txn from a set of untrusted peers, through a trusted bitcoind, to the
  * rest of the untrusted peers. It does no verification and trusts everything that comes from the trusted bitcoind is
  * good to relay.
@@ -214,8 +214,10 @@ public class RelayNode {
             } else if (m instanceof Block) {
                 blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
                 try {
-                    if (blockChain.add((Block) m))
+                    if (blockChain.add((Block) m)) {
+                        LogBlockRelay(m.getHash(), "SPV check, from " + p.getAddress());
                         blockPool.invGood(blocksClients, m.getHash());
+                    }
                 } catch (Exception e) { /* Invalid block, don't relay it */ }
             } else if (m instanceof Transaction)
                 txPool.provideObject((Transaction) m);
@@ -238,8 +240,10 @@ public class RelayNode {
                     if (item.type == InventoryItem.Type.Block) {
                         if (blockPool.shouldRequestInv(item.hash))
                             getDataMessage.addBlock(item.hash);
-                        else
+                        else {
+                            LogBlockRelay(item.hash, "inv from node " + p.getAddress());
                             blockPool.invGood(blocksClients, item.hash);
+                        }
                     } else if (item.type == InventoryItem.Type.Transaction) {
                         if (txPool.shouldRequestInv(item.hash))
                             getDataMessage.addTransaction(item.hash);
@@ -256,6 +260,7 @@ public class RelayNode {
                 txPool.invGood(txnClients, m.getHash());
             } else if (m instanceof Block) {
                 blockPool.provideObject((Block) m);
+                LogBlockRelay(m.getHash(), "block from node " + p.getAddress());
                 blockPool.invGood(blocksClients, m.getHash());
             }
             return m;
@@ -284,6 +289,7 @@ public class RelayNode {
         public Message onPreMessageReceived(Peer p, Message m) {
             Preconditions.checkState(m instanceof Block);
             blockPool.provideObject((Block) m);
+            LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
             blockPool.invGood(blocksClients, m.getHash());
             return m;
         }
@@ -451,6 +457,10 @@ public class RelayNode {
         synchronized (logLines) {
             logLines.add(line);
         }
+    }
+
+    public void LogBlockRelay(Sha256Hash blockHash, String reason) {
+        LogLine(blockHash.toString().substring(4, 32) + " relayed (" + reason + ")");
     }
 
     // Wouldn't want to print from multiple threads, would we?
