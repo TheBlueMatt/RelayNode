@@ -6,9 +6,11 @@ import com.google.bitcoin.networkabstraction.NioServer;
 import com.google.bitcoin.networkabstraction.StreamParser;
 import com.google.bitcoin.networkabstraction.StreamParserFactory;
 import com.google.bitcoin.params.MainNetParams;
+import com.google.bitcoin.store.BlockStore;
+import com.google.bitcoin.store.BlockStoreException;
+import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.EvictingQueue;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -119,9 +121,9 @@ abstract class Pool<Type extends Message> {
     }
 
     public synchronized void invGood(Peers clients, Sha256Hash hash) {
-        Type o = objects.get(hash);
-        Preconditions.checkState(o != null);
         if (!objectsRelayed.contains(hash)) {
+            Type o = objects.get(hash);
+            Preconditions.checkState(o != null);
             clients.relayObject(o);
             objectsRelayed.add(hash);
         }
@@ -165,7 +167,7 @@ class TrustedPeerConnections {
  * good to relay.
  */
 public class RelayNode {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws BlockStoreException {
         new RelayNode().run(8334, 8335);
     }
 
@@ -176,6 +178,11 @@ public class RelayNode {
 
     TransactionPool txPool = new TransactionPool(trustedOutboundPeers);
     BlockPool blockPool = new BlockPool(trustedOutboundPeers);
+
+    BlockStore blockStore = new MemoryBlockStore(params);
+    BlockChain blockChain;
+    PeerGroup trustedOutboundPeerGroup;
+    volatile boolean chainDownloadDone = false;
 
 
     /******************************************
@@ -201,10 +208,14 @@ public class RelayNode {
                     try {
                         p.sendMessage(getDataMessage);
                     } catch (IOException e) { /* Oops, lost them */ }
+            } else if (m instanceof Block) {
+                blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
+                try {
+                    if (blockChain.add((Block) m))
+                        blockPool.invGood(blocksClients, m.getHash());
+                } catch (Exception e) { /* Invalid block, don't relay it */ }
             } else if (m instanceof Transaction)
                 txPool.provideObject((Transaction) m);
-            else if (m instanceof Block)
-                blockPool.provideObject((Block) m);
             return m;
         }
     };
@@ -248,9 +259,15 @@ public class RelayNode {
         }
     };
 
+    // Runs on USER_THREAD (and is all that runs there, so we can sleep all we want)
     PeerEventListener trustedPeerDisconnectListener = new AbstractPeerEventListener() {
         @Override
         public void onPeerDisconnected(Peer peer, int peerCount) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
             ConnectToTrustedPeer(peer.getAddress().toSocketAddress());
         }
     };
@@ -259,9 +276,15 @@ public class RelayNode {
     /***************************
      ***** Stuff that runs *****
      ***************************/
-    public RelayNode() {
-        versionMessage.appendToSubVer("RelayNode", "devilish dingo", null);
+    public RelayNode() throws BlockStoreException {
+        String version = "effervescent echidna";
+        versionMessage.appendToSubVer("RelayNode", version, null);
         trustedPeerManager.startAndWait();
+        blockChain = new BlockChain(params, blockStore);
+        trustedOutboundPeerGroup = new PeerGroup(params, blockChain);
+        trustedOutboundPeerGroup.setUserAgent("RelayNode", version);
+        trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener, Threading.USER_THREAD);
+        trustedOutboundPeerGroup.startAndWait();
     }
 
     public void run(int onlyBlocksListenPort, int bothListenPort) {
@@ -349,13 +372,17 @@ public class RelayNode {
 
         connections.inbound = new Peer(params, versionMessage, null, address);
         connections.inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
-        connections.inbound.addEventListener(trustedPeerDisconnectListener);
+        connections.inbound.addEventListener(trustedPeerDisconnectListener, Threading.USER_THREAD);
         trustedPeerManager.openConnection(address, connections.inbound);
 
-        connections.outbound = new Peer(params, versionMessage, null, address);
-        connections.outbound.addEventListener(trustedPeerDisconnectListener);
+        connections.outbound = trustedOutboundPeerGroup.connectTo(address);
         trustedOutboundPeers.add(connections.outbound);
-        trustedPeerManager.openConnection(address, connections.outbound);
+        trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener() {
+            @Override
+            protected void doneDownload() {
+                chainDownloadDone = true;
+            }
+        });
 
         trustedPeerConnectionsMap.put(address, connections);
     }
@@ -401,6 +428,7 @@ public class RelayNode {
                 System.out.println(); linesPrinted++;
                 System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
                 System.out.println("Connected block-only clients: " + (blocksClients.size() - txnClients.size())); linesPrinted++;
+                System.out.println(chainDownloadDone ? "Chain download done (relaying blocks)" : "Chain download not done (not relaying blocks)"); linesPrinted++;
 
                 System.out.println(); linesPrinted++;
                 System.out.println("Commands:"); linesPrinted++;
