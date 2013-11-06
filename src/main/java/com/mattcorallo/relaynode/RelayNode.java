@@ -324,11 +324,15 @@ public class RelayNode {
                     InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
                     if (addr.isUnresolved())
                         LogLine("Unable to resolve host");
-                    else
+                    else {
                         ConnectToTrustedPeer(addr);
+                        LogLine("Added trusted peer " + addr);
+                    }
                 } catch (NumberFormatException e) {
                     LogLine("Invalid argument");
                 }
+            } else {
+                LogLine("Invalid command");
             }
         }
     }
@@ -352,8 +356,7 @@ public class RelayNode {
         trustedPeerConnectionsMap.put(address, connections);
     }
 
-    public static final int LOG_LINES = 10;
-    final Queue<String> logLines = EvictingQueue.create(LOG_LINES);
+    final Queue<String> logLines = new LinkedList<String>();
     public void LogLine(String line) {
         synchronized (logLines) {
             logLines.add(line);
@@ -363,14 +366,23 @@ public class RelayNode {
     // Wouldn't want to print from multiple threads, would we?
     final Object printLock = new Object();
     public void printStats() {
+        // Things may break if your column count is too small
+        boolean firstIteration = true;
         while (true) {
+            int linesPrinted = 1;
             synchronized (printLock) {
-                System.out.print("\033[2J"); // Clear screen, move to top-left
+                synchronized (logLines) {
+                    for (String _ : logLines)
+                        System.out.print("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
+                    for (String line : logLines)
+                        System.out.println(line);
+                    logLines.clear();
+                }
 
                 if (trustedPeerConnectionsMap.isEmpty()) {
-                    System.out.println("Relaying will not start until you add some trusted nodes");
+                    System.out.println("\nRelaying will not start until you add some trusted nodes"); linesPrinted += 2;
                 } else {
-                    System.out.println("Trusted nodes: ");
+                    System.out.println("\nTrusted nodes: "); linesPrinted += 2;
                     for (Map.Entry<InetSocketAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
                         boolean connected = true;
                         try {
@@ -378,18 +390,23 @@ public class RelayNode {
                         } catch (Exception e) {
                             connected = false;
                         }
-                        System.out.println("  " + entry.getKey() + (connected ? " connected" : " not connected"));
+                        System.out.println("  " + entry.getKey() + (connected ? " connected" : " not connected")); linesPrinted++;
                     }
                 }
 
-                System.out.println();
-                System.out.println("Connected block+transaction clients: " + txnClients.size());
-                System.out.println("Connected block-only clients: " + (blocksClients.size() - txnClients.size()));
+                System.out.println(); linesPrinted++;
+                System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
+                System.out.println("Connected block-only clients: " + (blocksClients.size() - txnClients.size())); linesPrinted++;
 
-                System.out.println();
-                System.out.println("Commands:");
-                System.out.println("q        \t\tquit");
-                System.out.println("t IP:port\t\tadd node IP:port as a trusted peer");
+                System.out.println(); linesPrinted++;
+                System.out.println("Commands:"); linesPrinted++;
+                System.out.println("q        \t\tquit"); linesPrinted++;
+                System.out.println("t IP:port\t\tadd node IP:port as a trusted peer"); linesPrinted++;
+                if (firstIteration)
+                    System.out.println();
+                else
+                    System.out.print("\033[u");
+                firstIteration = false;
             }
 
             try {
@@ -397,6 +414,13 @@ public class RelayNode {
             } catch (InterruptedException e) {
                 System.err.println("Stats printing thread interrupted");
                 System.exit(1);
+            }
+
+            synchronized (printLock) {
+                System.out.print("\033[s\033[1000D"); // Save cursor position + move to first char
+                for (int i = 0; i < linesPrinted; i++)
+                    System.out.print("\033[1A\033[K"); // Up+clear linesPrinted lines
+                System.out.print("");
             }
         }
     }
