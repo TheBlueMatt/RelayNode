@@ -246,7 +246,9 @@ public class RelayNode {
             }
             return m;
         }
+    };
 
+    PeerEventListener trustedPeerDisconnectListener = new AbstractPeerEventListener() {
         @Override
         public void onPeerDisconnected(Peer peer, int peerCount) {
             ConnectToTrustedPeer(peer.getAddress().toSocketAddress());
@@ -258,7 +260,7 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() {
-        versionMessage.appendToSubVer("RelayNode", "contemplative caribou", null);
+        versionMessage.appendToSubVer("RelayNode", "devilish dingo", null);
         trustedPeerManager.startAndWait();
     }
 
@@ -347,9 +349,11 @@ public class RelayNode {
 
         connections.inbound = new Peer(params, versionMessage, null, address);
         connections.inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
+        connections.inbound.addEventListener(trustedPeerDisconnectListener);
         trustedPeerManager.openConnection(address, connections.inbound);
 
         connections.outbound = new Peer(params, versionMessage, null, address);
+        connections.outbound.addEventListener(trustedPeerDisconnectListener);
         trustedOutboundPeers.add(connections.outbound);
         trustedPeerManager.openConnection(address, connections.outbound);
 
