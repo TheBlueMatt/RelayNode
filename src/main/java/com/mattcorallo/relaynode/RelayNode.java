@@ -72,10 +72,15 @@ class PeerAndInvs {
  * Keeps track of a set of PeerAndInvs
  */
 class Peers {
-    public Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
+    public final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
 
-    public boolean add(Peer p) {
-        final PeerAndInvs peerAndInvs = new PeerAndInvs(p);
+    public PeerAndInvs add(Peer p) {
+        PeerAndInvs peerAndInvs = new PeerAndInvs(p);
+        add(peerAndInvs);
+        return peerAndInvs;
+    }
+
+    public boolean add(final PeerAndInvs peerAndInvs) {
         peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
             @Override
             public void onPeerDisconnected(Peer peer, int peerCount) {
@@ -88,8 +93,10 @@ class Peers {
     public int size() { return peers.size(); }
 
     public void relayObject(Message m) {
-        for (PeerAndInvs p : peers)
-            p.maybeRelay(m);
+        synchronized (peers) {
+            for (PeerAndInvs p : peers)
+                p.maybeRelay(m);
+        }
     }
 }
 
@@ -229,7 +236,7 @@ public class RelayNode {
     /************************************************
      ***** Stuff to keep track of trusted peers *****
      ************************************************/
-    Map<InetSocketAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetSocketAddress, TrustedPeerConnections>());
+    final Map<InetSocketAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetSocketAddress, TrustedPeerConnections>());
     NioClientManager trustedPeerManager = new NioClientManager();
     PeerEventListener trustedPeerInboundListener = new AbstractPeerEventListener() {
         @Override
@@ -284,13 +291,15 @@ public class RelayNode {
     /*******************************************************************
      ***** Stuff to keep track of other relay nodes which we trust *****
      *******************************************************************/
+    Peers trustedRelayPeers = new Peers(); // Just used to keep a list of relay peers
     PeerEventListener trustedRelayPeerListener = new AbstractPeerEventListener() {
         @Override
         public Message onPreMessageReceived(Peer p, Message m) {
-            Preconditions.checkState(m instanceof Block);
-            blockPool.provideObject((Block) m);
-            LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
-            blockPool.invGood(blocksClients, m.getHash());
+            if (m instanceof Block) {
+                blockPool.provideObject((Block) m);
+                LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
+                blockPool.invGood(blocksClients, m.getHash());
+            }
             return m;
         }
     };
@@ -300,10 +309,16 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() throws BlockStoreException {
-        String version = "gay gorilla";
+        String version = "homosexual hedgehog";
         versionMessage.appendToSubVer("RelayNode", version, null);
+        // Fudge a few flags so that we can connect to other relay nodes
+        versionMessage.localServices = VersionMessage.NODE_NETWORK;
+        versionMessage.bestHeight = 1;
+
         trustedPeerManager.startAndWait();
+
         blockChain = new BlockChain(params, blockStore);
+
         trustedOutboundPeerGroup = new PeerGroup(params, blockChain);
         trustedOutboundPeerGroup.setUserAgent("RelayNode", version);
         trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener, Threading.USER_THREAD);
@@ -319,8 +334,8 @@ public class RelayNode {
                 @Override
                 public StreamParser getNewParser(InetAddress inetAddress, int port) {
                     Peer p = new Peer(params, versionMessage, null, new InetSocketAddress(inetAddress, port));
+                    blocksClients.add(p); // Should come first to avoid relaying back to the sender
                     p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
-                    blocksClients.add(p);
                     return p;
                 }
             }, new InetSocketAddress(onlyBlocksListenPort));
@@ -330,9 +345,8 @@ public class RelayNode {
                 @Override
                 public StreamParser getNewParser(InetAddress inetAddress, int port) {
                     Peer p = new Peer(params, versionMessage, null, new InetSocketAddress(inetAddress, port));
+                    txnClients.add(blocksClients.add(p)); // Should come first to avoid relaying back to the sender
                     p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
-                    blocksClients.add(p);
-                    txnClients.add(p);
                     return p;
                 }
             }, new InetSocketAddress(bothListenPort));
@@ -424,7 +438,7 @@ public class RelayNode {
                 ConnectToTrustedRelayPeer(address);
             }
         }, Threading.USER_THREAD);
-        blocksClients.add(p);
+        trustedRelayPeers.add(blocksClients.add(p));
         trustedPeerManager.openConnection(address, p);
     }
 
@@ -481,24 +495,39 @@ public class RelayNode {
                 }
 
                 if (trustedPeerConnectionsMap.isEmpty()) {
-                    System.out.println("\nRelaying will not start until you add some trusted nodes"); linesPrinted += 2;
+                    System.out.println("\nNo trusted nodes (no transaction relay)"); linesPrinted += 2;
                 } else {
                     System.out.println("\nTrusted nodes: "); linesPrinted += 2;
-                    for (Map.Entry<InetSocketAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
-                        boolean connected = true;
-                        try {
-                            entry.getValue().inbound.sendMessage(new Ping(0xDEADBEEF));
-                        } catch (Exception e) {
-                            connected = false;
+                    synchronized (trustedPeerConnectionsMap) {
+                        for (Map.Entry<InetSocketAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
+                            // TODO: There are better ways to check connection...
+                            boolean connected = true;
+                            try {
+                                entry.getValue().inbound.sendMessage(new Ping(0xDEADBEEF));
+                            } catch (Exception e) {
+                                connected = false;
+                            }
+                            System.out.println("  " + entry.getKey() + (connected ? " connected" : " not connected")); linesPrinted++;
                         }
-                        System.out.println("  " + entry.getKey() + (connected ? " connected" : " not connected")); linesPrinted++;
+                    }
+                }
+
+                if (trustedRelayPeers.peers.isEmpty()) {
+                    System.out.println("\nNo relay peers"); linesPrinted += 2;
+                } else {
+                    System.out.println("\nRelay peers:"); linesPrinted += 2;
+                    synchronized (trustedRelayPeers.peers) {
+                        for (PeerAndInvs peer : trustedRelayPeers.peers) {
+                            System.out.println("  " + peer.p.getAddress()); linesPrinted++;
+                        }
                     }
                 }
 
                 System.out.println(); linesPrinted++;
                 System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
-                System.out.println("Connected block-only clients: " + (blocksClients.size() - txnClients.size())); linesPrinted++;
-                System.out.println(chainDownloadDone ? "Chain download done (relaying blocks)" :
+                System.out.println("Connected block-only clients: " +
+                        (blocksClients.size() - txnClients.size() - trustedRelayPeers.peers.size())); linesPrinted++;
+                System.out.println(chainDownloadDone ? "Chain download done (relaying SPV-checked blocks)" :
                         ("Chain download at " + blockChain.getBestChainHeight())); linesPrinted++;
 
                 System.out.println(); linesPrinted++;
