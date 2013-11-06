@@ -300,13 +300,14 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() throws BlockStoreException {
-        String version = "festive flamingo";
+        String version = "gay gorilla";
         versionMessage.appendToSubVer("RelayNode", version, null);
         trustedPeerManager.startAndWait();
         blockChain = new BlockChain(params, blockStore);
         trustedOutboundPeerGroup = new PeerGroup(params, blockChain);
         trustedOutboundPeerGroup.setUserAgent("RelayNode", version);
         trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener, Threading.USER_THREAD);
+        trustedOutboundPeerGroup.setFastCatchupTimeSecs(Long.MAX_VALUE); // We'll revert to full blocks after catchup, but oh well
         trustedOutboundPeerGroup.startAndWait();
     }
 
@@ -497,13 +498,14 @@ public class RelayNode {
                 System.out.println(); linesPrinted++;
                 System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
                 System.out.println("Connected block-only clients: " + (blocksClients.size() - txnClients.size())); linesPrinted++;
-                System.out.println(chainDownloadDone ? "Chain download done (relaying blocks)" : "Chain download not done (not relaying blocks)"); linesPrinted++;
+                System.out.println(chainDownloadDone ? "Chain download done (relaying blocks)" :
+                        ("Chain download at " + blockChain.getBestChainHeight())); linesPrinted++;
 
                 System.out.println(); linesPrinted++;
                 System.out.println("Commands:"); linesPrinted++;
                 System.out.println("q        \t\tquit"); linesPrinted++;
                 System.out.println("t IP:port\t\tadd node IP:port as a trusted peer"); linesPrinted++;
-                System.out.println("r IP:port\t\tadd trusted relay node (via its block-only port) to relay blocks to/from"); linesPrinted++;
+                System.out.println("r IP:port\t\tadd trusted relay node (via its block-only port) to relay from"); linesPrinted++;
                 if (firstIteration)
                     System.out.println();
                 else
