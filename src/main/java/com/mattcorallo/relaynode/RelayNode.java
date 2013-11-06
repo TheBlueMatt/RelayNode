@@ -41,7 +41,10 @@ class PeerAndInvs {
                 if (m instanceof InventoryMessage) {
                     for (InventoryItem item : ((InventoryMessage) m).getItems())
                         invs.add(item);
-                }
+                } else if (m instanceof Transaction)
+                    invs.add(new InventoryItem(InventoryItem.Type.Transaction, m.getHash()));
+                else if (m instanceof Block)
+                    invs.add(new InventoryItem(InventoryItem.Type.Block, m.getHash()));
                 return m;
             }
         }, Threading.SAME_THREAD);
@@ -259,7 +262,7 @@ public class RelayNode {
         }
     };
 
-    // Runs on USER_THREAD (and is all that runs there, so we can sleep all we want)
+    // Runs on USER_THREAD (which is used exclusively for reconnection attempts)
     PeerEventListener trustedPeerDisconnectListener = new AbstractPeerEventListener() {
         @Override
         public void onPeerDisconnected(Peer peer, int peerCount) {
@@ -273,11 +276,25 @@ public class RelayNode {
     };
 
 
+    /*******************************************************************
+     ***** Stuff to keep track of other relay nodes which we trust *****
+     *******************************************************************/
+    PeerEventListener trustedRelayPeerListener = new AbstractPeerEventListener() {
+        @Override
+        public Message onPreMessageReceived(Peer p, Message m) {
+            Preconditions.checkState(m instanceof Block);
+            blockPool.provideObject((Block) m);
+            blockPool.invGood(blocksClients, m.getHash());
+            return m;
+        }
+    };
+
+
     /***************************
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() throws BlockStoreException {
-        String version = "effervescent echidna";
+        String version = "festive flamingo";
         versionMessage.appendToSubVer("RelayNode", version, null);
         trustedPeerManager.startAndWait();
         blockChain = new BlockChain(params, blockStore);
@@ -328,10 +345,15 @@ public class RelayNode {
             }
         }).start();
 
+        WatchForUserInput();
+    }
+
+    public void WatchForUserInput() {
         // Get user input
         Scanner scanner = new Scanner(System.in);
         String line;
-        while ((line = scanner.nextLine()) != null) {
+        while (true) {
+            line = scanner.nextLine();
             if (line.equals("q")) {
                 synchronized (printLock) {
                     System.out.println("Quitting...");
@@ -356,10 +378,47 @@ public class RelayNode {
                 } catch (NumberFormatException e) {
                     LogLine("Invalid argument");
                 }
+            } else if (line.startsWith("r ")) {
+                String[] hostPort = line.substring(2).split(":");
+                if (hostPort.length != 2) {
+                    LogLine("Invalid argument");
+                    continue;
+                }
+                try {
+                    int port = Integer.parseInt(hostPort[1]);
+                    InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
+                    if (addr.isUnresolved())
+                        LogLine("Unable to resolve host");
+                    else {
+                        ConnectToTrustedRelayPeer(addr);
+                        LogLine("Added trusted relay peer " + addr);
+                    }
+                } catch (NumberFormatException e) {
+                    LogLine("Invalid argument");
+                }
             } else {
                 LogLine("Invalid command");
             }
         }
+    }
+
+    public void ConnectToTrustedRelayPeer(final InetSocketAddress address) {
+        final Peer p = new Peer(params, versionMessage, null, address);
+        p.addEventListener(trustedRelayPeerListener, Threading.SAME_THREAD);
+        p.addEventListener(new AbstractPeerEventListener() {
+            @Override
+            public void onPeerDisconnected(Peer peer, int peerCount) {
+                Preconditions.checkState(peer == p);
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                ConnectToTrustedRelayPeer(address);
+            }
+        }, Threading.USER_THREAD);
+        blocksClients.add(p);
+        trustedPeerManager.openConnection(address, p);
     }
 
     public void ConnectToTrustedPeer(InetSocketAddress address) {
@@ -403,7 +462,7 @@ public class RelayNode {
             int linesPrinted = 1;
             synchronized (printLock) {
                 synchronized (logLines) {
-                    for (String _ : logLines)
+                    for (String ignored : logLines)
                         System.out.print("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
                     for (String line : logLines)
                         System.out.println(line);
@@ -434,6 +493,7 @@ public class RelayNode {
                 System.out.println("Commands:"); linesPrinted++;
                 System.out.println("q        \t\tquit"); linesPrinted++;
                 System.out.println("t IP:port\t\tadd node IP:port as a trusted peer"); linesPrinted++;
+                System.out.println("r IP:port\t\tadd trusted relay node (via its block-only port) to relay blocks to/from"); linesPrinted++;
                 if (firstIteration)
                     System.out.println();
                 else
