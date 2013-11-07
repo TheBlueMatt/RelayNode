@@ -474,7 +474,11 @@ public class RelayNode {
         }
     }
 
+    Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
     public void LogBlockRelay(Sha256Hash blockHash, String reason) {
+        if (blockRelayedSet.contains(blockHash))
+            return;
+        blockRelayedSet.add(blockHash);
         LogLine(blockHash.toString().substring(4, 32) + " relayed (" + reason + ")");
     }
 
