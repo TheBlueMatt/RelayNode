@@ -309,7 +309,7 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() throws BlockStoreException {
-        String version = "homosexual hedgehog";
+        String version = "queer quail";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -438,7 +438,7 @@ public class RelayNode {
                 ConnectToTrustedRelayPeer(address);
             }
         }, Threading.USER_THREAD);
-        trustedRelayPeers.add(blocksClients.add(p));
+        trustedRelayPeers.add(p);
         trustedPeerManager.openConnection(address, p);
     }
 
@@ -512,21 +512,38 @@ public class RelayNode {
                     }
                 }
 
+                Set<InetAddress> relayPeers = new HashSet<InetAddress>();
                 if (trustedRelayPeers.peers.isEmpty()) {
                     System.out.println("\nNo relay peers"); linesPrinted += 2;
                 } else {
                     System.out.println("\nRelay peers:"); linesPrinted += 2;
                     synchronized (trustedRelayPeers.peers) {
                         for (PeerAndInvs peer : trustedRelayPeers.peers) {
-                            System.out.println("  " + peer.p.getAddress()); linesPrinted++;
+                            // TODO: There are better ways to check connection...
+                            boolean connected = true;
+                            try {
+                                peer.p.sendMessage(new Ping(0xDEADBEEF));
+                            } catch (Exception e) {
+                                connected = false;
+                            }
+                            System.out.println("  " + peer.p.getAddress() + (connected ? " connected" : " not connected")); linesPrinted++;
+                            relayPeers.add(peer.p.getAddress().getAddr());
                         }
                     }
+                }
+
+                int relayClients = 0;
+                synchronized (blocksClients.peers) {
+                    for (PeerAndInvs p : blocksClients.peers)
+                        if (relayPeers.contains(p.p.getAddress().getAddr()))
+                            relayClients++;
                 }
 
                 System.out.println(); linesPrinted++;
                 System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
                 System.out.println("Connected block-only clients: " +
-                        (blocksClients.size() - txnClients.size() - trustedRelayPeers.peers.size())); linesPrinted++;
+                        (blocksClients.size() - txnClients.size() - relayClients)); linesPrinted++;
+                System.out.println("Connected relay node clients: " + relayClients); linesPrinted++;
                 System.out.println(chainDownloadDone ? "Chain download done (relaying SPV-checked blocks)" :
                         ("Chain download at " + blockChain.getBestChainHeight())); linesPrinted++;
 
