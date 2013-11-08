@@ -86,7 +86,7 @@ class Peers {
             public void onPeerDisconnected(Peer peer, int peerCount) {
                 peers.remove(peerAndInvs);
             }
-        });
+        }, Threading.SAME_THREAD);
         return peers.add(peerAndInvs);
     }
 
@@ -292,6 +292,7 @@ public class RelayNode {
      ***** Stuff to keep track of other relay nodes which we trust *****
      *******************************************************************/
     Peers trustedRelayPeers = new Peers(); // Just used to keep a list of relay peers
+    Set<InetSocketAddress> relayPeersWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
     PeerEventListener trustedRelayPeerListener = new AbstractPeerEventListener() {
         @Override
         public Message onPreMessageReceived(Peer p, Message m) {
@@ -430,11 +431,13 @@ public class RelayNode {
             @Override
             public void onPeerDisconnected(Peer peer, int peerCount) {
                 Preconditions.checkState(peer == p);
+                relayPeersWaitingOnReconnection.add(address);
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
+                relayPeersWaitingOnReconnection.remove(address);
                 ConnectToTrustedRelayPeer(address);
             }
         }, Threading.USER_THREAD);
@@ -487,15 +490,28 @@ public class RelayNode {
     public void printStats() {
         // Things may break if your column count is too small
         boolean firstIteration = true;
-        while (true) {
-            int linesPrinted = 1;
+        int linesPrinted = 1;
+        for (int iter = 0; true; iter++) {
+            int prevLinesPrinted = linesPrinted;
+            linesPrinted = 1;
+
             synchronized (printLock) {
-                synchronized (logLines) {
-                    for (String ignored : logLines)
-                        System.out.print("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
-                    for (String line : logLines)
-                        System.out.println(line);
-                    logLines.clear();
+                if (!firstIteration) {
+                    synchronized (logLines) {
+                        System.out.print("\033[s\033[1000D"); // Save cursor position + move to first char
+
+                        for (String ignored : logLines)
+                            System.out.println(); // Move existing log lines up
+
+                        for (int i = 0; i < prevLinesPrinted; i++)
+                            System.out.print("\033[1A\033[K"); // Up+clear linesPrinted lines
+
+                        for (String ignored : logLines)
+                            System.out.print("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
+                        for (String line : logLines)
+                            System.out.println(line);
+                        logLines.clear();
+                    }
                 }
 
                 if (trustedPeerConnectionsMap.isEmpty()) {
@@ -522,16 +538,15 @@ public class RelayNode {
                 } else {
                     System.out.println("\nRelay peers:"); linesPrinted += 2;
                     synchronized (trustedRelayPeers.peers) {
-                        for (PeerAndInvs peer : trustedRelayPeers.peers) {
-                            // TODO: There are better ways to check connection...
-                            boolean connected = true;
-                            try {
-                                peer.p.sendMessage(new Ping(0xDEADBEEF));
-                            } catch (Exception e) {
-                                connected = false;
-                            }
-                            System.out.println("  " + peer.p.getAddress() + (connected ? " connected" : " not connected")); linesPrinted++;
+                        for (PeerAndInvs peer : trustedRelayPeers.peers) { // If its not connected, its not in the set
+                            System.out.println("  " + peer.p.getAddress() + " connected"); linesPrinted++;
                             relayPeers.add(peer.p.getAddress().getAddr());
+                        }
+                    }
+                    synchronized (relayPeersWaitingOnReconnection) {
+                        for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
+                            System.out.println("  " + a + " not connected"); linesPrinted++;
+                            relayPeers.add(a.getAddress());
                         }
                     }
                 }
@@ -568,13 +583,6 @@ public class RelayNode {
             } catch (InterruptedException e) {
                 System.err.println("Stats printing thread interrupted");
                 System.exit(1);
-            }
-
-            synchronized (printLock) {
-                System.out.print("\033[s\033[1000D"); // Save cursor position + move to first char
-                for (int i = 0; i < linesPrinted; i++)
-                    System.out.print("\033[1A\033[K"); // Up+clear linesPrinted lines
-                System.out.print("");
             }
         }
     }
