@@ -11,12 +11,16 @@ import com.google.bitcoin.store.BlockStoreException;
 import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.Uninterruptibles;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Keeps a peer and a set of invs which it has told us about (ie that it has data for)
@@ -60,10 +64,8 @@ class PeerAndInvs {
             item = new InventoryItem(InventoryItem.Type.Transaction, m.getHash());
 
         if (!invs.contains(item)) {
-            try {
-                p.sendMessage(m);
-                invs.add(item);
-            } catch (IOException e) { /* Oops, lost them */ }
+            p.sendMessage(m);
+            invs.add(item);
         }
     }
 }
@@ -163,14 +165,6 @@ class TransactionPool extends Pool<Transaction> {
     }
 }
 
-/** Keeps track of trusted peer connections (two for each trusted peer) */
-class TrustedPeerConnections {
-    /** We only receive messages here (listen for invs of validated data) */
-    public Peer inbound;
-    /** We only send messages here (send unvalidated data) */
-    public Peer outbound;
-}
-
 /**
  * A RelayNode which is designed to relay blocks/txn from a set of untrusted peers, through a trusted bitcoind, to the
  * rest of the untrusted peers. It does no verification and trusts everything that comes from the trusted bitcoind is
@@ -215,9 +209,7 @@ public class RelayNode {
                     }
                 }
                 if (!getDataMessage.getItems().isEmpty())
-                    try {
-                        p.sendMessage(getDataMessage);
-                    } catch (IOException e) { /* Oops, lost them */ }
+                    p.sendMessage(getDataMessage);
             } else if (m instanceof Block) {
                 blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
                 try {
@@ -236,7 +228,82 @@ public class RelayNode {
     /************************************************
      ***** Stuff to keep track of trusted peers *****
      ************************************************/
-    final Map<InetSocketAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetSocketAddress, TrustedPeerConnections>());
+
+    /** Manages reconnecting to trusted peers and relay nodes, often sleeps */
+    private static Executor reconnectExecutor = Executors.newSingleThreadExecutor();
+
+    /** Keeps track of a trusted peer connection (two connections per peer) */
+    class TrustedPeerConnections {
+        /** We only receive messages here (listen for invs of validated data) */
+        public Peer inbound;
+        /** We only send messages here (send unvalidated data) */
+        public Peer outbound;
+        /** The address to (re)connect to */
+        public InetSocketAddress addr;
+
+        public volatile boolean inboundConnected = false; // Flag for UI only, very racy, often wrong
+        public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
+
+        private void makeInboundPeer() {
+            if (inbound != null)
+                inbound.close(); // Double-check closed
+
+            inbound = new Peer(params, versionMessage, null, addr);
+            inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
+            inbound.addEventListener(trustedPeerDisconnectListener);
+            inbound.addEventListener(new AbstractPeerEventListener() {
+                @Override
+                public void onPeerConnected(Peer p, int peerCount) {
+                    inboundConnected = true;
+                }
+            });
+            trustedPeerManager.openConnection(addr, inbound);
+        }
+
+        private void makeOutboundPeer() {
+            if (outbound != null)
+                outbound.close(); // Double-check closed
+
+            outbound = trustedOutboundPeerGroup.connectTo(addr);
+            trustedOutboundPeers.add(outbound);
+            trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener() {
+                @Override
+                protected void doneDownload() {
+                    chainDownloadDone = true;
+                }
+            });
+            outboundConnected = true; // Ehhh...assume we got through...
+        }
+
+        public void onDisconnect(final Peer p) {
+            if (p == inbound)
+                inboundConnected = false;
+            else if (p == outbound)
+                outboundConnected = false;
+
+            reconnectExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
+                    if (p == inbound)
+                        makeInboundPeer();
+                    else if (p == outbound)
+                        makeOutboundPeer();
+                }
+            });
+        }
+
+        public TrustedPeerConnections(InetSocketAddress addr) {
+            this.addr = addr;
+
+            makeInboundPeer();
+            makeOutboundPeer();
+
+            trustedPeerConnectionsMap.put(addr.getAddress(), this);
+        }
+    }
+
+    final Map<InetAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetAddress, TrustedPeerConnections>());
     NioClientManager trustedPeerManager = new NioClientManager();
     PeerEventListener trustedPeerInboundListener = new AbstractPeerEventListener() {
         @Override
@@ -259,9 +326,7 @@ public class RelayNode {
                     }
                 }
                 if (!getDataMessage.getItems().isEmpty())
-                    try {
-                        p.sendMessage(getDataMessage);
-                    } catch (IOException e) { /* Oops, lost them, we'll pick them back up in onPeerDisconnected */ }
+                    p.sendMessage(getDataMessage);
             } else if (m instanceof Transaction) {
                 txPool.provideObject((Transaction) m);
                 txPool.invGood(txnClients, m.getHash());
@@ -274,16 +339,14 @@ public class RelayNode {
         }
     };
 
-    // Runs on USER_THREAD (which is used exclusively for reconnection attempts)
     PeerEventListener trustedPeerDisconnectListener = new AbstractPeerEventListener() {
         @Override
         public void onPeerDisconnected(Peer peer, int peerCount) {
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+            TrustedPeerConnections connections = trustedPeerConnectionsMap.get(peer.getAddress().getAddr());
+            if (connections == null) {
+                return;
             }
-            ConnectToTrustedPeer(peer.getAddress().toSocketAddress());
+            connections.onDisconnect(peer);
         }
     };
 
@@ -310,7 +373,7 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() throws BlockStoreException {
-        String version = "queer quail";
+        String version = "reliable rhinoceros";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -322,7 +385,7 @@ public class RelayNode {
 
         trustedOutboundPeerGroup = new PeerGroup(params, blockChain);
         trustedOutboundPeerGroup.setUserAgent("RelayNode", version);
-        trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener, Threading.USER_THREAD);
+        trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener);
         trustedOutboundPeerGroup.setFastCatchupTimeSecs(Long.MAX_VALUE); // We'll revert to full blocks after catchup, but oh well
         trustedOutboundPeerGroup.startAndWait();
     }
@@ -394,8 +457,12 @@ public class RelayNode {
                     if (addr.isUnresolved())
                         LogLine("Unable to resolve host");
                     else {
-                        ConnectToTrustedPeer(addr);
-                        LogLine("Added trusted peer " + addr);
+                        if (trustedPeerConnectionsMap.containsKey(addr)) {
+                            LogLine("Already had trusted peer " + addr);
+                        } else {
+                            new TrustedPeerConnections(addr);
+                            LogLine("Added trusted peer " + addr);
+                        }
                     }
                 } catch (NumberFormatException e) {
                     LogLine("Invalid argument");
@@ -432,42 +499,22 @@ public class RelayNode {
             public void onPeerDisconnected(Peer peer, int peerCount) {
                 Preconditions.checkState(peer == p);
                 relayPeersWaitingOnReconnection.add(address);
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-                relayPeersWaitingOnReconnection.remove(address);
-                ConnectToTrustedRelayPeer(address);
-            }
-        }, Threading.USER_THREAD);
-        trustedRelayPeers.add(p);
-        trustedPeerManager.openConnection(address, p);
-    }
-
-    public void ConnectToTrustedPeer(InetSocketAddress address) {
-        TrustedPeerConnections connections = trustedPeerConnectionsMap.get(address);
-        if (connections != null) {
-            connections.inbound.close();
-            connections.outbound.close();
-        }
-        connections = new TrustedPeerConnections();
-
-        connections.inbound = new Peer(params, versionMessage, null, address);
-        connections.inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
-        connections.inbound.addEventListener(trustedPeerDisconnectListener, Threading.USER_THREAD);
-        trustedPeerManager.openConnection(address, connections.inbound);
-
-        connections.outbound = trustedOutboundPeerGroup.connectTo(address);
-        trustedOutboundPeers.add(connections.outbound);
-        trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener() {
-            @Override
-            protected void doneDownload() {
-                chainDownloadDone = true;
+                reconnectExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                        relayPeersWaitingOnReconnection.remove(address);
+                        ConnectToTrustedRelayPeer(address);
+                    }
+                });
             }
         });
-
-        trustedPeerConnectionsMap.put(address, connections);
+        trustedRelayPeers.add(p);
+        trustedPeerManager.openConnection(address, p);
     }
 
     final Queue<String> logLines = new LinkedList<String>();
@@ -519,15 +566,10 @@ public class RelayNode {
                 } else {
                     System.out.println("\nTrusted nodes: "); linesPrinted += 2;
                     synchronized (trustedPeerConnectionsMap) {
-                        for (Map.Entry<InetSocketAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
-                            // TODO: There are better ways to check connection...
-                            boolean connected = true;
-                            try {
-                                entry.getValue().inbound.sendMessage(new Ping(0xDEADBEEF));
-                            } catch (Exception e) {
-                                connected = false;
-                            }
-                            System.out.println("  " + entry.getKey() + (connected ? " connected" : " not connected")); linesPrinted++;
+                        for (Map.Entry<InetAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
+                            System.out.println("  " + entry.getValue().addr +
+                                    ((entry.getValue().inboundConnected && entry.getValue().outboundConnected) ? " connected" : " not connected"));
+                            linesPrinted++;
                         }
                     }
                 }
