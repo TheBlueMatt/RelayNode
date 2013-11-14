@@ -502,11 +502,7 @@ public class RelayNode {
                 reconnectExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        try {
-                            Thread.sleep(1000);
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
-                        }
+                        Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
                         relayPeersWaitingOnReconnection.remove(address);
                         ConnectToTrustedRelayPeer(address);
                     }
@@ -620,12 +616,7 @@ public class RelayNode {
                 firstIteration = false;
             }
 
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                System.err.println("Stats printing thread interrupted");
-                System.exit(1);
-            }
+            Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
         }
     }
 }
