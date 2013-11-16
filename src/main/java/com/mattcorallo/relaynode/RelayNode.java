@@ -15,8 +15,10 @@ import com.google.common.util.concurrent.Uninterruptibles;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.channels.NotYetConnectedException;
 import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -64,7 +66,9 @@ class PeerAndInvs {
             item = new InventoryItem(InventoryItem.Type.Transaction, m.getHash());
 
         if (!invs.contains(item)) {
-            p.sendMessage(m);
+            try {
+                p.sendMessage(m);
+            } catch (NotYetConnectedException e) { /* We'll get them next time */ }
             invs.add(item);
         }
     }
@@ -373,7 +377,7 @@ public class RelayNode {
      ***** Stuff that runs *****
      ***************************/
     public RelayNode() throws BlockStoreException {
-        String version = "reliable rhinoceros";
+        String version = "unstable unicorn";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -391,6 +395,19 @@ public class RelayNode {
     }
 
     public void run(int onlyBlocksListenPort, int bothListenPort) {
+        Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                LogLine("Uncaught exception in thread " + t.getName());
+                UnsafeByteArrayOutputStream o = new UnsafeByteArrayOutputStream();
+                PrintStream b = new PrintStream(o);
+                e.printStackTrace(b);
+                b.close();
+                for (String s : new String(o.toByteArray()).split("\n"))
+                    LogLine(s);
+                LogLine(e.toString());
+            }
+        };
         // Listen for incoming client connections
         try {
             NioServer onlyBlocksServer = new NioServer(new StreamParserFactory() {
