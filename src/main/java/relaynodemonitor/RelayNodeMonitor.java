@@ -2,6 +2,7 @@ package relaynodemonitor;
 
 import com.google.bitcoin.core.*;
 import com.google.bitcoin.params.MainNetParams;
+import com.google.bitcoin.utils.Threading;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import java.net.InetSocketAddress;
@@ -41,9 +42,18 @@ public class RelayNodeMonitor {
     }
     public static void main(String[] args) {
         NetworkParameters params = MainNetParams.get();
-        PeerGroup peerGroup = new PeerGroup(params);
+
+        Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                System.out.println("Unhandled exception " + e.toString());
+            }
+        };
+
+        final PeerGroup peerGroup = new PeerGroup(params);
 
         final Map<Sha256Hash, Set<InetSocketAddress>> nodesWithBlock = Collections.synchronizedMap(new HashMap<Sha256Hash, Set<InetSocketAddress>>());
+        final Map<Sha256Hash, Long> apiPostTime = Collections.synchronizedMap(new HashMap<Sha256Hash, Long>());
         final InetSocketAddress missedFlag = new InetSocketAddress("0.0.0.0", 0);
         final Set<InetSocketAddress> nodes = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
         final ScheduledExecutorService executor = Executors.newScheduledThreadPool(4);
@@ -59,15 +69,14 @@ public class RelayNodeMonitor {
                             nodesWithBlock.put(m.getHash(), s);
                         }
                         s.add(p.getAddress().toSocketAddress());
-                        if (s.size() == nodes.size() && !s.contains(missedFlag)) {
-                            System.out.println(m.getHash());
-                            return m;
-                        }
+                        System.err.println(m.getHash() + " " + s.size() + " " + nodes.size());
                     }
+                    System.err.println("Got " + m.getHash() + " from " + p + " " + System.currentTimeMillis());
                     executor.schedule(new Runnable() {
                         @Override
                         public void run() {
                             synchronized (nodesWithBlock) {
+                                System.err.println("Scheduled " + m.getHash() + " " + System.currentTimeMillis());
                                 Set<InetSocketAddress> s = nodesWithBlock.get(m.getHash());
                                 if (s.size() < nodes.size() && !s.contains(missedFlag)) {
                                     System.out.println("Missed time target: " + m.getHash());
@@ -75,41 +84,44 @@ public class RelayNodeMonitor {
                                 }
                             }
                         }
-                    }, 500, TimeUnit.MILLISECONDS); // All relay nodes must get us all blocks within 500ms of each other
+                    }, 4, TimeUnit.SECONDS); // All relay nodes must get us all blocks within 4s of each other (damn cross-continent TCP...)
                 }
                 return m;
             }
 
             @Override
-            public void onPeerDisconnected(Peer p, int peerCount) {
+            public void onPeerDisconnected(final Peer p, int peerCount) {
                 System.out.println("Peer disconnected: " + p);
+                executor.schedule(new Runnable() {
+                    @Override
+                    public void run() {
+                        peerGroup.connectTo(p.getAddress().toSocketAddress());
+                    }
+                }, 1, TimeUnit.SECONDS);
             }
-        });
+        }, Threading.SAME_THREAD);
         VersionMessage v = peerGroup.getVersionMessage();
         v.localServices = VersionMessage.NODE_NETWORK;
         peerGroup.setVersionMessage(v);
         peerGroup.startAndWait();
 
-        final Set<Sha256Hash> apiSeenBlocks = new HashSet<Sha256Hash>();
-        apiSeenBlocks.addAll(lookupAPIBlocks()); // Init with current blocks
+        for (Sha256Hash h : lookupAPIBlocks())
+            apiPostTime.put(h, System.currentTimeMillis());
         Thread lookupThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 while (true) {
-                    Set<Sha256Hash> set = lookupAPIBlocks();
-                    for (final Sha256Hash hash : set) {
-                        if (apiSeenBlocks.add(hash)) {
+                    for (final Sha256Hash hash : lookupAPIBlocks())
+                        if (!apiPostTime.containsKey(hash)) {
+                            apiPostTime.put(hash, System.currentTimeMillis());
                             executor.schedule(new Runnable() {
                                 @Override
                                 public void run() {
-                                    synchronized (nodesWithBlock) {
-                                        if (nodesWithBlock.get(hash) == null)
-                                            System.out.println("Lost to bbe/bc.i: " + hash);
-                                    }
+                                    if (!nodesWithBlock.containsKey(hash))
+                                        System.out.println("Missed block: " + hash);
                                 }
                             }, 500, TimeUnit.MILLISECONDS); // Must have heard from min. one node within 500 ms of bc.i+bbe
                         }
-                    }
                     Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
                 }
             }
