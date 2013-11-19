@@ -1,0 +1,25 @@
+AGPL + additional restrictions for the sake of it, but I'll freely
+relicense under whatever you want, if you put in the effort to tell
+me why I should (of course you have to get a relicense in writing).
+
+
+Copyright(C) 2013 Matt Corallo
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version,
+with the added condition that for any modifications made and run on a
+publicly accessible server (ie those for which the AGPL requires
+you open-source the code, including those which do not fit into my
+loose interpretation of the AGPL), you notify me of the modifications
+made. An up-to-date fork on GitHub (where the code lives, not a pointer
+to your code) suffices, otherwise you need to email me.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
