@@ -14,6 +14,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import javax.annotation.Nullable;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
@@ -182,7 +183,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-    public static void main(String[] args) throws BlockStoreException {
+    public static void main(String[] args) throws Exception {
         new RelayNode().run(8334, 8335);
     }
 
@@ -379,6 +380,11 @@ public class RelayNode {
                         blockPool.provideObject((Block) m);
                         LogBlockRelay(m.getHash(), "block from node " + p.getAddress());
                         blockPool.invGood(blocksClients, m.getHash());
+                        try {
+                            blockChain.add((Block) m);
+                        } catch (Exception e) {
+                            LogLine("WARNING: Exception adding block from trusted peer " + p.getAddress());
+                        }
                     }
                 });
            }
@@ -413,6 +419,11 @@ public class RelayNode {
                         blockPool.provideObject((Block) m);
                         LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
                         blockPool.invGood(blocksClients, m.getHash());
+                        try {
+                            blockChain.add((Block) m);
+                        } catch (Exception e) {
+                            LogLine("WARNING: Exception adding block from relay peer " + p.getAddress());
+                        }
                     }
                 });
             }
@@ -424,12 +435,15 @@ public class RelayNode {
     /***************************
      ***** Stuff that runs *****
      ***************************/
-    public RelayNode() throws BlockStoreException {
-        String version = "async acrobat";
+    FileWriter relayLog;
+    public RelayNode() throws BlockStoreException, IOException {
+        String version = "wonderful wombat";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
         versionMessage.bestHeight = 1;
+
+        relayLog = new FileWriter("blockrelay.log");
 
         trustedPeerManager.startAndWait();
 
@@ -590,7 +604,14 @@ public class RelayNode {
         if (blockRelayedSet.contains(blockHash))
             return;
         blockRelayedSet.add(blockHash);
-        LogLine(blockHash.toString().substring(4, 32) + " relayed (" + reason + ")");
+        LogLine(blockHash.toString().substring(4, 32) + " relayed (" + reason + ") " + System.currentTimeMillis());
+        try {
+            relayLog.write((blockHash + " " + System.currentTimeMillis() + "\n").toCharArray());
+            relayLog.flush();
+        } catch (IOException e) {
+            System.err.println("Failed to write to relay log");
+            System.exit(1);
+        }
     }
 
     // Wouldn't want to print from multiple threads, would we?
@@ -666,8 +687,7 @@ public class RelayNode {
                 System.out.println("Connected block-only clients: " +
                         (blocksClients.size() - txnClients.size() - relayClients)); linesPrinted++;
                 System.out.println("Connected relay node clients: " + relayClients); linesPrinted++;
-                System.out.println(chainDownloadDone ? "Chain download done (relaying SPV-checked blocks)" :
-                        ("Chain download at " + blockChain.getBestChainHeight())); linesPrinted++;
+                System.out.println("Chain download at " + blockChain.getBestChainHeight() + (chainDownloadDone ? " (relaying SPV-checked blocks)" : "")); linesPrinted++;
 
                 System.out.println(); linesPrinted++;
                 System.out.println("Commands:"); linesPrinted++;
