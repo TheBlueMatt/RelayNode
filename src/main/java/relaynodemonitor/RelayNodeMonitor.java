@@ -18,12 +18,12 @@ import java.util.concurrent.TimeUnit;
  * someone!)
  */
 public class RelayNodeMonitor {
-    private static Set<Sha256Hash> lookupAPIBlocks() {
-        Set<Sha256Hash> set = new HashSet<Sha256Hash>();
+    private static Map<String, Sha256Hash> lookupAPIBlocks() {
+        Map<String, Sha256Hash> res = new HashMap<String, Sha256Hash>();
         try {
             URL u = new URL("http://blockchain.info/q/latesthash");
             Scanner in = new Scanner(u.openStream());
-            set.add(new Sha256Hash(in.nextLine().toLowerCase()));
+            res.put("bc.i", new Sha256Hash(in.nextLine().toLowerCase()));
             in.close();
         } catch (Exception e) {
             System.err.println("WARNING: Failed to get bc.i's latest blockhash");
@@ -33,12 +33,12 @@ public class RelayNodeMonitor {
             URLConnection c = u.openConnection();
             c.setRequestProperty("User-Agent", "Mozilla"); // Cloudfare hates Java
             Scanner in = new Scanner(c.getInputStream());
-            set.add(new Sha256Hash(in.nextLine().toLowerCase()));
+            res.put("bbe", new Sha256Hash(in.nextLine().toLowerCase()));
             in.close();
         } catch (Exception e) {
             System.err.println("WARNING: Failed to get bbe's latest blockhash");
         }
-        return set;
+        return res;
     }
     public static void main(String[] args) {
         NetworkParameters params = MainNetParams.get();
@@ -55,7 +55,7 @@ public class RelayNodeMonitor {
         final Map<Sha256Hash, Set<InetSocketAddress>> nodesWithBlock = Collections.synchronizedMap(new HashMap<Sha256Hash, Set<InetSocketAddress>>());
         final Map<Sha256Hash, Long> apiPostTime = Collections.synchronizedMap(new HashMap<Sha256Hash, Long>());
         final InetSocketAddress missedFlag = new InetSocketAddress("0.0.0.0", 0);
-        final Set<InetSocketAddress> nodes = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
+        final Map<InetSocketAddress, Long> nodes = Collections.synchronizedMap(new HashMap<InetSocketAddress, Long>());
         final ScheduledExecutorService executor = Executors.newScheduledThreadPool(4);
 
         peerGroup.addEventListener(new AbstractPeerEventListener() {
@@ -84,17 +84,26 @@ public class RelayNodeMonitor {
                                 }
                             }
                         }
-                    }, 4, TimeUnit.SECONDS); // All relay nodes must get us all blocks within 4s of each other (damn cross-continent TCP...)
+                    }, 4500, TimeUnit.MILLISECONDS); // All relay nodes must get us all blocks within 4.5s of each other (damn cross-continent TCP...)
                 }
                 return m;
             }
 
             @Override
             public void onPeerDisconnected(final Peer p, int peerCount) {
-                System.out.println("Peer disconnected: " + p);
+                synchronized (nodes) {
+                    if (nodes.get(p.getAddress().toSocketAddress()) < System.currentTimeMillis() - 15*60*1000) { // Only notify once every 15 minutes per node
+                        System.out.println("Peer disconnected: " + p);
+                        nodes.put(p.getAddress().toSocketAddress(), System.currentTimeMillis());
+                    }
+                }
+                System.err.println("Got onPeerDisconnected for " + p.getAddress() + " with peerCount " + peerCount);
                 executor.schedule(new Runnable() {
                     @Override
                     public void run() {
+                        for (Peer itp : peerGroup.getConnectedPeers())
+                            if (itp.getAddress().equals(p.getAddress()))
+                                return;
                         peerGroup.connectTo(p.getAddress().toSocketAddress());
                     }
                 }, 1, TimeUnit.SECONDS);
@@ -105,20 +114,21 @@ public class RelayNodeMonitor {
         peerGroup.setVersionMessage(v);
         peerGroup.startAndWait();
 
-        for (Sha256Hash h : lookupAPIBlocks())
+        for (Sha256Hash h : lookupAPIBlocks().values())
             apiPostTime.put(h, System.currentTimeMillis());
         Thread lookupThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 while (true) {
-                    for (final Sha256Hash hash : lookupAPIBlocks())
-                        if (!apiPostTime.containsKey(hash)) {
-                            apiPostTime.put(hash, System.currentTimeMillis());
+                    for (final Map.Entry<String, Sha256Hash> e : lookupAPIBlocks().entrySet())
+                        if (!apiPostTime.containsKey(e.getValue())) {
+                            apiPostTime.put(e.getValue(), System.currentTimeMillis());
+                            System.err.println(e.getKey() + " provided block " + e.getValue() + " at " + System.currentTimeMillis());
                             executor.schedule(new Runnable() {
                                 @Override
                                 public void run() {
-                                    if (!nodesWithBlock.containsKey(hash))
-                                        System.out.println("Missed block: " + hash);
+                                    if (!nodesWithBlock.containsKey(e.getValue()))
+                                        System.out.println("Missed block: " + e.getValue() + " provided by " + e.getKey());
                                 }
                             }, 500, TimeUnit.MILLISECONDS); // Must have heard from min. one node within 500 ms of bc.i+bbe
                         }
@@ -155,7 +165,7 @@ public class RelayNodeMonitor {
                     continue;
                 }
                 peerGroup.connectTo(addr);
-                nodes.add(addr);
+                nodes.put(addr, Long.valueOf(0));
                 System.err.println("Connected to " + addr);
             } catch (NumberFormatException e) {
                 System.err.println("Invalid port");
