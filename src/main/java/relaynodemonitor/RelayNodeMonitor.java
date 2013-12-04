@@ -84,7 +84,7 @@ public class RelayNodeMonitor {
                                 }
                             }
                         }
-                    }, 4500, TimeUnit.MILLISECONDS); // All relay nodes must get us all blocks within 4.5s of each other (damn cross-continent TCP...)
+                    }, 7000, TimeUnit.MILLISECONDS); // All relay nodes must get us all blocks within 7s of each other (damn cross-continent TCP...)
                 }
                 return m;
             }

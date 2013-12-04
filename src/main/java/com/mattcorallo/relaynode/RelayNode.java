@@ -21,10 +21,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.channels.NotYetConnectedException;
 import java.util.*;
-import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 /**
  * Keeps a peer and a set of invs which it has told us about (ie that it has data for)
@@ -113,7 +110,20 @@ class Peers {
 abstract class Pool<Type extends Message> {
     abstract int relayedCacheSize();
 
-    Map<Sha256Hash, Type> objects = new HashMap<Sha256Hash, Type>();
+    class AddedObject {
+        Sha256Hash hash;
+        long removeTime = System.currentTimeMillis() + 60*1000;
+        AddedObject(Sha256Hash hash) { this.hash = hash; }
+    }
+    List<AddedObject> removeObjectList = Collections.synchronizedList(new LinkedList<AddedObject>());
+
+    Map<Sha256Hash, Type> objects = new HashMap<Sha256Hash, Type>() {
+        @Override
+        public Type put(Sha256Hash key, Type value) {
+            removeObjectList.add(new AddedObject(key));
+            return super.put(key, value);
+        }
+    };
     Set<Sha256Hash> objectsRelayed = new LinkedHashSet<Sha256Hash>() {
         @Override
         public boolean add(Sha256Hash e) {
@@ -125,7 +135,28 @@ abstract class Pool<Type extends Message> {
     };
 
     Peers trustedOutboundPeers;
-    public Pool(Peers trustedOutboundPeers) { this.trustedOutboundPeers = trustedOutboundPeers; }
+    public Pool(Peers trustedOutboundPeers) {
+        this.trustedOutboundPeers = trustedOutboundPeers;
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (true) {
+                    synchronized (removeObjectList) {
+                        long targetTime = System.currentTimeMillis();
+                        try {
+                            for (AddedObject o = removeObjectList.get(0); o.removeTime < targetTime; o = removeObjectList.get(0)) {
+                                objects.remove(o.hash);
+                                removeObjectList.remove(0);
+                            }
+                        } catch (IndexOutOfBoundsException e) {}
+                    }
+                    Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
+                }
+            }
+        });
+        t.setName("Pool Invalid Object Remover");
+        t.start();
+    }
 
     public synchronized boolean shouldRequestInv(Sha256Hash hash) {
         return !objectsRelayed.contains(hash) && !objects.containsKey(hash);
@@ -145,9 +176,9 @@ abstract class Pool<Type extends Message> {
         synchronized (Pool.this) {
             o = objects.remove(hash);
             if (!objectsRelayed.contains(hash)) {
-                Preconditions.checkState(o != null);
                 objectsRelayed.add(hash);
-                relay = true;
+                if (o != null)
+                    relay = true;
             }
         }
         if (relay)
@@ -437,7 +468,7 @@ public class RelayNode {
      ***************************/
     FileWriter relayLog;
     public RelayNode() throws BlockStoreException, IOException {
-        String version = "wonderful wombat";
+        String version = "tiny tiger";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
