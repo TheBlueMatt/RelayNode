@@ -1,10 +1,10 @@
 package com.mattcorallo.relaynode;
 
 import com.google.bitcoin.core.*;
-import com.google.bitcoin.networkabstraction.NioClientManager;
-import com.google.bitcoin.networkabstraction.NioServer;
-import com.google.bitcoin.networkabstraction.StreamParser;
-import com.google.bitcoin.networkabstraction.StreamParserFactory;
+import com.google.bitcoin.net.NioClientManager;
+import com.google.bitcoin.net.NioServer;
+import com.google.bitcoin.net.StreamParser;
+import com.google.bitcoin.net.StreamParserFactory;
 import com.google.bitcoin.params.MainNetParams;
 import com.google.bitcoin.store.BlockStore;
 import com.google.bitcoin.store.BlockStoreException;
@@ -70,13 +70,16 @@ class PeerAndInvs {
             } catch (NotYetConnectedException e) { /* We'll get them next time */ }
         }
     }
+
+    @Override public boolean equals(Object o) { return o instanceof PeerAndInvs && ((PeerAndInvs)o).p == this.p; }
+    @Override public int hashCode() { return p.hashCode(); }
 }
 
 /**
  * Keeps track of a set of PeerAndInvs
  */
 class Peers {
-    public final Set<PeerAndInvs> peers = new CopyOnWriteArraySet<PeerAndInvs>();
+    public final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
 
     public PeerAndInvs add(Peer p) {
         PeerAndInvs peerAndInvs = new PeerAndInvs(p);
@@ -85,13 +88,16 @@ class Peers {
     }
 
     public boolean add(final PeerAndInvs peerAndInvs) {
-        peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
-            @Override
-            public void onPeerDisconnected(Peer peer, int peerCount) {
-                peers.remove(peerAndInvs);
-            }
-        }, Threading.SAME_THREAD);
-        return peers.add(peerAndInvs);
+        if (peers.add(peerAndInvs)) {
+            peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
+                @Override
+                public void onPeerDisconnected(Peer peer, int peerCount) {
+                    peers.remove(peerAndInvs);
+                }
+            }, Threading.SAME_THREAD);
+            return true;
+        }
+        return false;
     }
 
     public int size() { return peers.size(); }
@@ -468,7 +474,7 @@ public class RelayNode {
      ***************************/
     FileWriter relayLog;
     public RelayNode() throws BlockStoreException, IOException {
-        String version = "tiny tiger";
+        String version = "hydrophobic hummingbird";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
