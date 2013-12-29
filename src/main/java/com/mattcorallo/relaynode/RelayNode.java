@@ -268,7 +268,7 @@ public class RelayNode {
                     public void run() {
                         blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
                         try {
-                            if (blockChain.add((Block) m)) {
+                            if (blockChain.add(((Block) m).cloneAsHeader())) {
                                 LogBlockRelay(m.getHash(), "SPV check, from " + p.getAddress());
                                 blockPool.invGood(blocksClients, m.getHash());
                             }
@@ -305,7 +305,7 @@ public class RelayNode {
             if (inbound != null)
                 inbound.close(); // Double-check closed
 
-            inbound = new Peer(params, versionMessage, null, addr);
+            inbound = new Peer(params, versionMessage, null, new PeerAddress(addr));
             inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
             inbound.addEventListener(trustedPeerDisconnectListener);
             inbound.addEventListener(new AbstractPeerEventListener() {
@@ -418,7 +418,7 @@ public class RelayNode {
                         LogBlockRelay(m.getHash(), "block from node " + p.getAddress());
                         blockPool.invGood(blocksClients, m.getHash());
                         try {
-                            blockChain.add((Block) m);
+                            blockChain.add(((Block) m).cloneAsHeader());
                         } catch (Exception e) {
                             LogLine("WARNING: Exception adding block from trusted peer " + p.getAddress());
                         }
@@ -457,7 +457,7 @@ public class RelayNode {
                         LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
                         blockPool.invGood(blocksClients, m.getHash());
                         try {
-                            blockChain.add((Block) m);
+                            blockChain.add(((Block) m).cloneAsHeader());
                         } catch (Exception e) {
                             LogLine("WARNING: Exception adding block from relay peer " + p.getAddress());
                         }
@@ -474,7 +474,7 @@ public class RelayNode {
      ***************************/
     FileWriter relayLog;
     public RelayNode() throws BlockStoreException, IOException {
-        String version = "hydrophobic hummingbird";
+        String version = "repetitive reindeer";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -513,7 +513,7 @@ public class RelayNode {
                 @Nullable
                 @Override
                 public StreamParser getNewParser(InetAddress inetAddress, int port) {
-                    Peer p = new Peer(params, versionMessage, null, new InetSocketAddress(inetAddress, port));
+                    Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
                     blocksClients.add(p); // Should come first to avoid relaying back to the sender
                     p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
                     return p;
@@ -524,7 +524,7 @@ public class RelayNode {
                 @Nullable
                 @Override
                 public StreamParser getNewParser(InetAddress inetAddress, int port) {
-                    Peer p = new Peer(params, versionMessage, null, new InetSocketAddress(inetAddress, port));
+                    Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
                     txnClients.add(blocksClients.add(p)); // Should come first to avoid relaying back to the sender
                     p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
                     return p;
@@ -608,7 +608,7 @@ public class RelayNode {
     }
 
     public void ConnectToTrustedRelayPeer(final InetSocketAddress address) {
-        final Peer p = new Peer(params, versionMessage, null, address);
+        final Peer p = new Peer(params, versionMessage, null, new PeerAddress(address));
         p.addEventListener(trustedRelayPeerListener, Threading.SAME_THREAD);
         p.addEventListener(new AbstractPeerEventListener() {
             @Override
