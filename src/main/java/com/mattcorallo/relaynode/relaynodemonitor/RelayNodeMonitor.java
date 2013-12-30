@@ -1,4 +1,13 @@
-package relaynodemonitor;
+/*
+ * Relay Node Monitor
+ *
+ * Copyright (C) 2013 Matt Corallo <git@bluematt.me>
+ *
+ * This is free software: you can redistribute it under the
+ * terms in the LICENSE file.
+ */
+
+package com.mattcorallo.relaynode.relaynodemonitor;
 
 import com.google.bitcoin.core.*;
 import com.google.bitcoin.params.MainNetParams;

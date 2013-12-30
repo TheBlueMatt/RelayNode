@@ -1,3 +1,12 @@
+/*
+ * Relay Node Server
+ *
+ * Copyright (C) 2013 Matt Corallo <git@bluematt.me>
+ *
+ * This is free software: you can redistribute it under the
+ * terms in the LICENSE file.
+ */
+
 package com.mattcorallo.relaynode;
 
 import com.google.bitcoin.core.*;
