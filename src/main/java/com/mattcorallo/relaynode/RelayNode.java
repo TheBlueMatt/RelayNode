@@ -41,7 +41,7 @@ class PeerAndInvs {
         @Override
         public synchronized boolean add(InventoryItem e) {
             boolean res = super.add(e);
-            if (size() > 5000)
+            if (size() > 500)
                 super.remove(super.iterator().next());
             return res;
         }
@@ -296,7 +296,7 @@ public class RelayNode {
      ************************************************/
 
     /** Manages reconnecting to trusted peers and relay nodes, often sleeps */
-    private static Executor reconnectExecutor = Executors.newSingleThreadExecutor();
+    private static ScheduledExecutorService reconnectExecutor = Executors.newScheduledThreadPool(1);
 
     /** Keeps track of a trusted peer connection (two connections per peer) */
     class TrustedPeerConnections {
@@ -347,16 +347,15 @@ public class RelayNode {
             else if (p == outbound)
                 outboundConnected = false;
 
-            reconnectExecutor.execute(new Runnable() {
+            reconnectExecutor.schedule(new Runnable() {
                 @Override
                 public void run() {
-                    Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
                     if (p == inbound)
                         makeInboundPeer();
                     else if (p == outbound)
                         makeOutboundPeer();
                 }
-            });
+            }, 1, TimeUnit.SECONDS);
         }
 
         public TrustedPeerConnections(InetSocketAddress addr) {
@@ -483,7 +482,7 @@ public class RelayNode {
      ***************************/
     FileWriter relayLog;
     public RelayNode() throws BlockStoreException, IOException {
-        String version = "repetitive reindeer";
+        String version = "amazing axolotl";
         versionMessage.appendToSubVer("RelayNode", version, null);
         // Fudge a few flags so that we can connect to other relay nodes
         versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -624,14 +623,13 @@ public class RelayNode {
             public void onPeerDisconnected(Peer peer, int peerCount) {
                 Preconditions.checkState(peer == p);
                 relayPeersWaitingOnReconnection.add(address);
-                reconnectExecutor.execute(new Runnable() {
+                reconnectExecutor.schedule(new Runnable() {
                     @Override
                     public void run() {
-                        Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
                         relayPeersWaitingOnReconnection.remove(address);
                         ConnectToTrustedRelayPeer(address);
                     }
-                });
+                }, 1, TimeUnit.SECONDS);
             }
         });
         trustedRelayPeers.add(p);
