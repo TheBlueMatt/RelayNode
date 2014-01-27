@@ -310,7 +310,7 @@ public class RelayNode {
 		public volatile boolean inboundConnected = false; // Flag for UI only, very racy, often wrong
 		public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
 
-		private void makeInboundPeer() {
+		private synchronized void makeInboundPeer() {
 			if (inbound != null)
 				inbound.close(); // Double-check closed
 
@@ -326,7 +326,7 @@ public class RelayNode {
 			trustedPeerManager.openConnection(addr, inbound);
 		}
 
-		private void makeOutboundPeer() {
+		private synchronized void makeOutboundPeer() {
 			if (outbound != null)
 				outbound.close(); // Double-check closed
 
@@ -350,10 +350,12 @@ public class RelayNode {
 			reconnectExecutor.schedule(new Runnable() {
 				@Override
 				public void run() {
-					if (p == inbound)
-						makeInboundPeer();
-					else if (p == outbound)
-						makeOutboundPeer();
+					synchronized (TrustedPeerConnections.this) {
+						if (p == inbound)
+							makeInboundPeer();
+						else if (p == outbound)
+							makeOutboundPeer();
+					}
 				}
 			}, 1, TimeUnit.SECONDS);
 		}
@@ -693,8 +695,16 @@ public class RelayNode {
 					System.out.println("\nTrusted nodes: "); linesPrinted += 2;
 					synchronized (trustedPeerConnectionsMap) {
 						for (Map.Entry<InetAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
-							System.out.println("  " + entry.getValue().addr +
-									((entry.getValue().inboundConnected && entry.getValue().outboundConnected) ? " connected" : " not connected"));
+							String status;
+							if (entry.getValue().inboundConnected && entry.getValue().outboundConnected)
+								status = " fully connected";
+							else if (entry.getValue().inboundConnected)
+								status = " inbound connection only";
+							else if (entry.getValue().outboundConnected)
+								status = " outbound connection only";
+							else
+								status = " not connected";
+							System.out.println("  " + entry.getValue().addr + status);
 							linesPrinted++;
 						}
 					}
