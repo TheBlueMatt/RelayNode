@@ -700,31 +700,38 @@ public class RelayNode {
                     }
                 }
 
-                Set<InetAddress> relayPeers = new HashSet<InetAddress>();
-                if (trustedRelayPeers.peers.isEmpty()) {
-                    System.out.println("\nNo relay peers"); linesPrinted += 2;
-                } else {
-                    System.out.println("\nRelay peers:"); linesPrinted += 2;
-                    synchronized (trustedRelayPeers.peers) {
-                        for (PeerAndInvs peer : trustedRelayPeers.peers) { // If its not connected, its not in the set
-                            System.out.println("  " + peer.p.getAddress() + " connected"); linesPrinted++;
-                            relayPeers.add(peer.p.getAddress().getAddr());
-                        }
-                    }
-                    synchronized (relayPeersWaitingOnReconnection) {
-                        for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
-                            System.out.println("  " + a + " not connected"); linesPrinted++;
-                            relayPeers.add(a.getAddress());
-                        }
-                    }
-                }
+				Set<InetAddress> blockPeers = new HashSet<InetAddress>();
+				int relayClients = 0;
+				if (trustedRelayPeers.peers.isEmpty()) {
+					System.out.println("\nNo relay peers"); linesPrinted += 2;
+				} else {
+					System.out.println("\nRelay peers:"); linesPrinted += 2;
 
-                int relayClients = 0;
-                synchronized (blocksClients.peers) {
-                    for (PeerAndInvs p : blocksClients.peers)
-                        if (relayPeers.contains(p.p.getAddress().getAddr()))
-                            relayClients++;
-                }
+					synchronized (blocksClients.peers) {
+						for (PeerAndInvs p : blocksClients.peers)
+							blockPeers.add(p.p.getAddress().getAddr());
+					}
+					synchronized (trustedRelayPeers.peers) {
+						for (PeerAndInvs peer : trustedRelayPeers.peers) { // If its not connected, its not in the set
+							if (blockPeers.contains(peer.p.getAddress().getAddr())) {
+								System.out.println("  " + peer.p.getAddress() + " fully connected"); linesPrinted++;
+								relayClients++;
+							} else {
+								System.out.println("  " + peer.p.getAddress() + " connected outbound only"); linesPrinted++;
+							}
+						}
+					}
+					synchronized (relayPeersWaitingOnReconnection) {
+						for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
+							if (blockPeers.contains(a.getAddress())) {
+								System.out.println("  " + a + " connected inbound only"); linesPrinted++;
+								relayClients++;
+							} else {
+								System.out.println("  " + a + " not connected"); linesPrinted++;
+							}
+						}
+					}
+				}
 
                 System.out.println(); linesPrinted++;
                 System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
