@@ -284,8 +284,14 @@ public class RelayNode {
 						} catch (Exception e) { /* Invalid block, don't relay it */ }
 					}
 				});
-			} else if (m instanceof Transaction)
+			} else if (m instanceof Transaction) {
 				txPool.provideObject((Transaction) m);
+				try {
+					((Transaction) m).verify();
+				} catch (VerificationException e) {
+					return null; // Swallow "Transaction had no inputs or no outputs" without disconnecting client
+				}
+			}
 			return m;
 		}
 	};
@@ -311,8 +317,10 @@ public class RelayNode {
 		public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
 
 		private synchronized void makeInboundPeer() {
-			if (inbound != null)
+			if (inbound != null) {
+				inbound.removeEventListener(trustedPeerDisconnectListener);
 				inbound.close(); // Double-check closed
+			}
 
 			inbound = new Peer(params, versionMessage, null, new PeerAddress(addr));
 			inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
@@ -327,11 +335,14 @@ public class RelayNode {
 		}
 
 		private synchronized void makeOutboundPeer() {
-			if (outbound != null)
+			if (outbound != null) {
+				outbound.removeEventListener(trustedPeerDisconnectListener);
 				outbound.close(); // Double-check closed
+			}
 
 			outbound = trustedOutboundPeerGroup.connectTo(addr);
 			trustedOutboundPeers.add(outbound);
+			outbound.addEventListener(trustedPeerDisconnectListener);
 			trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener() {
 				@Override
 				protected void doneDownload() {
@@ -443,9 +454,8 @@ public class RelayNode {
 		@Override
 		public void onPeerDisconnected(Peer peer, int peerCount) {
 			TrustedPeerConnections connections = trustedPeerConnectionsMap.get(peer.getAddress().getAddr());
-			if (connections == null) {
+			if (connections == null)
 				return;
-			}
 			connections.onDisconnect(peer);
 		}
 	};
@@ -470,6 +480,7 @@ public class RelayNode {
 							blockChain.add(((Block) m).cloneAsHeader());
 						} catch (Exception e) {
 							LogLine("WARNING: Exception adding block from relay peer " + p.getAddress());
+							trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener());
 						}
 					}
 				});
@@ -484,7 +495,7 @@ public class RelayNode {
 	 ***************************/
 	FileWriter relayLog;
 	public RelayNode() throws BlockStoreException, IOException {
-		String version = "amazing axolotl";
+		String version = "omnipotent okapi";
 		versionMessage.appendToSubVer("RelayNode", version, null);
 		// Fudge a few flags so that we can connect to other relay nodes
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -523,6 +534,7 @@ public class RelayNode {
 				@Nullable
 				@Override
 				public StreamParser getNewParser(InetAddress inetAddress, int port) {
+					versionMessage.time = System.currentTimeMillis()/1000;
 					Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
 					blocksClients.add(p); // Should come first to avoid relaying back to the sender
 					p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
@@ -534,6 +546,7 @@ public class RelayNode {
 				@Nullable
 				@Override
 				public StreamParser getNewParser(InetAddress inetAddress, int port) {
+					versionMessage.time = System.currentTimeMillis()/1000;
 					Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
 					txnClients.add(blocksClients.add(p)); // Should come first to avoid relaying back to the sender
 					p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
@@ -618,6 +631,7 @@ public class RelayNode {
 	}
 
 	public void ConnectToTrustedRelayPeer(final InetSocketAddress address) {
+		versionMessage.time = System.currentTimeMillis()/1000;
 		final Peer p = new Peer(params, versionMessage, null, new PeerAddress(address));
 		p.addEventListener(trustedRelayPeerListener, Threading.SAME_THREAD);
 		p.addEventListener(new AbstractPeerEventListener() {
