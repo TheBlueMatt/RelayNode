@@ -322,6 +322,7 @@ public class RelayNode {
 				inbound.close(); // Double-check closed
 			}
 
+			versionMessage.time = System.currentTimeMillis()/1000;
 			inbound = new Peer(params, versionMessage, null, new PeerAddress(addr));
 			inbound.addEventListener(trustedPeerInboundListener, Threading.SAME_THREAD);
 			inbound.addEventListener(trustedPeerDisconnectListener);
@@ -465,7 +466,7 @@ public class RelayNode {
 	 ***** Stuff to keep track of other relay nodes which we trust *****
 	 *******************************************************************/
 	Peers trustedRelayPeers = new Peers(); // Just used to keep a list of relay peers
-	Set<InetSocketAddress> relayPeersWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
+	final Set<InetSocketAddress> relayPeersWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
 	PeerEventListener trustedRelayPeerListener = new AbstractPeerEventListener() {
 		@Override
 		public Message onPreMessageReceived(final Peer p, final Message m) {
@@ -480,7 +481,8 @@ public class RelayNode {
 							blockChain.add(((Block) m).cloneAsHeader());
 						} catch (Exception e) {
 							LogLine("WARNING: Exception adding block from relay peer " + p.getAddress());
-							trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener());
+							// Force reconnect of trusted peer
+							trustedOutboundPeerGroup.getDownloadPeer().close();
 						}
 					}
 				});
@@ -495,7 +497,7 @@ public class RelayNode {
 	 ***************************/
 	FileWriter relayLog;
 	public RelayNode() throws BlockStoreException, IOException {
-		String version = "omnipotent okapi";
+		String version = "great gerenuk";
 		versionMessage.appendToSubVer("RelayNode", version, null);
 		// Fudge a few flags so that we can connect to other relay nodes
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -637,7 +639,12 @@ public class RelayNode {
 		p.addEventListener(new AbstractPeerEventListener() {
 			@Override
 			public void onPeerDisconnected(Peer peer, int peerCount) {
-				Preconditions.checkState(peer == p);
+				if (peer != p) {
+					LogLine("Got onPeerDisconnected for non-p?");
+					if (!peer.getAddress().equals(p.getAddress()))
+						LogLine("They even had different address: " + peer.getAddress() + p.getAddress() + "????");
+					p.close();
+				}
 				relayPeersWaitingOnReconnection.add(address);
 				reconnectExecutor.schedule(new Runnable() {
 					@Override
@@ -680,7 +687,7 @@ public class RelayNode {
 		// Things may break if your column count is too small
 		boolean firstIteration = true;
 		int linesPrinted = 1;
-		for (int iter = 0; true; iter++) {
+		while (true) {
 			int prevLinesPrinted = linesPrinted;
 			linesPrinted = 1;
 
