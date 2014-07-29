@@ -315,12 +315,23 @@ public class RelayNode {
 
 		public volatile boolean inboundConnected = false; // Flag for UI only, very racy, often wrong
 		public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
+		private ScheduledFuture reconnectFuture = null;
 
-		private synchronized void makeInboundPeer() {
+		private synchronized void disconnect() {
 			if (inbound != null) {
 				inbound.removeEventListener(trustedPeerDisconnectListener);
 				inbound.close(); // Double-check closed
 			}
+			inboundConnected = false;
+			if (outbound != null) {
+				outbound.removeEventListener(trustedPeerDisconnectListener);
+				outbound.close(); // Double-check closed
+			}
+			outboundConnected = false;
+		}
+
+		private synchronized void connect() {
+			disconnect();
 
 			versionMessage.time = System.currentTimeMillis()/1000;
 			inbound = new Peer(params, versionMessage, null, new PeerAddress(addr));
@@ -333,13 +344,6 @@ public class RelayNode {
 				}
 			});
 			trustedPeerManager.openConnection(addr, inbound);
-		}
-
-		private synchronized void makeOutboundPeer() {
-			if (outbound != null) {
-				outbound.removeEventListener(trustedPeerDisconnectListener);
-				outbound.close(); // Double-check closed
-			}
 
 			outbound = trustedOutboundPeerGroup.connectTo(addr);
 			trustedOutboundPeers.add(outbound);
@@ -350,34 +354,31 @@ public class RelayNode {
 					chainDownloadDone = true;
 				}
 			});
-			outboundConnected = true; // Ehhh...assume we got through...
+			outbound.addEventListener(new AbstractPeerEventListener() {
+				@Override
+				public void onPeerConnected(Peer p, int peerCount) {
+					outboundConnected = true;
+				}
+			});
 		}
 
-		public void onDisconnect(final Peer p) {
-			if (p == inbound)
-				inboundConnected = false;
-			else if (p == outbound)
-				outboundConnected = false;
+		public synchronized void onDisconnect(final Peer p) {
+			disconnect();
 
-			reconnectExecutor.schedule(new Runnable() {
+			if (reconnectFuture != null)
+				reconnectFuture.cancel(false);
+
+			reconnectFuture = reconnectExecutor.schedule(new Runnable() {
 				@Override
 				public void run() {
-					synchronized (TrustedPeerConnections.this) {
-						if (p == inbound)
-							makeInboundPeer();
-						else if (p == outbound)
-							makeOutboundPeer();
-					}
+					connect();
 				}
 			}, 1, TimeUnit.SECONDS);
 		}
 
 		public TrustedPeerConnections(InetSocketAddress addr) {
 			this.addr = addr;
-
-			makeInboundPeer();
-			makeOutboundPeer();
-
+			connect();
 			trustedPeerConnectionsMap.put(addr.getAddress(), this);
 		}
 	}
@@ -497,7 +498,7 @@ public class RelayNode {
 	 ***************************/
 	FileWriter relayLog;
 	public RelayNode() throws BlockStoreException, IOException {
-		String version = "great gerenuk";
+		String version = "stable salamander";
 		versionMessage.appendToSubVer("RelayNode", version, null);
 		// Fudge a few flags so that we can connect to other relay nodes
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
