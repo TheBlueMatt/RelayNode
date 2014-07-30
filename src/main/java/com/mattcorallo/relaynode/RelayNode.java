@@ -21,6 +21,7 @@ import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
+import sun.rmi.runtime.Log;
 
 import javax.annotation.Nullable;
 import java.io.FileWriter;
@@ -37,15 +38,7 @@ import java.util.concurrent.*;
  */
 class PeerAndInvs {
 	Peer p;
-	Set<InventoryItem> invs = new LinkedHashSet<InventoryItem>() {
-		@Override
-		public synchronized boolean add(InventoryItem e) {
-			boolean res = super.add(e);
-			if (size() > 500)
-				super.remove(super.iterator().next());
-			return res;
-		}
-	};
+	Set<InventoryItem> invs = LimitedSynchronizedObjects.createSet(500);
 
 	public PeerAndInvs(Peer p) {
 		this.p = p;
@@ -139,15 +132,7 @@ abstract class Pool<Type extends Message> {
 			return super.put(key, value);
 		}
 	};
-	Set<Sha256Hash> objectsRelayed = new LinkedHashSet<Sha256Hash>() {
-		@Override
-		public boolean add(Sha256Hash e) {
-			boolean res = super.add(e);
-			if (size() > relayedCacheSize())
-				super.remove(super.iterator().next()); //TODO: right order, or inverse?
-			return res;
-		}
-	};
+	Set<Sha256Hash> objectsRelayed = LimitedSynchronizedObjects.createSet(relayedCacheSize());
 
 	Peers trustedOutboundPeers;
 	public Pool(Peers trustedOutboundPeers) {
@@ -178,7 +163,7 @@ abstract class Pool<Type extends Message> {
 	}
 
 	public void provideObject(final Type m) {
-		synchronized (Pool.this) {
+		synchronized (this) {
 			if (!objectsRelayed.contains(m.getHash()))
 				objects.put(m.getHash(), m);
 		}
@@ -230,7 +215,7 @@ class TransactionPool extends Pool<Transaction> {
  */
 public class RelayNode {
 	public static void main(String[] args) throws Exception {
-		new RelayNode().run(8334, 8335);
+		new RelayNode().run(8334, 8335, 8336);
 	}
 
 	// We do various things async to avoid blocking network threads on expensive processing
@@ -278,7 +263,7 @@ public class RelayNode {
 						blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
 						try {
 							if (blockChain.add(((Block) m).cloneAsHeader())) {
-								LogBlockRelay(m.getHash(), "SPV check, from " + p.getAddress());
+								LogBlockRelay(m.getHash(), "SPV check, from " + (p == null ? "relay peer" : p.getAddress()));
 								blockPool.invGood(blocksClients, m.getHash());
 							}
 						} catch (Exception e) { /* Invalid block, don't relay it */ }
@@ -390,8 +375,8 @@ public class RelayNode {
 		public Message onPreMessageReceived(final Peer p, final Message m) {
 			if (m instanceof InventoryMessage) {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
-				final List<Sha256Hash> blocksGood = new LinkedList<Sha256Hash>();
-				final List<Sha256Hash> txGood = new LinkedList<Sha256Hash>();
+				final List<Sha256Hash> blocksGood = new LinkedList<>();
+				final List<Sha256Hash> txGood = new LinkedList<>();
 				for (InventoryItem item : ((InventoryMessage)m).getItems()) {
 					if (item.type == InventoryItem.Type.Block) {
 						if (blockPool.shouldRequestInv(item.hash))
@@ -498,7 +483,7 @@ public class RelayNode {
 	 ***************************/
 	FileWriter relayLog;
 	public RelayNode() throws BlockStoreException, IOException {
-		String version = "stable salamander";
+		String version = "beta baboon";
 		versionMessage.appendToSubVer("RelayNode", version, null);
 		// Fudge a few flags so that we can connect to other relay nodes
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
@@ -517,7 +502,7 @@ public class RelayNode {
 		trustedOutboundPeerGroup.startAndWait();
 	}
 
-	public void run(int onlyBlocksListenPort, int bothListenPort) {
+	public void run(int onlyBlocksListenPort, int bothListenPort, int relayListenPort) {
 		Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
 			@Override
 			public void uncaughtException(Thread t, Throwable e) {
@@ -557,8 +542,40 @@ public class RelayNode {
 				}
 			}, new InetSocketAddress(bothListenPort));
 
+			NioServer relayServer = new NioServer(new StreamParserFactory() {
+				@Nullable
+				@Override
+				public StreamParser getNewParser(InetAddress inetAddress, int port) {
+					return new RelayConnection() {
+						@Override
+						void LogLine(String line) {
+							LogLine(line);
+						}
+
+						@Override
+						void receiveBlock(Block b) {
+							clientPeerListener.onPreMessageReceived(null, b);
+						}
+
+						@Override
+						void receiveTransaction(Transaction t) {
+							clientPeerListener.onPreMessageReceived(null, t);
+						}
+
+						@Override
+						public void connectionClosed() {
+						}
+
+						@Override
+						public void connectionOpened() {
+						}
+					};
+				}
+			}, new InetSocketAddress(relayListenPort));
+
 			onlyBlocksServer.startAndWait();
 			bothServer.startAndWait();
+			relayServer.startAndWait();
 		} catch (IOException e) {
 			System.err.println("Failed to bind to port");
 			System.exit(1);
@@ -599,7 +616,7 @@ public class RelayNode {
 					if (addr.isUnresolved())
 						LogLine("Unable to resolve host");
 					else {
-						if (trustedPeerConnectionsMap.containsKey(addr)) {
+						if (trustedPeerConnectionsMap.containsKey(addr.getAddress())) {
 							LogLine("Already had trusted peer " + addr);
 						} else {
 							new TrustedPeerConnections(addr);

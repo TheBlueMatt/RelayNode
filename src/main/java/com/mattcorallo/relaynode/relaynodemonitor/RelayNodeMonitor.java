@@ -174,7 +174,7 @@ public class RelayNodeMonitor {
                     continue;
                 }
                 peerGroup.connectTo(addr);
-                nodes.put(addr, Long.valueOf(0));
+                nodes.put(addr, (long) 0);
                 System.err.println("Connected to " + addr);
             } catch (NumberFormatException e) {
                 System.err.println("Invalid port");
