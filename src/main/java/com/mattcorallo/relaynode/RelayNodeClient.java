@@ -114,7 +114,17 @@ public class RelayNodeClient {
 
 			@Override
 			public Message onPreMessageReceived(Peer p, Message m) {
-				if (m instanceof Block) {
+				if (m instanceof InventoryMessage) {
+					GetDataMessage getDataMessage = new GetDataMessage(params);
+					for (InventoryItem item : ((InventoryMessage)m).getItems()) {
+						if (item.type == InventoryItem.Type.Block)
+							getDataMessage.addBlock(item.hash);
+						else if (item.type == InventoryItem.Type.Transaction)
+							getDataMessage.addTransaction(item.hash);
+					}
+					if (!getDataMessage.getItems().isEmpty())
+						p.sendMessage(getDataMessage);
+				} else if (m instanceof Block) {
 					System.out.println("Received local block " + ((Block) m).getHashAsString());
 					relayPeer.sendBlock((Block) m);
 				} else if (m instanceof Transaction) {

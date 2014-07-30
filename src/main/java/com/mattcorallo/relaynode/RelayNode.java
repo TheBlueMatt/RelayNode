@@ -162,6 +162,10 @@ abstract class Pool<Type extends Message> {
 		return !objectsRelayed.contains(hash) && !objects.containsKey(hash);
 	}
 
+	public Type getObject(Sha256Hash hash) {
+		return objects.get(hash);
+	}
+
 	public void provideObject(final Type m) {
 		synchronized (this) {
 			if (!objectsRelayed.contains(m.getHash()))
@@ -240,6 +244,7 @@ public class RelayNode {
 	 ******************************************/
 	final Peers txnClients = new Peers();
 	final Peers blocksClients = new Peers();
+	RelayConnectionListener relayClients;
 	PeerEventListener clientPeerListener = new AbstractPeerEventListener() {
 		@Override
 		public Message onPreMessageReceived(final Peer p, final Message m) {
@@ -262,8 +267,9 @@ public class RelayNode {
 					public void run() {
 						blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
 						try {
-							if (blockChain.add(((Block) m).cloneAsHeader())) {
+							if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
 								LogBlockRelay(m.getHash(), "SPV check, from " + (p == null ? "relay peer" : p.getAddress()));
+								relayClients.sendBlock((Block) m);
 								blockPool.invGood(blocksClients, m.getHash());
 							}
 						} catch (Exception e) { /* Invalid block, don't relay it */ }
@@ -397,6 +403,7 @@ public class RelayNode {
 						@Override
 						public void run() {
 							for (Sha256Hash hash : blocksGood) {
+								relayClients.sendBlock(blockPool.getObject(hash));
 								LogBlockRelay(hash, "inv from node " + p.getAddress());
 								blockPool.invGood(blocksClients, hash);
 							}
@@ -406,14 +413,17 @@ public class RelayNode {
 					asyncExecutor.execute(new Runnable() {
 						@Override
 						public void run() {
-							for (Sha256Hash hash : txGood)
+							for (Sha256Hash hash : txGood) {
+								relayClients.sendTransaction(txPool.getObject(hash));
 								txPool.invGood(txnClients, hash);
+							}
 						}
 					});
 			} else if (m instanceof Transaction) {
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
+						relayClients.sendTransaction((Transaction) m);
 						txPool.provideObject((Transaction) m);
 						txPool.invGood(txnClients, m.getHash());
 					}
@@ -422,6 +432,7 @@ public class RelayNode {
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
+						relayClients.sendBlock((Block) m);
 						blockPool.provideObject((Block) m);
 						LogBlockRelay(m.getHash(), "block from node " + p.getAddress());
 						blockPool.invGood(blocksClients, m.getHash());
@@ -460,6 +471,7 @@ public class RelayNode {
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
+						relayClients.sendBlock((Block) m);
 						blockPool.provideObject((Block) m);
 						LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
 						blockPool.invGood(blocksClients, m.getHash());
@@ -542,40 +554,10 @@ public class RelayNode {
 				}
 			}, new InetSocketAddress(bothListenPort));
 
-			NioServer relayServer = new NioServer(new StreamParserFactory() {
-				@Nullable
-				@Override
-				public StreamParser getNewParser(InetAddress inetAddress, int port) {
-					return new RelayConnection() {
-						@Override
-						void LogLine(String line) {
-							LogLine(line);
-						}
-
-						@Override
-						void receiveBlock(Block b) {
-							clientPeerListener.onPreMessageReceived(null, b);
-						}
-
-						@Override
-						void receiveTransaction(Transaction t) {
-							clientPeerListener.onPreMessageReceived(null, t);
-						}
-
-						@Override
-						public void connectionClosed() {
-						}
-
-						@Override
-						public void connectionOpened() {
-						}
-					};
-				}
-			}, new InetSocketAddress(relayListenPort));
+			relayClients = new RelayConnectionListener(relayListenPort, clientPeerListener);
 
 			onlyBlocksServer.startAndWait();
 			bothServer.startAndWait();
-			relayServer.startAndWait();
 		} catch (IOException e) {
 			System.err.println("Failed to bind to port");
 			System.exit(1);
@@ -750,7 +732,7 @@ public class RelayNode {
 				}
 
 				Set<InetAddress> blockPeers = new HashSet<InetAddress>();
-				int relayClients = 0;
+				int relayClientCount = 0;
 				if (trustedRelayPeers.peers.isEmpty()) {
 					System.out.println("\nNo relay peers"); linesPrinted += 2;
 				} else {
@@ -764,7 +746,7 @@ public class RelayNode {
 						for (PeerAndInvs peer : trustedRelayPeers.peers) { // If its not connected, its not in the set
 							if (blockPeers.contains(peer.p.getAddress().getAddr())) {
 								System.out.println("  " + peer.p.getAddress() + " fully connected"); linesPrinted++;
-								relayClients++;
+								relayClientCount++;
 							} else {
 								System.out.println("  " + peer.p.getAddress() + " connected outbound only"); linesPrinted++;
 							}
@@ -774,7 +756,7 @@ public class RelayNode {
 						for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
 							if (blockPeers.contains(a.getAddress())) {
 								System.out.println("  " + a + " connected inbound only"); linesPrinted++;
-								relayClients++;
+								relayClientCount++;
 							} else {
 								System.out.println("  " + a + " not connected"); linesPrinted++;
 							}
@@ -785,8 +767,9 @@ public class RelayNode {
 				System.out.println(); linesPrinted++;
 				System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
 				System.out.println("Connected block-only clients: " +
-						(blocksClients.size() - txnClients.size() - relayClients)); linesPrinted++;
-				System.out.println("Connected relay node clients: " + relayClients); linesPrinted++;
+						(blocksClients.size() - txnClients.size() - relayClientCount)); linesPrinted++;
+				System.out.println("Connected relay clients: " + relayClients.getClientCount()); linesPrinted++;
+				System.out.println("Connected relay node clients: " + relayClientCount); linesPrinted++;
 				System.out.println("Chain download at " + blockChain.getBestChainHeight() + (chainDownloadDone ? " (relaying SPV-checked blocks)" : "")); linesPrinted++;
 
 				System.out.println(); linesPrinted++;
