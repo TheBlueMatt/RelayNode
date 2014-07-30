@@ -769,7 +769,7 @@ public class RelayNode {
 				System.out.println("Connected block-only clients: " +
 						(blocksClients.size() - txnClients.size() - relayClientCount)); linesPrinted++;
 				System.out.println("Connected relay clients: " + relayClients.getClientCount()); linesPrinted++;
-				System.out.println("Connected relay node clients: " + relayClientCount); linesPrinted++;
+				System.out.println("Connected relay node peers: " + relayClientCount); linesPrinted++;
 				System.out.println("Chain download at " + blockChain.getBestChainHeight() + (chainDownloadDone ? " (relaying SPV-checked blocks)" : "")); linesPrinted++;
 
 				System.out.println(); linesPrinted++;

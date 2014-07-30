@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
+import java.nio.channels.NotYetConnectedException;
 import java.util.*;
 
 public class RelayNodeClient {
@@ -72,18 +73,23 @@ public class RelayNodeClient {
 			@Override
 			void receiveBlock(Block b) {
 				System.err.println("Received block " + b.getHashAsString());
-				localNetworkPeer.sendMessage(b);
+				try {
+					localNetworkPeer.sendMessage(b);
+				} catch (NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override
 			void receiveTransaction(Transaction t) {
 				System.err.println("Received transaction " + t.getHashAsString());
-				localNetworkPeer.sendMessage(t);
+				try {
+					localNetworkPeer.sendMessage(t);
+				} catch (NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override
 			public void connectionClosed() {
 				System.err.println("Lost connection to relay peer");
+				//TODO: Reconnect
 			}
 
 			@Override
