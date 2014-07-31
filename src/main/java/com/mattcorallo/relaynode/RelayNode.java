@@ -554,7 +554,7 @@ public class RelayNode {
 				}
 			}, new InetSocketAddress(bothListenPort));
 
-			relayClients = new RelayConnectionListener(relayListenPort, clientPeerListener);
+			relayClients = new RelayConnectionListener(relayListenPort, clientPeerListener, this);
 
 			onlyBlocksServer.startAndWait();
 			bothServer.startAndWait();
@@ -589,45 +589,45 @@ public class RelayNode {
 			} else if (line.startsWith("t ")) {
 				String[] hostPort = line.substring(2).split(":");
 				if (hostPort.length != 2) {
-					LogLine("Invalid argument");
+					LogLineEnter("Invalid argument");
 					continue;
 				}
 				try {
 					int port = Integer.parseInt(hostPort[1]);
 					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
 					if (addr.isUnresolved())
-						LogLine("Unable to resolve host");
+						LogLineEnter("Unable to resolve host");
 					else {
 						if (trustedPeerConnectionsMap.containsKey(addr.getAddress())) {
-							LogLine("Already had trusted peer " + addr);
+							LogLineEnter("Already had trusted peer " + addr);
 						} else {
 							new TrustedPeerConnections(addr);
-							LogLine("Added trusted peer " + addr);
+							LogLineEnter("Added trusted peer " + addr);
 						}
 					}
 				} catch (NumberFormatException e) {
-					LogLine("Invalid argument");
+					LogLineEnter("Invalid argument");
 				}
 			} else if (line.startsWith("r ")) {
 				String[] hostPort = line.substring(2).split(":");
 				if (hostPort.length != 2) {
-					LogLine("Invalid argument");
+					LogLineEnter("Invalid argument");
 					continue;
 				}
 				try {
 					int port = Integer.parseInt(hostPort[1]);
 					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
 					if (addr.isUnresolved())
-						LogLine("Unable to resolve host");
+						LogLineEnter("Unable to resolve host");
 					else {
 						ConnectToTrustedRelayPeer(addr);
-						LogLine("Added trusted relay peer " + addr);
+						LogLineEnter("Added trusted relay peer " + addr);
 					}
 				} catch (NumberFormatException e) {
-					LogLine("Invalid argument");
+					LogLineEnter("Invalid argument");
 				}
 			} else {
-				LogLine("Invalid command");
+				LogLineEnter("Invalid command");
 			}
 		}
 	}
@@ -660,9 +660,16 @@ public class RelayNode {
 	}
 
 	final Queue<String> logLines = new LinkedList<String>();
+	int enterPressed = 0;
 	public void LogLine(String line) {
 		synchronized (logLines) {
 			logLines.add(line);
+		}
+	}
+	public void LogLineEnter(String line) {
+		synchronized (logLines) {
+			logLines.add(line);
+			enterPressed++;
 		}
 	}
 
@@ -696,17 +703,17 @@ public class RelayNode {
 					synchronized (logLines) {
 						System.out.print("\033[s\033[1000D"); // Save cursor position + move to first char
 
-						for (String ignored : logLines)
+						for (int i = 0; i < logLines.size() - enterPressed; i++)
 							System.out.println(); // Move existing log lines up
 
 						for (int i = 0; i < prevLinesPrinted; i++)
 							System.out.print("\033[1A\033[K"); // Up+clear linesPrinted lines
 
-						for (String ignored : logLines)
+						for (int i = 0; i < logLines.size(); i++)
 							System.out.print("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
 						for (String line : logLines)
 							System.out.println(line);
-						logLines.clear();
+						logLines.clear(); enterPressed = 0;
 					}
 				}
 

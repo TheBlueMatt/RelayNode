@@ -133,15 +133,13 @@ public abstract class RelayConnection implements StreamParser {
 				readingBlock.addTransaction(new QuarterHash(buff));
 				txnInBlock++;
 			}
-			readingBlock = null;
-		} catch (BufferUnderflowException e) {
-			transactionsLeft = transactionsLeft - i;
-		}
+		} catch (BufferUnderflowException e) {}
+		transactionsLeft = transactionsLeft - i;
 		return QuarterHash.BYTE_LENGTH * i;
 	}
 
 	@Override
-	public int receiveBytes(ByteBuffer buff) throws Exception {
+	public int receiveBytes(ByteBuffer buff) {
 		int startPos = buff.position();
 		try {
 			if (readingTransaction != null) {
@@ -165,9 +163,9 @@ public abstract class RelayConnection implements StreamParser {
 					return read + receiveBytes(buff);
 				} else
 					return read;
-			} else if (readingBlock != null) {
+			} else if (transactionsLeft > 0) {
 				int res = readBlockTransactions(buff);
-				if (readingBlock == null)
+				if (transactionsLeft <= 0)
 					return res + receiveBytes(buff);
 				else
 					return res;
@@ -214,7 +212,7 @@ public abstract class RelayConnection implements StreamParser {
 		} catch (BufferUnderflowException e) {
 			buff.position(startPos);
 			return 0;
-		} catch (VerificationException | ArrayIndexOutOfBoundsException e) {
+		} catch (NullPointerException | VerificationException | ArrayIndexOutOfBoundsException e) {
 			LogLine("Corrupted data read from relay peer " + e.getMessage());
 			relayPeer.closeConnection();
 			return 0;

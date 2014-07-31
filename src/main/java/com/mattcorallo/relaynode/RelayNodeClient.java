@@ -12,6 +12,7 @@ package com.mattcorallo.relaynode;
 import com.google.bitcoin.core.*;
 import com.google.bitcoin.net.MessageWriteTarget;
 import com.google.bitcoin.net.NioClient;
+import com.google.bitcoin.net.NioClientManager;
 import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.params.MainNetParams;
 import com.google.common.collect.HashMultimap;
@@ -23,6 +24,7 @@ import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.channels.NotYetConnectedException;
 import java.util.*;
+import java.util.concurrent.*;
 
 public class RelayNodeClient {
 	private static void usage() {
@@ -48,16 +50,21 @@ public class RelayNodeClient {
 		}
 	}
 
+	final NioClientManager connectionManager = new NioClientManager();
+
 	final NetworkParameters params = MainNetParams.get();
 	InetSocketAddress relayPeerAddress, localPeerAddress;
 	Peer localNetworkPeer;
 
-	Map<QuarterHash, Transaction> localTransactionCache = LimitedSynchronizedObjects.createMap(500);
 	RelayConnection relayPeer;
+
+	ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
 
 	public RelayNodeClient(InetSocketAddress relayPeerAddress, InetSocketAddress localPeerAddress) {
 		this.localPeerAddress = localPeerAddress;
 		this.relayPeerAddress = relayPeerAddress;
+
+		connectionManager.startAsync().awaitRunning();
 
 		reconnectLocal();
 		reconnectRelay();
@@ -89,7 +96,12 @@ public class RelayNodeClient {
 			@Override
 			public void connectionClosed() {
 				System.err.println("Lost connection to relay peer");
-				//TODO: Reconnect
+				executor.schedule(new Runnable() {
+					@Override
+					public void run() {
+						reconnectRelay();
+					}
+				}, 1, TimeUnit.SECONDS);
 			}
 
 			@Override
@@ -97,11 +109,7 @@ public class RelayNodeClient {
 				System.err.println("Connected to relay peer!");
 			}
 		};
-		try {
-			new NioClient(relayPeerAddress, relayPeer, 1000);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+		connectionManager.openConnection(relayPeerAddress, relayPeer);
 	}
 
 	void reconnectLocal() {
@@ -115,7 +123,12 @@ public class RelayNodeClient {
 			@Override
 			public void onPeerDisconnected(Peer p, int peerCount) {
 				System.err.println("Lost connection to local bitcoind!");
-				reconnectLocal();
+				executor.schedule(new Runnable() {
+					@Override
+					public void run() {
+						reconnectLocal();
+					}
+				}, 1, TimeUnit.SECONDS);
 			}
 
 			@Override
@@ -141,10 +154,6 @@ public class RelayNodeClient {
 			}
 		});
 
-		try {
-			new NioClient(localPeerAddress, localNetworkPeer, 1000);
-		} catch (IOException e) {
-			System.err.println("Error connecting to Peer: " + e.getLocalizedMessage());
-		}
+		connectionManager.openConnection(localPeerAddress, localNetworkPeer);
 	}
 }

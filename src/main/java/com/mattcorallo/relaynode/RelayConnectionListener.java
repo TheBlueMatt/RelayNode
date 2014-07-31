@@ -20,7 +20,7 @@ public class RelayConnectionListener {
 
 	private final Set<RelayConnection> connectionSet = Collections.synchronizedSet(new HashSet<RelayConnection>());
 
-	public RelayConnectionListener(int port, final PeerEventListener clientPeerListener) throws IOException {
+	public RelayConnectionListener(int port, final PeerEventListener clientPeerListener, final RelayNode lineLogger) throws IOException {
 		NioServer relayServer = new NioServer(new StreamParserFactory() {
 			@Nullable
 			@Override
@@ -28,7 +28,7 @@ public class RelayConnectionListener {
 				return new RelayConnection() {
 					@Override
 					void LogLine(String line) {
-						LogLine(line);
+						lineLogger.LogLine(line);
 					}
 
 					@Override
