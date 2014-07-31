@@ -6,6 +6,7 @@ import com.google.bitcoin.core.Transaction;
 import com.google.bitcoin.net.NioServer;
 import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.net.StreamParserFactory;
+import org.jetbrains.annotations.NotNull;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -21,7 +22,7 @@ public class RelayConnectionListener {
 	private final Set<RelayConnection> connectionSet = Collections.synchronizedSet(new HashSet<RelayConnection>());
 	private final Set<InetAddress> remoteSet = Collections.synchronizedSet(new HashSet<InetAddress>());
 
-	public RelayConnectionListener(int port, final PeerEventListener clientPeerListener, final RelayNode lineLogger) throws IOException {
+	public RelayConnectionListener(int port, @NotNull final PeerEventListener clientPeerListener, @NotNull final RelayNode lineLogger) throws IOException {
 		NioServer relayServer = new NioServer(new StreamParserFactory() {
 			@Nullable
 			@Override
@@ -63,23 +64,24 @@ public class RelayConnectionListener {
 				};
 			}
 		}, new InetSocketAddress(port));
-		relayServer.startAndWait();
+		relayServer.startAsync().awaitRunning();
 	}
 
-	public void sendTransaction(Transaction t) {
+	public void sendTransaction(@NotNull Transaction t) {
 		synchronized (connectionSet) {
 			for (RelayConnection connection : connectionSet)
 				connection.sendTransaction(t);
 		}
 	}
 
-	public void sendBlock(Block b) {
+	public void sendBlock(@NotNull Block b) {
 		synchronized (connectionSet) {
 			for (RelayConnection connection : connectionSet)
 				connection.sendBlock(b);
 		}
 	}
 
+	@NotNull
 	public Set<InetAddress> getClientSet() {
 		synchronized (remoteSet) {
 			return new HashSet<>(remoteSet);

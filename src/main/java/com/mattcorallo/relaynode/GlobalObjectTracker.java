@@ -2,6 +2,8 @@ package com.mattcorallo.relaynode;
 
 import com.google.bitcoin.core.Transaction;
 import com.google.common.util.concurrent.Uninterruptibles;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.ref.WeakReference;
 import java.util.HashMap;
@@ -15,9 +17,11 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class GlobalObjectTracker {
 	private static final Map<QuarterHash, WeakReference<Transaction>> transactionCache = new HashMap<>();
+	@NotNull
 	static Lock transactionLock = new ReentrantLock();
 
-	public static Transaction putTransaction(QuarterHash hash, Transaction transaction) {
+	@NotNull
+	public static Transaction putTransaction(QuarterHash hash, @NotNull Transaction transaction) {
 		transactionLock.lock();
 		try {
 			WeakReference<Transaction> reference = transactionCache.get(hash);
@@ -34,7 +38,8 @@ public class GlobalObjectTracker {
 		}
 	}
 
-	public static Transaction putTransaction(Transaction transaction) {
+	@NotNull
+	public static Transaction putTransaction(@NotNull Transaction transaction) {
 		return putTransaction(new QuarterHash(transaction.getHash()), transaction);
 	}
 

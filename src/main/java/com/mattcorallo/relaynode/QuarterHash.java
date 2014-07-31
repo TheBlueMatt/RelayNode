@@ -1,6 +1,7 @@
 package com.mattcorallo.relaynode;
 
 import com.google.bitcoin.core.Sha256Hash;
+import org.jetbrains.annotations.NotNull;
 
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
@@ -12,11 +13,11 @@ public class QuarterHash {
 	public byte[] bytes;
 	public static final int BYTE_LENGTH = 10;
 
-	QuarterHash(Sha256Hash hash) {
+	QuarterHash(@NotNull Sha256Hash hash) {
 		bytes = Arrays.copyOfRange(hash.getBytes(), 0, BYTE_LENGTH);
 	}
 
-	QuarterHash(ByteBuffer buff) throws BufferUnderflowException {
+	QuarterHash(@NotNull ByteBuffer buff) throws BufferUnderflowException {
 		bytes = new byte[BYTE_LENGTH];
 		buff.get(bytes);
 	}
@@ -33,5 +34,9 @@ public class QuarterHash {
 	public boolean equals(Object o) {
 		return o instanceof QuarterHash &&
 				Arrays.equals(this.bytes, ((QuarterHash) o).bytes);
+	}
+
+	public static void writeBytes(Sha256Hash hash, ByteBuffer buff) {
+		buff.put(hash.getBytes(), 0, BYTE_LENGTH);
 	}
 }

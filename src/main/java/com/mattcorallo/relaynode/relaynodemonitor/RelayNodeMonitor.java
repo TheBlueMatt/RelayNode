@@ -13,6 +13,7 @@ import com.google.bitcoin.core.*;
 import com.google.bitcoin.params.MainNetParams;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.util.concurrent.Uninterruptibles;
+import org.jetbrains.annotations.NotNull;
 
 import java.net.InetSocketAddress;
 import java.net.URL;
@@ -27,7 +28,8 @@ import java.util.concurrent.TimeUnit;
  * someone!)
  */
 public class RelayNodeMonitor {
-    private static Map<String, Sha256Hash> lookupAPIBlocks() {
+    @NotNull
+	private static Map<String, Sha256Hash> lookupAPIBlocks() {
         Map<String, Sha256Hash> res = new HashMap<String, Sha256Hash>();
         try {
             URL u = new URL("http://blockchain.info/q/latesthash");
@@ -54,7 +56,7 @@ public class RelayNodeMonitor {
 
         Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
             @Override
-            public void uncaughtException(Thread t, Throwable e) {
+            public void uncaughtException(Thread t, @NotNull Throwable e) {
                 System.out.println("Unhandled exception " + e.toString());
             }
         };
@@ -69,7 +71,7 @@ public class RelayNodeMonitor {
 
         peerGroup.addEventListener(new AbstractPeerEventListener() {
             @Override
-            public Message onPreMessageReceived(final Peer p, final Message m) {
+            public Message onPreMessageReceived(@NotNull final Peer p, final Message m) {
                 if (m instanceof Block) {
                     synchronized (nodesWithBlock) {
                         Set<InetSocketAddress> s = nodesWithBlock.get(m.getHash());
@@ -99,7 +101,7 @@ public class RelayNodeMonitor {
             }
 
             @Override
-            public void onPeerDisconnected(final Peer p, int peerCount) {
+            public void onPeerDisconnected(@NotNull final Peer p, int peerCount) {
                 synchronized (nodes) {
                     if (nodes.get(p.getAddress().toSocketAddress()) < System.currentTimeMillis() - 15*60*1000) { // Only notify once every 15 minutes per node
                         System.out.println("Peer disconnected: " + p);

@@ -4,6 +4,8 @@ import com.google.bitcoin.core.*;
 import com.google.bitcoin.net.MessageWriteTarget;
 import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.params.MainNetParams;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
@@ -22,6 +24,7 @@ public abstract class RelayConnection implements StreamParser {
 
 	private class PendingBlock {
 		Block header;
+		@NotNull
 		Map<QuarterHash, Transaction> transactions = new LinkedHashMap<>();
 		int pendingTransactionCount = 0;
 
@@ -36,7 +39,7 @@ public abstract class RelayConnection implements StreamParser {
 				pendingTransactionCount++;
 		}
 
-		synchronized void foundTransaction(Transaction t) throws VerificationException {
+		synchronized void foundTransaction(@NotNull Transaction t) throws VerificationException {
 			if (transactions.containsKey(new QuarterHash(t.getHash()))) {
 				if (transactions.put(new QuarterHash(t.getHash()), t) != null)
 					throw new ProtocolException("");
@@ -83,8 +86,9 @@ public abstract class RelayConnection implements StreamParser {
 	abstract void receiveTransaction(Transaction t);
 
 	static final Executor sendBlockExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
+	static final Executor sendTransactionExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
 
-	public void sendBlock(final Block b) {
+	public void sendBlock(@NotNull final Block b) {
 		sendBlockExecutor.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -100,8 +104,10 @@ public abstract class RelayConnection implements StreamParser {
 								.put(blockHeader).putInt(transactionCount)
 								.array());
 
+						ByteBuffer txn = ByteBuffer.allocate(transactionCount * QuarterHash.BYTE_LENGTH);
 						for (Transaction t : b.getTransactions())
-							relayPeer.writeBytes(new QuarterHash(t.getHash()).bytes);
+							QuarterHash.writeBytes(t.getHash(), txn);
+						relayPeer.writeBytes(txn.array());
 
 						for (Transaction t : b.getTransactions()) {
 							if (!relayedTransactionCache.contains(t.getHash()))
@@ -124,31 +130,42 @@ public abstract class RelayConnection implements StreamParser {
 		});
 	}
 
-	private synchronized void sendTransaction(Transaction t, boolean cacheSend) {
+	private void sendTransaction(@NotNull final Transaction t, final boolean cacheSend) {
 		try {
-			if (cacheSend && relayedTransactionCache.contains(t.getHash()))
-				return;
 			byte[] transactionBytes = t.bitcoinSerialize();
-			relayPeer.writeBytes(ByteBuffer.allocate(4*3 + transactionBytes.length)
+			relayPeer.writeBytes(ByteBuffer.allocate(4 * 3 + transactionBytes.length)
 					.putInt(MAGIC_BYTES).putInt(MessageTypes.TRANSACTION.ordinal()).putInt(transactionBytes.length)
 					.put(transactionBytes)
 					.array());
-			if (cacheSend)
-				relayedTransactionCache.add(t.getHash());
 		} catch (IOException e) {
 			/* Should get a disconnect automatically */
 			LogLine("Failed to write bytes");
 		}
 	}
 
-	public void sendTransaction(Transaction t) {
-		sendTransaction(t, true);
+	public void sendTransaction(@NotNull final Transaction t) {
+		sendBlockExecutor.execute(new Runnable(){
+			@Override
+			public void run(){
+				synchronized(RelayConnection.this){
+					if (relayedTransactionCache.contains(t.getHash()))
+						return;
+					sendTransaction(t, true);
+					relayedTransactionCache.add(t.getHash());
+				}
+
+			}
+		});
 	}
 
+	@Nullable
 	private PendingBlock readingBlock; private int transactionsLeft;
+	@Nullable
 	private byte[] readingTransaction; private int readingTransactionPos;
 
-	private int readBlockTransactions(ByteBuffer buff) {
+	private int readBlockTransactions(@NotNull ByteBuffer buff) {
+		if (readingBlock == null)
+			throw new RuntimeException();
 		int i = 0;
 		try {
 			for (; i < transactionsLeft; i++) {
@@ -161,10 +178,16 @@ public abstract class RelayConnection implements StreamParser {
 	}
 
 	@Override
-	public int receiveBytes(ByteBuffer buff) {
+	public int receiveBytes(@NotNull ByteBuffer buff) {
 		int startPos = buff.position();
 		try {
-			if (readingTransaction != null) {
+			if (transactionsLeft > 0) {
+				int res = readBlockTransactions(buff);
+				if (transactionsLeft <= 0)
+					return res + receiveBytes(buff);
+				else
+					return res;
+			} else if (readingTransaction != null) {
 				int read = Math.min(readingTransaction.length - readingTransactionPos, buff.remaining());
 				buff.get(readingTransaction, readingTransactionPos, read);
 				readingTransactionPos += read;
@@ -186,12 +209,6 @@ public abstract class RelayConnection implements StreamParser {
 					return read + receiveBytes(buff);
 				} else
 					return read;
-			} else if (transactionsLeft > 0) {
-				int res = readBlockTransactions(buff);
-				if (transactionsLeft <= 0)
-					return res + receiveBytes(buff);
-				else
-					return res;
 			}
 
 			int magic = buff.getInt();
@@ -229,6 +246,8 @@ public abstract class RelayConnection implements StreamParser {
 					return 3*4 + receiveBytes(buff);
 
 				case END_BLOCK:
+					if (readingBlock == null)
+						throw new ProtocolException("END_BLOCK without BLOCK");
 					if (readingBlock.pendingTransactionCount > 0)
 						throw new ProtocolException("pendingTransactionCount " + readingBlock.pendingTransactionCount);
 
@@ -248,7 +267,7 @@ public abstract class RelayConnection implements StreamParser {
 		} catch (BufferUnderflowException e) {
 			buff.position(startPos);
 			return 0;
-		} catch (NullPointerException | VerificationException | ArrayIndexOutOfBoundsException e) {
+		} catch (@NotNull NullPointerException | VerificationException | ArrayIndexOutOfBoundsException e) {
 			LogLine("Corrupted data read from relay peer " + e.getMessage());
 			relayPeer.closeConnection();
 			return 0;
@@ -257,7 +276,7 @@ public abstract class RelayConnection implements StreamParser {
 	}
 
 	@Override
-	public void setWriteTarget(MessageWriteTarget writeTarget) {
+	public void setWriteTarget(@NotNull MessageWriteTarget writeTarget) {
 		try {
 			writeTarget.writeBytes(ByteBuffer.allocate(4 * 3 + RelayNode.VERSION.length())
 					.putInt(MAGIC_BYTES).putInt(MessageTypes.VERSION.ordinal()).putInt(RelayNode.VERSION.length())

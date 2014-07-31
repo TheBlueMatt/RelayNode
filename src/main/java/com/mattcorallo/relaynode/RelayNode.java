@@ -21,9 +21,10 @@ import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import sun.rmi.runtime.Log;
 
-import javax.annotation.Nullable;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -40,7 +41,7 @@ class PeerAndInvs {
 	Peer p;
 	Set<InventoryItem> invs = LimitedSynchronizedObjects.createSet(500);
 
-	public PeerAndInvs(Peer p) {
+	public PeerAndInvs(@NotNull Peer p) {
 		this.p = p;
 		p.addEventListener(new AbstractPeerEventListener() {
 			@Override
@@ -83,13 +84,14 @@ class PeerAndInvs {
 class Peers {
 	public final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
 
-	public PeerAndInvs add(Peer p) {
+	@NotNull
+	public PeerAndInvs add(@NotNull Peer p) {
 		PeerAndInvs peerAndInvs = new PeerAndInvs(p);
 		add(peerAndInvs);
 		return peerAndInvs;
 	}
 
-	public boolean add(final PeerAndInvs peerAndInvs) {
+	public boolean add(@NotNull final PeerAndInvs peerAndInvs) {
 		if (peers.add(peerAndInvs)) {
 			peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
 				@Override
@@ -123,8 +125,9 @@ abstract class Pool<Type extends Message> {
 		long removeTime = System.currentTimeMillis() + 60*1000;
 		AddedObject(Sha256Hash hash) { this.hash = hash; }
 	}
-	List<AddedObject> removeObjectList = Collections.synchronizedList(new LinkedList<AddedObject>());
+	final List<AddedObject> removeObjectList = Collections.synchronizedList(new LinkedList<AddedObject>());
 
+	@NotNull
 	Map<Sha256Hash, Type> objects = new HashMap<Sha256Hash, Type>() {
 		@Override
 		public Type put(Sha256Hash key, Type value) {
@@ -162,11 +165,11 @@ abstract class Pool<Type extends Message> {
 		return !objectsRelayed.contains(hash) && !objects.containsKey(hash);
 	}
 
-	public Type getObject(Sha256Hash hash) {
+	public @Nullable Type getObject(Sha256Hash hash) {
 		return objects.get(hash);
 	}
 
-	public void provideObject(final Type m) {
+	public void provideObject(@NotNull final Type m) {
 		synchronized (this) {
 			if (!objectsRelayed.contains(m.getHash()))
 				objects.put(m.getHash(), m);
@@ -174,7 +177,7 @@ abstract class Pool<Type extends Message> {
 		trustedOutboundPeers.relayObject(m);
 	}
 
-	public void invGood(final Peers clients, final Sha256Hash hash) {
+	public void invGood(@NotNull final Peers clients, final Sha256Hash hash) {
 		boolean relay = false;
 		Type o;
 		synchronized (Pool.this) {
@@ -218,23 +221,29 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "bearded bear";
+	public static final String VERSION = "annotated aguila";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
 	}
 
 	// We do various things async to avoid blocking network threads on expensive processing
+	@NotNull
 	public static Executor asyncExecutor = Executors.newCachedThreadPool();
 
 	NetworkParameters params = MainNetParams.get();
+	@NotNull
 	VersionMessage versionMessage = new VersionMessage(params, 0);
 
+	@NotNull
 	Peers trustedOutboundPeers = new Peers();
 
+	@NotNull
 	TransactionPool txPool = new TransactionPool(trustedOutboundPeers);
+	@NotNull
 	BlockPool blockPool = new BlockPool(trustedOutboundPeers);
 
+	@NotNull
 	BlockStore blockStore = new MemoryBlockStore(params);
 	BlockChain blockChain;
 	PeerGroup trustedOutboundPeerGroup;
@@ -246,10 +255,13 @@ public class RelayNode {
 	 ******************************************/
 	final Peers txnClients = new Peers();
 	final Peers blocksClients = new Peers();
+	@NotNull
 	RelayConnectionListener relayClients;
+	@NotNull
 	PeerEventListener clientPeerListener = new AbstractPeerEventListener() {
+		@Nullable
 		@Override
-		public Message onPreMessageReceived(final Peer p, final Message m) {
+		public Message onPreMessageReceived(@NotNull final Peer p, final Message m) {
 			if (m instanceof InventoryMessage) {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
 				for (InventoryItem item : ((InventoryMessage)m).getItems()) {
@@ -270,7 +282,7 @@ public class RelayNode {
 						blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
 						try {
 							if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
-								LogBlockRelay(m.getHash(), "SPV check, from " + (p == null ? "relay peer" : p.getAddress()));
+								LogBlockRelay(m.getHash(), "SPV check, from " + p.getAddress());
 								relayClients.sendBlock((Block) m);
 								blockPool.invGood(blocksClients, m.getHash());
 							}
@@ -295,19 +307,23 @@ public class RelayNode {
 	 ************************************************/
 
 	/** Manages reconnecting to trusted peers and relay nodes, often sleeps */
+	@NotNull
 	private static ScheduledExecutorService reconnectExecutor = Executors.newScheduledThreadPool(1);
 
 	/** Keeps track of a trusted peer connection (two connections per peer) */
 	class TrustedPeerConnections {
 		/** We only receive messages here (listen for invs of validated data) */
+		@Nullable
 		public Peer inbound;
 		/** We only send messages here (send unvalidated data) */
+		@Nullable
 		public Peer outbound;
 		/** The address to (re)connect to */
 		public InetSocketAddress addr;
 
 		public volatile boolean inboundConnected = false; // Flag for UI only, very racy, often wrong
 		public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
+		@Nullable
 		private ScheduledFuture reconnectFuture = null;
 
 		private synchronized void disconnect() {
@@ -339,6 +355,8 @@ public class RelayNode {
 			trustedPeerManager.openConnection(addr, inbound);
 
 			outbound = trustedOutboundPeerGroup.connectTo(addr);
+			if (outbound == null)
+				onDisconnect();
 			trustedOutboundPeers.add(outbound);
 			outbound.addEventListener(trustedPeerDisconnectListener);
 			trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener() {
@@ -355,7 +373,7 @@ public class RelayNode {
 			});
 		}
 
-		public synchronized void onDisconnect(final Peer p) {
+		public synchronized void onDisconnect() {
 			disconnect();
 
 			if (reconnectFuture != null)
@@ -369,7 +387,7 @@ public class RelayNode {
 			}, 1, TimeUnit.SECONDS);
 		}
 
-		public TrustedPeerConnections(InetSocketAddress addr) {
+		public TrustedPeerConnections(@NotNull InetSocketAddress addr) {
 			this.addr = addr;
 			connect();
 			trustedPeerConnectionsMap.put(addr.getAddress(), this);
@@ -377,10 +395,12 @@ public class RelayNode {
 	}
 
 	final Map<InetAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetAddress, TrustedPeerConnections>());
+	@NotNull
 	NioClientManager trustedPeerManager = new NioClientManager();
+	@NotNull
 	PeerEventListener trustedPeerInboundListener = new AbstractPeerEventListener() {
 		@Override
-		public Message onPreMessageReceived(final Peer p, final Message m) {
+		public Message onPreMessageReceived(@NotNull final Peer p, final Message m) {
 			if (m instanceof InventoryMessage) {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
 				final List<Sha256Hash> blocksGood = new LinkedList<>();
@@ -405,7 +425,9 @@ public class RelayNode {
 						@Override
 						public void run() {
 							for (Sha256Hash hash : blocksGood) {
-								relayClients.sendBlock(blockPool.getObject(hash));
+								Block b = blockPool.getObject(hash);
+								if (b != null)
+									relayClients.sendBlock(b);
 								LogBlockRelay(hash, "inv from node " + p.getAddress());
 								blockPool.invGood(blocksClients, hash);
 							}
@@ -416,7 +438,9 @@ public class RelayNode {
 						@Override
 						public void run() {
 							for (Sha256Hash hash : txGood) {
-								relayClients.sendTransaction(txPool.getObject(hash));
+								Transaction t = txPool.getObject(hash);
+								if (t != null)
+									relayClients.sendTransaction(t);
 								txPool.invGood(txnClients, hash);
 							}
 						}
@@ -450,13 +474,14 @@ public class RelayNode {
 		}
 	};
 
+	@NotNull
 	PeerEventListener trustedPeerDisconnectListener = new AbstractPeerEventListener() {
 		@Override
-		public void onPeerDisconnected(Peer peer, int peerCount) {
+		public void onPeerDisconnected(@NotNull Peer peer, int peerCount) {
 			TrustedPeerConnections connections = trustedPeerConnectionsMap.get(peer.getAddress().getAddr());
 			if (connections == null)
 				return;
-			connections.onDisconnect(peer);
+			connections.onDisconnect();
 		}
 	};
 
@@ -493,7 +518,7 @@ public class RelayNode {
 	public void run(int onlyBlocksListenPort, int bothListenPort, int relayListenPort) {
 		Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
 			@Override
-			public void uncaughtException(Thread t, Throwable e) {
+			public void uncaughtException(@NotNull Thread t, @NotNull Throwable e) {
 				LogLine("Uncaught exception in thread " + t.getName());
 				UnsafeByteArrayOutputStream o = new UnsafeByteArrayOutputStream();
 				PrintStream b = new PrintStream(o);
@@ -532,8 +557,8 @@ public class RelayNode {
 
 			relayClients = new RelayConnectionListener(relayListenPort, clientPeerListener, this);
 
-			onlyBlocksServer.startAndWait();
-			bothServer.startAndWait();
+			onlyBlocksServer.startAsync().awaitRunning();
+			bothServer.startAsync().awaitRunning();
 		} catch (IOException e) {
 			System.err.println("Failed to bind to port");
 			System.exit(1);
@@ -557,11 +582,9 @@ public class RelayNode {
 		while (true) {
 			line = scanner.nextLine();
 			if (line.equals("q")) {
-				synchronized (printLock) {
-					System.out.println("Quitting...");
-					// Wait...cleanup? naaaaa
-					System.exit(0);
-				}
+				System.out.println("Quitting...");
+				// Wait...cleanup? naaaaa
+				System.exit(0);
 			} else if (line.startsWith("t ")) {
 				String[] hostPort = line.substring(2).split(":");
 				if (hostPort.length != 2) {
@@ -617,7 +640,7 @@ public class RelayNode {
 			}
 
 			@Override
-			void receiveBlock(final Block b) {
+			void receiveBlock(@NotNull final Block b) {
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
@@ -630,7 +653,11 @@ public class RelayNode {
 						} catch (Exception e) {
 							LogLine("WARNING: Exception adding block from relay peer " + address);
 							// Force reconnect of trusted peer
-							trustedOutboundPeerGroup.getDownloadPeer().close();
+							Peer downloadPeer = trustedOutboundPeerGroup.getDownloadPeer();
+							if (downloadPeer == null)
+								trustedOutboundPeerGroup.startBlockChainDownload(new AbstractPeerEventListener());
+							else
+								downloadPeer.close();
 						}
 					}
 				});
@@ -660,7 +687,7 @@ public class RelayNode {
 		relayPeersWaitingOnReconnection.add(address);
 	}
 
-	final Queue<String> logLines = new LinkedList<String>();
+	final Queue<String> logLines = new LinkedList<>();
 	int enterPressed = 0;
 	public void LogLine(String line) {
 		synchronized (logLines) {
@@ -675,7 +702,7 @@ public class RelayNode {
 	}
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
-	public void LogBlockRelay(Sha256Hash blockHash, String reason) {
+	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String reason) {
 		if (blockRelayedSet.contains(blockHash))
 			return;
 		blockRelayedSet.add(blockHash);
@@ -689,8 +716,6 @@ public class RelayNode {
 		}
 	}
 
-	// Wouldn't want to print from multiple threads, would we?
-	final Object printLock = new Object();
 	public void printStats() {
 		// Things may break if your column count is too small
 		boolean firstIteration = true;
@@ -698,101 +723,107 @@ public class RelayNode {
 		while (true) {
 			int prevLinesPrinted = linesPrinted;
 			linesPrinted = 0;
+			int linesLogged = 0;
 
 			StringBuilder output = new StringBuilder();
 
-			synchronized (printLock) {
-				if (!firstIteration) {
-					synchronized (logLines) {
-						output.append("\033[s\033[1000D"); // Save cursor position + move to first char
+			if (!firstIteration) {
+				synchronized (logLines) {
+					output.append("\033[s\033[1000D"); // Save cursor position + move to first char
 
-						for (int i = 0; i < logLines.size() - enterPressed; i++)
-							output.append("\n"); // Move existing log lines up
+					for (int i = 0; i < logLines.size() - enterPressed; i++)
+						output.append("\n"); // Move existing log lines up
 
-						for (int i = 0; i < prevLinesPrinted; i++)
-							output.append("\033[1A\033[K"); // Up+clear linesPrinted lines
+					for (int i = 0; i < prevLinesPrinted; i++)
+						output.append("\033[1A\033[K"); // Up+clear linesPrinted lines
 
-						for (int i = 0; i < logLines.size(); i++)
-							output.append("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
-						for (String line : logLines)
-							output.append(line).append("\n");
-						logLines.clear(); enterPressed = 0;
-					}
+					for (int i = 0; i < logLines.size(); i++)
+						output.append("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
+					for (String line : logLines)
+						output.append(line).append("\n");
+
+					linesLogged = logLines.size();
+					logLines.clear(); enterPressed = 0;
 				}
-
-				if (trustedPeerConnectionsMap.isEmpty()) {
-					output.append("\nNo trusted nodes (no transaction relay)").append("\n"); linesPrinted += 2;
-				} else {
-					output.append("\nTrusted nodes: ").append("\n"); linesPrinted += 2;
-					synchronized (trustedPeerConnectionsMap) {
-						for (Map.Entry<InetAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
-							String status;
-							if (entry.getValue().inboundConnected && entry.getValue().outboundConnected)
-								status = " fully connected";
-							else if (entry.getValue().inboundConnected)
-								status = " inbound connection only";
-							else if (entry.getValue().outboundConnected)
-								status = " outbound connection only";
-							else
-								status = " not connected";
-							output.append("  ").append(entry.getValue().addr).append(status).append("\n");
-							linesPrinted++;
-						}
-					}
-				}
-
-				Set<InetAddress> relayPeers = relayClients.getClientSet();
-				int relayClientCount = 0;
-				if (relayPeersWaitingOnReconnection.isEmpty() && relayPeersConnected.isEmpty()) {
-					output.append("\nNo relay peers").append("\n"); linesPrinted += 2;
-				} else {
-					output.append("\nRelay peers:").append("\n"); linesPrinted += 2;
-
-					synchronized (relayPeersConnected) {
-						for (InetSocketAddress peer : relayPeersConnected) { // If its not connected, its not in the set
-							if (relayPeers.contains(peer.getAddress())) {
-								output.append("  ").append(peer.getAddress()).append(" fully connected").append("\n"); linesPrinted++;
-								relayClientCount++;
-							} else {
-								output.append("  ").append(peer.getAddress()).append(" connected outbound only").append("\n"); linesPrinted++;
-							}
-						}
-					}
-					synchronized (relayPeersWaitingOnReconnection) {
-						for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
-							if (relayPeers.contains(a.getAddress())) {
-								output.append("  ").append(a.getAddress()).append(" connected inbound only").append("\n"); linesPrinted++;
-								relayClientCount++;
-							} else {
-								output.append("  ").append(a.getAddress()).append(" not connected").append("\n"); linesPrinted++;
-							}
-						}
-					}
-				}
-
-				output.append("\n"); linesPrinted++;
-				output.append("Connected block+transaction clients: ").append(txnClients.size()).append("\n"); linesPrinted++;
-				output.append("Connected block-only clients: ").append(blocksClients.size() - txnClients.size()).append("\n"); linesPrinted++;
-				output.append("Connected relay clients: ").append(relayPeers.size() - relayClientCount).append("\n"); linesPrinted++;
-				output.append("Connected relay node peers: ").append(relayClientCount).append("\n"); linesPrinted++;
-				output.append("Chain download at ").append(blockChain.getBestChainHeight())
-						.append(chainDownloadDone ? " (relaying SPV-checked blocks)" : "").append("\n"); linesPrinted++;
-
-				output.append("\n"); linesPrinted++;
-				output.append("Commands:").append("\n"); linesPrinted++;
-				output.append("q        \t\tquit").append("\n"); linesPrinted++;
-				output.append("t IP:port\t\tadd node IP:port as a trusted peer").append("\n"); linesPrinted++;
-				output.append("r IP\t\t\tadd trusted relay node to relay from").append("\n"); linesPrinted++;
-				if (firstIteration)
-					output.append("\n");
-				/*else
-					output.append("\033[u");*/
-				firstIteration = false;
-
-				System.out.print(output.toString());
 			}
 
-			Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
+			if (trustedPeerConnectionsMap.isEmpty()) {
+				output.append("\nNo trusted nodes (no transaction relay)").append("\n"); linesPrinted += 2;
+			} else {
+				output.append("\nTrusted nodes: ").append("\n"); linesPrinted += 2;
+				synchronized (trustedPeerConnectionsMap) {
+					for (Map.Entry<InetAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
+						String status;
+						if (entry.getValue().inboundConnected && entry.getValue().outboundConnected)
+							status = " fully connected";
+						else if (entry.getValue().inboundConnected)
+							status = " inbound connection only";
+						else if (entry.getValue().outboundConnected)
+							status = " outbound connection only";
+						else
+							status = " not connected";
+						output.append("  ").append(entry.getValue().addr).append(status).append("\n");
+						linesPrinted++;
+					}
+				}
+			}
+
+			Set<InetAddress> relayPeers = relayClients.getClientSet();
+			int relayClientCount = 0;
+			if (relayPeersWaitingOnReconnection.isEmpty() && relayPeersConnected.isEmpty()) {
+				output.append("\nNo relay peers").append("\n"); linesPrinted += 2;
+			} else {
+				output.append("\nRelay peers:").append("\n"); linesPrinted += 2;
+
+				synchronized (relayPeersConnected) {
+					for (InetSocketAddress peer : relayPeersConnected) { // If its not connected, its not in the set
+						if (relayPeers.contains(peer.getAddress())) {
+							output.append("  ").append(peer.getAddress()).append(" fully connected").append("\n"); linesPrinted++;
+							relayClientCount++;
+						} else {
+							output.append("  ").append(peer.getAddress()).append(" connected outbound only").append("\n"); linesPrinted++;
+						}
+					}
+				}
+				synchronized (relayPeersWaitingOnReconnection) {
+					for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
+						if (relayPeers.contains(a.getAddress())) {
+							output.append("  ").append(a.getAddress()).append(" connected inbound only").append("\n"); linesPrinted++;
+							relayClientCount++;
+						} else {
+							output.append("  ").append(a.getAddress()).append(" not connected").append("\n"); linesPrinted++;
+						}
+					}
+				}
+			}
+
+			output.append("\n"); linesPrinted++;
+			output.append("Connected block+transaction clients: ").append(txnClients.size()).append("\n"); linesPrinted++;
+			output.append("Connected block-only clients: ").append(blocksClients.size() - txnClients.size()).append("\n"); linesPrinted++;
+			output.append("Connected relay clients: ").append(relayPeers.size() - relayClientCount).append("\n"); linesPrinted++;
+			output.append("Connected relay node peers: ").append(relayClientCount).append("\n"); linesPrinted++;
+			output.append("Chain download at ").append(blockChain.getBestChainHeight())
+					.append(chainDownloadDone ? " (relaying SPV-checked blocks)" : "").append("\n"); linesPrinted++;
+
+			output.append("\n"); linesPrinted++;
+			output.append("Commands:").append("\n"); linesPrinted++;
+			output.append("q        \t\tquit").append("\n"); linesPrinted++;
+			output.append("t IP:port\t\tadd node IP:port as a trusted peer").append("\n"); linesPrinted++;
+			output.append("r IP\t\t\tadd trusted relay node to relay from").append("\n"); linesPrinted++;
+
+			if (firstIteration)
+				output.append("\n");
+			else
+				output.append("\033[u");
+			firstIteration = false;
+
+			if (linesLogged > 0)
+				output.append("\033[").append(linesLogged).append("B");
+
+			System.out.print(output.toString());
+			System.out.flush();
+
+			Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
 		}
 	}
 }

@@ -17,6 +17,8 @@ import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.params.MainNetParams;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -33,7 +35,7 @@ public class RelayNodeClient {
 		System.exit(1);
 	}
 
-	public static void main(String[] args) {
+	public static void main(@NotNull String[] args) {
 		if (args.length != 2)
 			usage();
 		try {
@@ -54,10 +56,12 @@ public class RelayNodeClient {
 
 	final NetworkParameters params = MainNetParams.get();
 	InetSocketAddress relayPeerAddress, localPeerAddress;
+	@Nullable
 	Peer localNetworkPeer;
 
 	RelayConnection relayPeer;
 
+	@NotNull
 	ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
 
 	public RelayNodeClient(InetSocketAddress relayPeerAddress, InetSocketAddress localPeerAddress) {
@@ -88,7 +92,7 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			void receiveBlock(Block b) {
+			void receiveBlock(@NotNull Block b) {
 				System.err.println("Received block " + b.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(b);
@@ -96,7 +100,7 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			void receiveTransaction(Transaction t) {
+			void receiveTransaction(@NotNull Transaction t) {
 				System.err.println("Received transaction " + t.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(t);
@@ -142,7 +146,7 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			public Message onPreMessageReceived(Peer p, Message m) {
+			public Message onPreMessageReceived(@NotNull Peer p, Message m) {
 				if (m instanceof InventoryMessage) {
 					GetDataMessage getDataMessage = new GetDataMessage(params);
 					for (InventoryItem item : ((InventoryMessage)m).getItems()) {
