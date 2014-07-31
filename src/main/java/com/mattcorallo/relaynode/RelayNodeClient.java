@@ -78,6 +78,16 @@ public class RelayNodeClient {
 			}
 
 			@Override
+			void LogStatsRecv(String lines) {
+				System.err.println(lines);
+			}
+
+			@Override
+			void LogConnected(String line) {
+				System.err.println(line);
+			}
+
+			@Override
 			void receiveBlock(Block b) {
 				System.err.println("Received block " + b.getHashAsString());
 				try {

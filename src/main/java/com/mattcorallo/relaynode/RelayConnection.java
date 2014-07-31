@@ -9,16 +9,18 @@ import java.io.IOException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.*;
 
 public abstract class RelayConnection implements StreamParser {
 	private static final NetworkParameters params = MainNetParams.get();
 	private static final int MAGIC_BYTES = 0x42BEEF42;
 
-	public enum MessageTypes {
+	private enum MessageTypes {
+		VERSION,
 		BLOCK, TRANSACTION, END_BLOCK,
 	}
 
-	class PendingBlock {
+	private class PendingBlock {
 		Block header;
 		Map<QuarterHash, Transaction> transactions = new LinkedHashMap<>();
 		int pendingTransactionCount = 0;
@@ -62,55 +64,75 @@ public abstract class RelayConnection implements StreamParser {
 		}
 	}
 
-	Set<Sha256Hash> relayedTransactionCache = LimitedSynchronizedObjects.createSet(1000);
+	private Set<Sha256Hash> relayedTransactionCache = LimitedSynchronizedObjects.createSet(1000);
+	private Set<Sha256Hash> relayedBlockCache = LimitedSynchronizedObjects.createSet(100);
 
-	Map<QuarterHash, Transaction> relayTransactionCache = LimitedSynchronizedObjects.createMap(1000);
+	private Map<QuarterHash, Transaction> relayTransactionCache = LimitedSynchronizedObjects.createMap(1000);
 
-	MessageWriteTarget relayPeer;
+	private MessageWriteTarget relayPeer;
 
-	private long txnInBlock = 0, txnSkippedTotal = 0;
-	private long txnRelayedInBlock = 0, txnRelayedInBlockTotal = 0;
-	private long txnRelayedOutOfBlock = 0;
+	public long txnInBlock = 0, txnRelayedInBlock = 0;
+	public long txnInBlockTotal = 0, txnSkippedTotal = 0;
+	public long txnRelayedOutOfBlockTotal = 0;
 
 	abstract void LogLine(String line);
+	abstract void LogStatsRecv(String lines);
+	abstract void LogConnected(String line);
+
 	abstract void receiveBlock(Block b);
 	abstract void receiveTransaction(Transaction t);
 
-	public synchronized void sendBlock(Block b) {
-		try {
-			byte[] blockHeader = b.cloneAsHeader().bitcoinSerialize();
-			int transactionCount = b.getTransactions().size();
-			relayPeer.writeBytes(ByteBuffer.allocate(4*3)
-					.putInt(MAGIC_BYTES).putInt(MessageTypes.BLOCK.ordinal()).putInt(blockHeader.length + 4 + transactionCount*QuarterHash.BYTE_LENGTH)
-					.array());
-			relayPeer.writeBytes(blockHeader);
+	static final Executor sendBlockExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
 
-			relayPeer.writeBytes(ByteBuffer.allocate(4*1)
-					.putInt(transactionCount)
-					.array());
-			for (Transaction t : b.getTransactions())
-				relayPeer.writeBytes(new QuarterHash(t.getHash()).bytes);
+	public void sendBlock(final Block b) {
+		sendBlockExecutor.execute(new Runnable() {
+			@Override
+			public void run() {
+				synchronized (RelayConnection.this) {
+					try {
+						if (relayedBlockCache.contains(b.getHash()))
+							return;
 
-			for (Transaction t : b.getTransactions())
-				if (!relayedTransactionCache.contains(t.getHash()))
-					sendTransaction(t, false);
+						byte[] blockHeader = b.cloneAsHeader().bitcoinSerialize();
+						int transactionCount = b.getTransactions().size();
+						relayPeer.writeBytes(ByteBuffer.allocate(4 * 4 + blockHeader.length)
+								.putInt(MAGIC_BYTES).putInt(MessageTypes.BLOCK.ordinal()).putInt(blockHeader.length + 4 + transactionCount * QuarterHash.BYTE_LENGTH)
+								.put(blockHeader).putInt(transactionCount)
+								.array());
 
-			relayPeer.writeBytes(ByteBuffer.allocate(4*3)
-					.putInt(MAGIC_BYTES).putInt(MessageTypes.END_BLOCK.ordinal()).putInt(0)
-					.array());
-		} catch (IOException e) {
-			/* Should get a disconnect automatically */
-			LogLine("Failed to write bytes");
-		}
+						for (Transaction t : b.getTransactions())
+							relayPeer.writeBytes(new QuarterHash(t.getHash()).bytes);
+
+						for (Transaction t : b.getTransactions()) {
+							if (!relayedTransactionCache.contains(t.getHash()))
+								sendTransaction(t, false);
+							else
+								relayedTransactionCache.remove(t.getHash());
+						}
+
+						relayPeer.writeBytes(ByteBuffer.allocate(4 * 3)
+								.putInt(MAGIC_BYTES).putInt(MessageTypes.END_BLOCK.ordinal()).putInt(0)
+								.array());
+
+						relayedBlockCache.add(b.getHash());
+					} catch (IOException e) {
+						/* Should get a disconnect automatically */
+						LogLine("Failed to write bytes");
+					}
+				}
+			}
+		});
 	}
 
 	private synchronized void sendTransaction(Transaction t, boolean cacheSend) {
 		try {
+			if (cacheSend && relayedTransactionCache.contains(t.getHash()))
+				return;
 			byte[] transactionBytes = t.bitcoinSerialize();
-			relayPeer.writeBytes(ByteBuffer.allocate(4*3)
+			relayPeer.writeBytes(ByteBuffer.allocate(4*3 + transactionBytes.length)
 					.putInt(MAGIC_BYTES).putInt(MessageTypes.TRANSACTION.ordinal()).putInt(transactionBytes.length)
+					.put(transactionBytes)
 					.array());
-			relayPeer.writeBytes(transactionBytes);
 			if (cacheSend)
 				relayedTransactionCache.add(t.getHash());
 		} catch (IOException e) {
@@ -123,15 +145,15 @@ public abstract class RelayConnection implements StreamParser {
 		sendTransaction(t, true);
 	}
 
-	PendingBlock readingBlock; int transactionsLeft;
-	byte[] readingTransaction; int readingTransactionPos;
+	private PendingBlock readingBlock; private int transactionsLeft;
+	private byte[] readingTransaction; private int readingTransactionPos;
 
 	private int readBlockTransactions(ByteBuffer buff) {
 		int i = 0;
 		try {
 			for (; i < transactionsLeft; i++) {
 				readingBlock.addTransaction(new QuarterHash(buff));
-				txnInBlock++;
+				txnInBlock++; txnInBlockTotal++;
 			}
 		} catch (BufferUnderflowException e) {}
 		transactionsLeft = transactionsLeft - i;
@@ -148,15 +170,16 @@ public abstract class RelayConnection implements StreamParser {
 				readingTransactionPos += read;
 				if (readingTransactionPos == readingTransaction.length) {
 					Transaction t = new Transaction(params, readingTransaction);
+					t = GlobalObjectTracker.putTransaction(t);
 					t.verify();
 
 					if (readingBlock != null) {
 						readingBlock.foundTransaction(t);
-						txnRelayedInBlock++; txnRelayedInBlockTotal++;
+						txnRelayedInBlock++;
 					} else {
 						relayTransactionCache.put(new QuarterHash(t.getHash()), t);
 						receiveTransaction(t);
-						txnRelayedOutOfBlock++;
+						txnRelayedOutOfBlockTotal++;
 					}
 
 					readingTransaction = null;
@@ -178,6 +201,12 @@ public abstract class RelayConnection implements StreamParser {
 				throw new ProtocolException("");
 
 			switch(msgType) {
+				case VERSION:
+					byte[] versionString = new byte[msgLength];
+					buff.get(versionString);
+					LogConnected("Connected to node with version: " + new String(versionString).replaceAll("[^ -~]", ""));
+					return 3*4 + msgLength;
+
 				case BLOCK:
 					if (readingBlock != null)
 						throw new ProtocolException("readingBlock already present");
@@ -204,6 +233,13 @@ public abstract class RelayConnection implements StreamParser {
 						throw new ProtocolException("pendingTransactionCount " + readingBlock.pendingTransactionCount);
 
 					txnSkippedTotal += (txnInBlock - txnRelayedInBlock);
+
+					LogStatsRecv("Skipped: " + (txnInBlock - txnRelayedInBlock) + "/" + txnInBlock +
+							" (" + ((txnInBlock - txnRelayedInBlock + 0.0) / txnInBlock) + "%)\n" +
+							"In total, skipped " + txnSkippedTotal + " of " + txnInBlockTotal +
+							" (" + ((txnSkippedTotal + 0.0) / txnInBlockTotal) + "%)\n" +
+							"Relayed " + txnRelayedOutOfBlockTotal + " txn out of blocks");
+
 					txnInBlock = 0; txnRelayedInBlock = 0;
 
 					readingBlock = null;
@@ -222,6 +258,15 @@ public abstract class RelayConnection implements StreamParser {
 
 	@Override
 	public void setWriteTarget(MessageWriteTarget writeTarget) {
+		try {
+			writeTarget.writeBytes(ByteBuffer.allocate(4 * 3 + RelayNode.VERSION.length())
+					.putInt(MAGIC_BYTES).putInt(MessageTypes.VERSION.ordinal()).putInt(RelayNode.VERSION.length())
+					.put(RelayNode.VERSION.getBytes())
+					.array());
+		} catch (IOException e) {
+			/* Should get a disconnect automatically */
+			LogLine("Failed to write VERSION_INIT");
+		}
 		relayPeer = writeTarget;
 	}
 

@@ -16,20 +16,28 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class RelayConnectionListener {
-	//TODO: Track memory usage and kill hungry connections (plus unify transaction cache)
+	//TODO: Track memory usage and kill hungry connections
 
 	private final Set<RelayConnection> connectionSet = Collections.synchronizedSet(new HashSet<RelayConnection>());
+	private final Set<InetAddress> remoteSet = Collections.synchronizedSet(new HashSet<InetAddress>());
 
 	public RelayConnectionListener(int port, final PeerEventListener clientPeerListener, final RelayNode lineLogger) throws IOException {
 		NioServer relayServer = new NioServer(new StreamParserFactory() {
 			@Nullable
 			@Override
-			public StreamParser getNewParser(InetAddress inetAddress, int port) {
+			public StreamParser getNewParser(final InetAddress inetAddress, int port) {
+				if (remoteSet.contains(inetAddress))
+					return null;
+
 				return new RelayConnection() {
 					@Override
 					void LogLine(String line) {
 						lineLogger.LogLine(line);
 					}
+
+					@Override void LogStatsRecv(String lines) { }
+
+					@Override void LogConnected(String line) { }
 
 					@Override
 					void receiveBlock(Block b) {
@@ -44,11 +52,13 @@ public class RelayConnectionListener {
 					@Override
 					public void connectionClosed() {
 						connectionSet.remove(this);
+						remoteSet.remove(inetAddress);
 					}
 
 					@Override
 					public void connectionOpened() {
 						connectionSet.add(this);
+						remoteSet.add(inetAddress);
 					}
 				};
 			}
@@ -70,7 +80,9 @@ public class RelayConnectionListener {
 		}
 	}
 
-	public int getClientCount() {
-		return connectionSet.size();
+	public Set<InetAddress> getClientSet() {
+		synchronized (remoteSet) {
+			return new HashSet<>(remoteSet);
+		}
 	}
 }

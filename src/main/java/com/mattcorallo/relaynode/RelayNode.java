@@ -218,6 +218,8 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
+	public static final String VERSION = "bearded bear";
+
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
 	}
@@ -462,56 +464,30 @@ public class RelayNode {
 	/*******************************************************************
 	 ***** Stuff to keep track of other relay nodes which we trust *****
 	 *******************************************************************/
-	Peers trustedRelayPeers = new Peers(); // Just used to keep a list of relay peers
 	final Set<InetSocketAddress> relayPeersWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
-	PeerEventListener trustedRelayPeerListener = new AbstractPeerEventListener() {
-		@Override
-		public Message onPreMessageReceived(final Peer p, final Message m) {
-			if (m instanceof Block) {
-				asyncExecutor.execute(new Runnable() {
-					@Override
-					public void run() {
-						relayClients.sendBlock((Block) m);
-						blockPool.provideObject((Block) m);
-						LogBlockRelay(m.getHash(), "block from relay peer " + p.getAddress());
-						blockPool.invGood(blocksClients, m.getHash());
-						try {
-							blockChain.add(((Block) m).cloneAsHeader());
-						} catch (Exception e) {
-							LogLine("WARNING: Exception adding block from relay peer " + p.getAddress());
-							// Force reconnect of trusted peer
-							trustedOutboundPeerGroup.getDownloadPeer().close();
-						}
-					}
-				});
-			}
-			return m;
-		}
-	};
-
+	final Set<InetSocketAddress> relayPeersConnected = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
 
 	/***************************
 	 ***** Stuff that runs *****
 	 ***************************/
 	FileWriter relayLog;
 	public RelayNode() throws BlockStoreException, IOException {
-		String version = "beta baboon";
-		versionMessage.appendToSubVer("RelayNode", version, null);
+		versionMessage.appendToSubVer("RelayNode", VERSION, null);
 		// Fudge a few flags so that we can connect to other relay nodes
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
 		versionMessage.bestHeight = 1;
 
 		relayLog = new FileWriter("blockrelay.log");
 
-		trustedPeerManager.startAndWait();
+		trustedPeerManager.startAsync().awaitRunning();
 
 		blockChain = new BlockChain(params, blockStore);
 
 		trustedOutboundPeerGroup = new PeerGroup(params, blockChain);
-		trustedOutboundPeerGroup.setUserAgent("RelayNode", version);
+		trustedOutboundPeerGroup.setUserAgent("RelayNode", VERSION);
 		trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener);
 		trustedOutboundPeerGroup.setFastCatchupTimeSecs(Long.MAX_VALUE); // We'll revert to full blocks after catchup, but oh well
-		trustedOutboundPeerGroup.startAndWait();
+		trustedOutboundPeerGroup.startAsync().awaitRunning();
 	}
 
 	public void run(int onlyBlocksListenPort, int bothListenPort, int relayListenPort) {
@@ -609,14 +585,8 @@ public class RelayNode {
 					LogLineEnter("Invalid argument");
 				}
 			} else if (line.startsWith("r ")) {
-				String[] hostPort = line.substring(2).split(":");
-				if (hostPort.length != 2) {
-					LogLineEnter("Invalid argument");
-					continue;
-				}
 				try {
-					int port = Integer.parseInt(hostPort[1]);
-					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
+					InetSocketAddress addr = new InetSocketAddress(line.substring(2), 8336);
 					if (addr.isUnresolved())
 						LogLineEnter("Unable to resolve host");
 					else {
@@ -633,30 +603,61 @@ public class RelayNode {
 	}
 
 	public void ConnectToTrustedRelayPeer(final InetSocketAddress address) {
-		versionMessage.time = System.currentTimeMillis()/1000;
-		final Peer p = new Peer(params, versionMessage, null, new PeerAddress(address));
-		p.addEventListener(trustedRelayPeerListener, Threading.SAME_THREAD);
-		p.addEventListener(new AbstractPeerEventListener() {
+		RelayConnection connection = new RelayConnection() {
 			@Override
-			public void onPeerDisconnected(Peer peer, int peerCount) {
-				if (peer != p) {
-					LogLine("Got onPeerDisconnected for non-p?");
-					if (!peer.getAddress().equals(p.getAddress()))
-						LogLine("They even had different address: " + peer.getAddress() + p.getAddress() + "????");
-					p.close();
-				}
+			void LogLine(String line) {
+				RelayNode.this.LogLine(line);
+			}
+
+			@Override void LogStatsRecv(String lines) { }
+
+			@Override
+			void LogConnected(String line) {
+				RelayNode.this.LogLine(line);
+			}
+
+			@Override
+			void receiveBlock(final Block b) {
+				asyncExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						relayClients.sendBlock(b);
+						blockPool.provideObject(b);
+						LogBlockRelay(b.getHash(), "block from relay peer " + address);
+						blockPool.invGood(blocksClients, b.getHash());
+						try {
+							blockChain.add(b.cloneAsHeader());
+						} catch (Exception e) {
+							LogLine("WARNING: Exception adding block from relay peer " + address);
+							// Force reconnect of trusted peer
+							trustedOutboundPeerGroup.getDownloadPeer().close();
+						}
+					}
+				});
+			}
+
+			@Override void receiveTransaction(Transaction t) { }
+
+			@Override
+			public void connectionClosed() {
+				relayPeersConnected.remove(address);
 				relayPeersWaitingOnReconnection.add(address);
 				reconnectExecutor.schedule(new Runnable() {
 					@Override
 					public void run() {
-						relayPeersWaitingOnReconnection.remove(address);
 						ConnectToTrustedRelayPeer(address);
 					}
 				}, 1, TimeUnit.SECONDS);
 			}
-		});
-		trustedRelayPeers.add(p);
-		trustedPeerManager.openConnection(address, p);
+
+			@Override
+			public void connectionOpened() {
+				relayPeersConnected.add(address);
+				relayPeersWaitingOnReconnection.remove(address);
+			}
+		};
+		trustedPeerManager.openConnection(address, connection);
+		relayPeersWaitingOnReconnection.add(address);
 	}
 
 	final Queue<String> logLines = new LinkedList<String>();
@@ -693,34 +694,36 @@ public class RelayNode {
 	public void printStats() {
 		// Things may break if your column count is too small
 		boolean firstIteration = true;
-		int linesPrinted = 1;
+		int linesPrinted = 0;
 		while (true) {
 			int prevLinesPrinted = linesPrinted;
-			linesPrinted = 1;
+			linesPrinted = 0;
+
+			StringBuilder output = new StringBuilder();
 
 			synchronized (printLock) {
 				if (!firstIteration) {
 					synchronized (logLines) {
-						System.out.print("\033[s\033[1000D"); // Save cursor position + move to first char
+						output.append("\033[s\033[1000D"); // Save cursor position + move to first char
 
 						for (int i = 0; i < logLines.size() - enterPressed; i++)
-							System.out.println(); // Move existing log lines up
+							output.append("\n"); // Move existing log lines up
 
 						for (int i = 0; i < prevLinesPrinted; i++)
-							System.out.print("\033[1A\033[K"); // Up+clear linesPrinted lines
+							output.append("\033[1A\033[K"); // Up+clear linesPrinted lines
 
 						for (int i = 0; i < logLines.size(); i++)
-							System.out.print("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
+							output.append("\033[1A\033[K"); // Up and make sure we're at the beginning, clear line
 						for (String line : logLines)
-							System.out.println(line);
+							output.append(line).append("\n");
 						logLines.clear(); enterPressed = 0;
 					}
 				}
 
 				if (trustedPeerConnectionsMap.isEmpty()) {
-					System.out.println("\nNo trusted nodes (no transaction relay)"); linesPrinted += 2;
+					output.append("\nNo trusted nodes (no transaction relay)").append("\n"); linesPrinted += 2;
 				} else {
-					System.out.println("\nTrusted nodes: "); linesPrinted += 2;
+					output.append("\nTrusted nodes: ").append("\n"); linesPrinted += 2;
 					synchronized (trustedPeerConnectionsMap) {
 						for (Map.Entry<InetAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
 							String status;
@@ -732,66 +735,64 @@ public class RelayNode {
 								status = " outbound connection only";
 							else
 								status = " not connected";
-							System.out.println("  " + entry.getValue().addr + status);
+							output.append("  ").append(entry.getValue().addr).append(status).append("\n");
 							linesPrinted++;
 						}
 					}
 				}
 
-				Set<InetAddress> blockPeers = new HashSet<InetAddress>();
+				Set<InetAddress> relayPeers = relayClients.getClientSet();
 				int relayClientCount = 0;
-				if (trustedRelayPeers.peers.isEmpty()) {
-					System.out.println("\nNo relay peers"); linesPrinted += 2;
+				if (relayPeersWaitingOnReconnection.isEmpty() && relayPeersConnected.isEmpty()) {
+					output.append("\nNo relay peers").append("\n"); linesPrinted += 2;
 				} else {
-					System.out.println("\nRelay peers:"); linesPrinted += 2;
+					output.append("\nRelay peers:").append("\n"); linesPrinted += 2;
 
-					synchronized (blocksClients.peers) {
-						for (PeerAndInvs p : blocksClients.peers)
-							blockPeers.add(p.p.getAddress().getAddr());
-					}
-					synchronized (trustedRelayPeers.peers) {
-						for (PeerAndInvs peer : trustedRelayPeers.peers) { // If its not connected, its not in the set
-							if (blockPeers.contains(peer.p.getAddress().getAddr())) {
-								System.out.println("  " + peer.p.getAddress() + " fully connected"); linesPrinted++;
+					synchronized (relayPeersConnected) {
+						for (InetSocketAddress peer : relayPeersConnected) { // If its not connected, its not in the set
+							if (relayPeers.contains(peer.getAddress())) {
+								output.append("  ").append(peer.getAddress()).append(" fully connected").append("\n"); linesPrinted++;
 								relayClientCount++;
 							} else {
-								System.out.println("  " + peer.p.getAddress() + " connected outbound only"); linesPrinted++;
+								output.append("  ").append(peer.getAddress()).append(" connected outbound only").append("\n"); linesPrinted++;
 							}
 						}
 					}
 					synchronized (relayPeersWaitingOnReconnection) {
 						for (InetSocketAddress a : relayPeersWaitingOnReconnection) {
-							if (blockPeers.contains(a.getAddress())) {
-								System.out.println("  " + a + " connected inbound only"); linesPrinted++;
+							if (relayPeers.contains(a.getAddress())) {
+								output.append("  ").append(a.getAddress()).append(" connected inbound only").append("\n"); linesPrinted++;
 								relayClientCount++;
 							} else {
-								System.out.println("  " + a + " not connected"); linesPrinted++;
+								output.append("  ").append(a.getAddress()).append(" not connected").append("\n"); linesPrinted++;
 							}
 						}
 					}
 				}
 
-				System.out.println(); linesPrinted++;
-				System.out.println("Connected block+transaction clients: " + txnClients.size()); linesPrinted++;
-				System.out.println("Connected block-only clients: " +
-						(blocksClients.size() - txnClients.size() - relayClientCount)); linesPrinted++;
-				System.out.println("Connected relay clients: " + relayClients.getClientCount()); linesPrinted++;
-				System.out.println("Connected relay node peers: " + relayClientCount); linesPrinted++;
-				System.out.println("Chain download at " + blockChain.getBestChainHeight() + (chainDownloadDone ? " (relaying SPV-checked blocks)" : "")); linesPrinted++;
+				output.append("\n"); linesPrinted++;
+				output.append("Connected block+transaction clients: ").append(txnClients.size()).append("\n"); linesPrinted++;
+				output.append("Connected block-only clients: ").append(blocksClients.size() - txnClients.size()).append("\n"); linesPrinted++;
+				output.append("Connected relay clients: ").append(relayPeers.size() - relayClientCount).append("\n"); linesPrinted++;
+				output.append("Connected relay node peers: ").append(relayClientCount).append("\n"); linesPrinted++;
+				output.append("Chain download at ").append(blockChain.getBestChainHeight())
+						.append(chainDownloadDone ? " (relaying SPV-checked blocks)" : "").append("\n"); linesPrinted++;
 
-				System.out.println(); linesPrinted++;
-				System.out.println("Commands:"); linesPrinted++;
-				System.out.println("q        \t\tquit"); linesPrinted++;
-				System.out.println("t IP:port\t\tadd node IP:port as a trusted peer"); linesPrinted++;
-				System.out.println("r IP:port\t\tadd trusted relay node (via its block-only port) to relay from"); linesPrinted++;
+				output.append("\n"); linesPrinted++;
+				output.append("Commands:").append("\n"); linesPrinted++;
+				output.append("q        \t\tquit").append("\n"); linesPrinted++;
+				output.append("t IP:port\t\tadd node IP:port as a trusted peer").append("\n"); linesPrinted++;
+				output.append("r IP\t\t\tadd trusted relay node to relay from").append("\n"); linesPrinted++;
 				if (firstIteration)
-					System.out.println();
-				else
-					System.out.print("\033[u");
+					output.append("\n");
+				/*else
+					output.append("\033[u");*/
 				firstIteration = false;
+
+				System.out.print(output.toString());
 			}
 
-			Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+			Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
 		}
 	}
 }
