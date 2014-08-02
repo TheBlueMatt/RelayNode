@@ -96,7 +96,7 @@ public class RelayNodeClient {
 				System.err.println("Received block " + b.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(b);
-				} catch (NotYetConnectedException e) { /* We'll catch them next time */ }
+				} catch (NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override
@@ -104,7 +104,7 @@ public class RelayNodeClient {
 				System.err.println("Received transaction " + t.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(t);
-				} catch (NotYetConnectedException e) { /* We'll catch them next time */ }
+				} catch (NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override

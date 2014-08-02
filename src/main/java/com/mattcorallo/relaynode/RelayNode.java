@@ -23,7 +23,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import sun.rmi.runtime.Log;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -221,7 +220,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "annotated aguila";
+	public static final String VERSION = "tasteful twink";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
@@ -742,7 +741,7 @@ public class RelayNode {
 					for (String line : logLines)
 						output.append(line).append("\n");
 
-					linesLogged = logLines.size();
+					linesLogged = logLines.size() - enterPressed;
 					logLines.clear(); enterPressed = 0;
 				}
 			}

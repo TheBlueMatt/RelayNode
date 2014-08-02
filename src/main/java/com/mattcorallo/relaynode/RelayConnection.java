@@ -15,7 +15,7 @@ import java.util.concurrent.*;
 
 public abstract class RelayConnection implements StreamParser {
 	private static final NetworkParameters params = MainNetParams.get();
-	private static final int MAGIC_BYTES = 0x42BEEF42;
+	private static final int MAGIC_BYTES = 0xF2BEEF42;
 
 	private enum MessageTypes {
 		VERSION,
@@ -42,14 +42,16 @@ public abstract class RelayConnection implements StreamParser {
 		synchronized void foundTransaction(@NotNull Transaction t) throws VerificationException {
 			if (transactions.containsKey(new QuarterHash(t.getHash()))) {
 				if (transactions.put(new QuarterHash(t.getHash()), t) != null)
-					throw new ProtocolException("");
+					throw new ProtocolException("Duplicate transaction in a single block");
 
 				pendingTransactionCount--;
 
-				if (pendingTransactionCount <= 0)
+				if (pendingTransactionCount == 0)
 					buildBlock();
+				else if (pendingTransactionCount < 0)
+					throw new ProtocolException("pendingTransactionCount " + pendingTransactionCount);
 			} else
-				throw new ProtocolException("");
+				throw new ProtocolException("foundTransaction we didn't need");
 		}
 
 		private void buildBlock() throws VerificationException {
@@ -86,7 +88,7 @@ public abstract class RelayConnection implements StreamParser {
 	abstract void receiveTransaction(Transaction t);
 
 	static final Executor sendBlockExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
-	static final Executor sendTransactionExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
+	static final Executor sendTransactionExecutor = new ThreadPoolExecutor(4, 25, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
 
 	public void sendBlock(@NotNull final Block b) {
 		sendBlockExecutor.execute(new Runnable() {
@@ -112,8 +114,6 @@ public abstract class RelayConnection implements StreamParser {
 						for (Transaction t : b.getTransactions()) {
 							if (!relayedTransactionCache.contains(t.getHash()))
 								sendTransaction(t, false);
-							else
-								relayedTransactionCache.remove(t.getHash());
 						}
 
 						relayPeer.writeBytes(ByteBuffer.allocate(4 * 3)
@@ -130,13 +130,17 @@ public abstract class RelayConnection implements StreamParser {
 		});
 	}
 
-	private void sendTransaction(@NotNull final Transaction t, final boolean cacheSend) {
+	private void sendTransaction(@NotNull final Transaction t, final boolean includeHeader) {
 		try {
 			byte[] transactionBytes = t.bitcoinSerialize();
-			relayPeer.writeBytes(ByteBuffer.allocate(4 * 3 + transactionBytes.length)
-					.putInt(MAGIC_BYTES).putInt(MessageTypes.TRANSACTION.ordinal()).putInt(transactionBytes.length)
-					.put(transactionBytes)
-					.array());
+			ByteBuffer buff = ByteBuffer.allocate((includeHeader ? (4 * 3) : 4) + transactionBytes.length);
+
+			if (includeHeader)
+				buff.putInt(MAGIC_BYTES).putInt(MessageTypes.TRANSACTION.ordinal());
+
+			buff.putInt(transactionBytes.length).put(transactionBytes);
+
+			relayPeer.writeBytes(buff.array());
 		} catch (IOException e) {
 			/* Should get a disconnect automatically */
 			LogLine("Failed to write bytes");
@@ -144,7 +148,7 @@ public abstract class RelayConnection implements StreamParser {
 	}
 
 	public void sendTransaction(@NotNull final Transaction t) {
-		sendBlockExecutor.execute(new Runnable(){
+		sendTransactionExecutor.execute(new Runnable(){
 			@Override
 			public void run(){
 				synchronized(RelayConnection.this){
@@ -212,10 +216,22 @@ public abstract class RelayConnection implements StreamParser {
 			}
 
 			int magic = buff.getInt();
-			MessageTypes msgType = MessageTypes.values()[buff.getInt()];
-			int msgLength = buff.getInt();
-			if (magic != MAGIC_BYTES || msgLength > Block.MAX_SIZE)
-				throw new ProtocolException("");
+			MessageTypes msgType = MessageTypes.TRANSACTION;
+			int msgLength;
+
+			if (readingBlock == null || magic == MAGIC_BYTES) {
+				msgType = MessageTypes.values()[buff.getInt()];
+				if (readingBlock != null && msgType != MessageTypes.END_BLOCK)
+					throw new ProtocolException("Got full message of type " + msgType.name() + " while reading a block");
+
+				msgLength = buff.getInt();
+				if (magic != MAGIC_BYTES)
+					throw new ProtocolException("Magic bytes incorrect");
+			} else
+				msgLength = magic;
+
+			if (msgLength > Block.MAX_SIZE)
+				throw new ProtocolException("Remote provided message of length " + msgLength);
 
 			switch(msgType) {
 				case VERSION:
@@ -243,7 +259,10 @@ public abstract class RelayConnection implements StreamParser {
 				case TRANSACTION:
 					readingTransaction = new byte[msgLength];
 					readingTransactionPos = 0;
-					return 3*4 + receiveBytes(buff);
+					if (readingBlock == null)
+						return 3*4 + receiveBytes(buff);
+					else
+						return 4 + receiveBytes(buff);
 
 				case END_BLOCK:
 					if (readingBlock == null)
