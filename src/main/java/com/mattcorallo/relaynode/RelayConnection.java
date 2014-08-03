@@ -69,10 +69,10 @@ public abstract class RelayConnection implements StreamParser {
 		}
 	}
 
-	private Set<Sha256Hash> relayedTransactionCache = LimitedSynchronizedObjects.createSet(1000);
+	private Set<Sha256Hash> relayedTransactionCache = LimitedSynchronizedObjects.createSet(2000);
 	private Set<Sha256Hash> relayedBlockCache = LimitedSynchronizedObjects.createSet(100);
 
-	private Map<QuarterHash, Transaction> relayTransactionCache = LimitedSynchronizedObjects.createMap(1000);
+	private Map<QuarterHash, Transaction> relayTransactionCache = LimitedSynchronizedObjects.createMap(2000);
 
 	private MessageWriteTarget relayPeer;
 
@@ -237,7 +237,11 @@ public abstract class RelayConnection implements StreamParser {
 				case VERSION:
 					byte[] versionString = new byte[msgLength];
 					buff.get(versionString);
-					LogConnected("Connected to node with version: " + new String(versionString).replaceAll("[^ -~]", ""));
+					if (!Arrays.equals(RelayNode.VERSION.getBytes(), versionString)) {
+						LogLine("Connected to node with wrong version: " + new String(versionString).replaceAll("[^ -~]", ""));
+						return -1; // Not same version
+					} else
+						LogConnected("Connected to node with version: " + new String(versionString).replaceAll("[^ -~]", ""));
 					return 3*4 + msgLength;
 
 				case BLOCK:
