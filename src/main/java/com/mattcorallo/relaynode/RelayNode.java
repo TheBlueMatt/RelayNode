@@ -220,7 +220,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "efficient eagle";
+	public static final String VERSION = "charming chameleon";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
@@ -501,7 +501,7 @@ public class RelayNode {
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
 		versionMessage.bestHeight = 1;
 
-		relayLog = new FileWriter("blockrelay.log");
+		relayLog = new FileWriter("blockrelay.log", true);
 
 		trustedPeerManager.startAsync().awaitRunning();
 
@@ -625,7 +625,7 @@ public class RelayNode {
 	}
 
 	public void ConnectToTrustedRelayPeer(final InetSocketAddress address) {
-		RelayConnection connection = new RelayConnection() {
+		RelayConnection connection = new RelayConnection(true) {
 			@Override
 			void LogLine(String line) {
 				RelayNode.this.LogLine(line);
@@ -637,6 +637,9 @@ public class RelayNode {
 			void LogConnected(String line) {
 				RelayNode.this.LogLine(line);
 			}
+
+			@Override
+			void receiveBlockHeader(Block b) { }
 
 			@Override
 			void receiveBlock(@NotNull final Block b) {

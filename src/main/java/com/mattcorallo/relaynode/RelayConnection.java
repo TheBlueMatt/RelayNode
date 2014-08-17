@@ -17,9 +17,20 @@ public abstract class RelayConnection implements StreamParser {
 	private static final NetworkParameters params = MainNetParams.get();
 	private static final int MAGIC_BYTES = 0xF2BEEF42;
 
+	private static final Map<String, Integer> MAX_RELAY_FREE_TRANSACTION_BYTES = new HashMap<>();
+	private static final Map<String, Integer> TRANSACTIONS_CACHED = new HashMap<>();
+	static {
+		MAX_RELAY_FREE_TRANSACTION_BYTES.put("efficient eagle", Block.MAX_SIZE);
+		TRANSACTIONS_CACHED.put("efficient eagle", 2000);
+
+		MAX_RELAY_FREE_TRANSACTION_BYTES.put(RelayNode.VERSION, 10000);
+		TRANSACTIONS_CACHED.put(RelayNode.VERSION, 1000);
+	}
+
 	private enum MessageTypes {
 		VERSION,
 		BLOCK, TRANSACTION, END_BLOCK,
+		MAX_VERSION,
 	}
 
 	private class PendingBlock {
@@ -69,10 +80,13 @@ public abstract class RelayConnection implements StreamParser {
 		}
 	}
 
-	private Set<Sha256Hash> relayedTransactionCache = LimitedSynchronizedObjects.createSet(2000);
+	private boolean sendVersionOnConnect;
+	private String protocolVersion = null;
+
+	private volatile Set<Sha256Hash> relayedTransactionCache = null;
 	private Set<Sha256Hash> relayedBlockCache = LimitedSynchronizedObjects.createSet(100);
 
-	private Map<QuarterHash, Transaction> relayTransactionCache = LimitedSynchronizedObjects.createMap(2000);
+	private volatile Map<QuarterHash, Transaction> relayTransactionCache = null;
 
 	private MessageWriteTarget relayPeer;
 
@@ -84,13 +98,20 @@ public abstract class RelayConnection implements StreamParser {
 	abstract void LogStatsRecv(String lines);
 	abstract void LogConnected(String line);
 
+	abstract void receiveBlockHeader(Block b);
 	abstract void receiveBlock(Block b);
 	abstract void receiveTransaction(Transaction t);
 
 	static final Executor sendBlockExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
 	static final Executor sendTransactionExecutor = new ThreadPoolExecutor(4, 25, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
 
+	public RelayConnection(boolean sendVersionOnConnect) {
+		this.sendVersionOnConnect = sendVersionOnConnect;
+	}
+
 	public void sendBlock(@NotNull final Block b) {
+		if (protocolVersion == null)
+			return;
 		sendBlockExecutor.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -113,7 +134,7 @@ public abstract class RelayConnection implements StreamParser {
 
 						for (Transaction t : b.getTransactions()) {
 							if (!relayedTransactionCache.contains(t.getHash()))
-								sendTransaction(t, false);
+								sendTransaction(t.bitcoinSerialize(), false);
 						}
 
 						relayPeer.writeBytes(ByteBuffer.allocate(4 * 3)
@@ -130,9 +151,8 @@ public abstract class RelayConnection implements StreamParser {
 		});
 	}
 
-	private void sendTransaction(@NotNull final Transaction t, final boolean includeHeader) {
+	private void sendTransaction(@NotNull byte[] transactionBytes, final boolean includeHeader) {
 		try {
-			byte[] transactionBytes = t.bitcoinSerialize();
 			ByteBuffer buff = ByteBuffer.allocate((includeHeader ? (4 * 3) : 4) + transactionBytes.length);
 
 			if (includeHeader)
@@ -148,13 +168,16 @@ public abstract class RelayConnection implements StreamParser {
 	}
 
 	public void sendTransaction(@NotNull final Transaction t) {
+		final byte[] transactionBytes = t.bitcoinSerialize();
+		if (protocolVersion == null || transactionBytes.length > MAX_RELAY_FREE_TRANSACTION_BYTES.get(protocolVersion))
+			return;
 		sendTransactionExecutor.execute(new Runnable(){
 			@Override
 			public void run(){
 				synchronized(RelayConnection.this){
 					if (relayedTransactionCache.contains(t.getHash()))
 						return;
-					sendTransaction(t, true);
+					sendTransaction(transactionBytes, true);
 					relayedTransactionCache.add(t.getHash());
 				}
 
@@ -235,16 +258,46 @@ public abstract class RelayConnection implements StreamParser {
 
 			switch(msgType) {
 				case VERSION:
-					byte[] versionString = new byte[msgLength];
-					buff.get(versionString);
-					if (!Arrays.equals(RelayNode.VERSION.getBytes(), versionString)) {
-						LogLine("Connected to node with wrong version: " + new String(versionString).replaceAll("[^ -~]", ""));
+					byte[] versionBytes = new byte[msgLength];
+					buff.get(versionBytes);
+					String versionString = new String(versionBytes);
+
+					if (TRANSACTIONS_CACHED.get(versionString) == null) {
+						LogLine("Connected to node with bad version: " + versionString.replaceAll("[^ -~]", ""));
 						return -1; // Not same version
-					} else
-						LogConnected("Connected to node with version: " + new String(versionString).replaceAll("[^ -~]", ""));
+					} else {
+						if (RelayNode.VERSION.equals(versionString))
+							LogConnected("Connected to node with version: " + versionString.replaceAll("[^ -~]", ""));
+						else
+							LogLine("Connected to node with old version: " + versionString.replaceAll("[^ -~]", ""));
+
+						relayedTransactionCache = LimitedSynchronizedObjects.createSet(TRANSACTIONS_CACHED.get(versionString));
+						relayTransactionCache = LimitedSynchronizedObjects.createMap(TRANSACTIONS_CACHED.get(versionString));
+
+						protocolVersion = versionString;
+
+						if (!sendVersionOnConnect) {
+							sendVersionMessage(relayPeer, versionString);
+							if (!RelayNode.VERSION.equals(versionString))
+								relayPeer.writeBytes(ByteBuffer.allocate(4 * 3 + RelayNode.VERSION.length())
+										.putInt(MAGIC_BYTES).putInt(MessageTypes.MAX_VERSION.ordinal()).putInt(RelayNode.VERSION.length())
+										.put(RelayNode.VERSION.getBytes())
+										.array());
+						}
+					}
+					return 3*4 + msgLength;
+
+				case MAX_VERSION:
+					versionBytes = new byte[msgLength];
+					buff.get(versionBytes);
+					versionString = new String(versionBytes);
+
+					LogLine("WARNING: Connected to node with a higher max version (PLEASE UPGRADE): " + versionString.replaceAll("[^ -~]", ""));
 					return 3*4 + msgLength;
 
 				case BLOCK:
+					if (protocolVersion == null)
+						throw new ProtocolException("Got BLOCK before VERSION");
 					if (readingBlock != null)
 						throw new ProtocolException("readingBlock already present");
 
@@ -256,11 +309,18 @@ public abstract class RelayConnection implements StreamParser {
 					if (QuarterHash.BYTE_LENGTH * transactionCount + Block.HEADER_SIZE + 4 != msgLength)
 						throw new ProtocolException("transactionCount: " + transactionCount + ", msgLength: " + msgLength);
 
+					receiveBlockHeader(block.header);
+
 					transactionsLeft = transactionCount;
 					readingBlock = block;
 					return 4*4 + Block.HEADER_SIZE + receiveBytes(buff);
 
 				case TRANSACTION:
+					if (protocolVersion == null)
+						throw new ProtocolException("Got TRANSACTION before VERSION");
+					if (readingBlock == null && msgLength > MAX_RELAY_FREE_TRANSACTION_BYTES.get(protocolVersion))
+						throw new ProtocolException("Too large free transaction relayed");
+
 					readingTransaction = new byte[msgLength];
 					readingTransactionPos = 0;
 					if (readingBlock == null)
@@ -269,6 +329,8 @@ public abstract class RelayConnection implements StreamParser {
 						return 4 + receiveBytes(buff);
 
 				case END_BLOCK:
+					if (protocolVersion == null)
+						throw new ProtocolException("Got END_BLOCK before VERSION");
 					if (readingBlock == null)
 						throw new ProtocolException("END_BLOCK without BLOCK");
 					if (readingBlock.pendingTransactionCount > 0)
@@ -278,6 +340,7 @@ public abstract class RelayConnection implements StreamParser {
 
 					LogStatsRecv("Skipped: " + (txnInBlock - txnRelayedInBlock) + "/" + txnInBlock +
 							" (" + ((txnInBlock - txnRelayedInBlock + 0.0) / txnInBlock) + "%)\n" +
+							"in block " + readingBlock.header.getHashAsString() + "\n" +
 							"In total, skipped " + txnSkippedTotal + " of " + txnInBlockTotal +
 							" (" + ((txnSkippedTotal + 0.0) / txnInBlockTotal) + "%)\n" +
 							"Relayed " + txnRelayedOutOfBlockTotal + " txn out of blocks");
@@ -291,24 +354,32 @@ public abstract class RelayConnection implements StreamParser {
 			buff.position(startPos);
 			return 0;
 		} catch (@NotNull NullPointerException | VerificationException | ArrayIndexOutOfBoundsException e) {
-			LogLine("Corrupted data read from relay peer " + e.getMessage());
+			LogLine("Corrupted data read from relay peer " + e.getClass().toString() + ": " + e.getMessage());
 			relayPeer.closeConnection();
 			return 0;
+		} catch (IOException e) {
+			LogLine("Failed to write bytes");
+			return -1;
 		}
 		throw new RuntimeException();
 	}
 
-	@Override
-	public void setWriteTarget(@NotNull MessageWriteTarget writeTarget) {
+	private void sendVersionMessage(@NotNull MessageWriteTarget writeTarget, String version) {
 		try {
-			writeTarget.writeBytes(ByteBuffer.allocate(4 * 3 + RelayNode.VERSION.length())
-					.putInt(MAGIC_BYTES).putInt(MessageTypes.VERSION.ordinal()).putInt(RelayNode.VERSION.length())
-					.put(RelayNode.VERSION.getBytes())
+			writeTarget.writeBytes(ByteBuffer.allocate(4 * 3 + version.length())
+					.putInt(MAGIC_BYTES).putInt(MessageTypes.VERSION.ordinal()).putInt(version.length())
+					.put(version.getBytes())
 					.array());
 		} catch (IOException e) {
 			/* Should get a disconnect automatically */
 			LogLine("Failed to write VERSION_INIT");
 		}
+	}
+
+	@Override
+	public void setWriteTarget(@NotNull MessageWriteTarget writeTarget) {
+		if (sendVersionOnConnect)
+			sendVersionMessage(writeTarget, RelayNode.VERSION);
 		relayPeer = writeTarget;
 	}
 

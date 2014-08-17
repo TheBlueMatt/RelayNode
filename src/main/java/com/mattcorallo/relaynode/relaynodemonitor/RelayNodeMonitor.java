@@ -123,7 +123,7 @@ public class RelayNodeMonitor {
         VersionMessage v = peerGroup.getVersionMessage();
         v.localServices = VersionMessage.NODE_NETWORK;
         peerGroup.setVersionMessage(v);
-        peerGroup.startAndWait();
+        peerGroup.stopAsync().awaitRunning();
 
         for (Sha256Hash h : lookupAPIBlocks().values())
             apiPostTime.put(h, System.currentTimeMillis());

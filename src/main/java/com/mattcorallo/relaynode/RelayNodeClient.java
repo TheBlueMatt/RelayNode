@@ -56,7 +56,7 @@ public class RelayNodeClient {
 
 	final NetworkParameters params = MainNetParams.get();
 	InetSocketAddress relayPeerAddress, localPeerAddress;
-	@Nullable
+	@NotNull
 	Peer localNetworkPeer;
 
 	RelayConnection relayPeer;
@@ -75,7 +75,7 @@ public class RelayNodeClient {
 	}
 
 	void reconnectRelay() {
-		relayPeer = new RelayConnection() {
+		relayPeer = new RelayConnection(true) {
 			@Override
 			void LogLine(String line) {
 				System.err.println(line);
@@ -89,6 +89,13 @@ public class RelayNodeClient {
 			@Override
 			void LogConnected(String line) {
 				System.err.println(line);
+			}
+
+			@Override
+			void receiveBlockHeader(Block b) {
+				InventoryMessage inv = new InventoryMessage(params);
+				inv.addBlock(b);
+				localNetworkPeer.sendMessage(inv);
 			}
 
 			@Override

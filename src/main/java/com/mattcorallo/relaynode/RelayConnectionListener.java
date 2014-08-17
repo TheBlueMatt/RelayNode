@@ -30,7 +30,7 @@ public class RelayConnectionListener {
 				if (remoteSet.contains(inetAddress))
 					return null;
 
-				return new RelayConnection() {
+				return new RelayConnection(false) {
 					@Override
 					void LogLine(String line) {
 						lineLogger.LogLine(line);
@@ -39,6 +39,9 @@ public class RelayConnectionListener {
 					@Override void LogStatsRecv(String lines) { }
 
 					@Override void LogConnected(String line) { }
+
+					@Override
+					void receiveBlockHeader(Block b) { }
 
 					@Override
 					void receiveBlock(Block b) {
