@@ -39,14 +39,12 @@ public class RelayNodeClient {
 		if (args.length != 2)
 			usage();
 		try {
-			InetSocketAddress relayPeerAddress = new InetSocketAddress(args[0], 8336);
-
 			String[] localPeerSplit = args[1].split(":");
 			if (localPeerSplit.length != 2)
 				usage();
 			InetSocketAddress localPeerAddress = new InetSocketAddress(localPeerSplit[0], Integer.parseInt(localPeerSplit[1]));
 
-			new RelayNodeClient(relayPeerAddress, localPeerAddress);
+			new RelayNodeClient(args[0], localPeerAddress);
 		} catch (NumberFormatException e) {
 			usage();
 		}
@@ -55,7 +53,8 @@ public class RelayNodeClient {
 	final NioClientManager connectionManager = new NioClientManager();
 
 	final NetworkParameters params = MainNetParams.get();
-	InetSocketAddress relayPeerAddress, localPeerAddress;
+	InetSocketAddress localPeerAddress;
+	String relayPeerAddress;
 	@NotNull
 	Peer localNetworkPeer;
 
@@ -64,7 +63,7 @@ public class RelayNodeClient {
 	@NotNull
 	ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
 
-	public RelayNodeClient(InetSocketAddress relayPeerAddress, InetSocketAddress localPeerAddress) {
+	public RelayNodeClient(String relayPeerAddress, InetSocketAddress localPeerAddress) {
 		this.localPeerAddress = localPeerAddress;
 		this.relayPeerAddress = relayPeerAddress;
 
@@ -72,6 +71,15 @@ public class RelayNodeClient {
 
 		reconnectLocal();
 		reconnectRelay();
+	}
+
+	void relayConnectionClosed() {
+		executor.schedule(new Runnable() {
+			@Override
+			public void run() {
+				reconnectRelay();
+			}
+		}, 1, TimeUnit.SECONDS);
 	}
 
 	void reconnectRelay() {
@@ -117,12 +125,7 @@ public class RelayNodeClient {
 			@Override
 			public void connectionClosed() {
 				System.err.println("Lost connection to relay peer");
-				executor.schedule(new Runnable() {
-					@Override
-					public void run() {
-						reconnectRelay();
-					}
-				}, 1, TimeUnit.SECONDS);
+				relayConnectionClosed();
 			}
 
 			@Override
@@ -130,7 +133,14 @@ public class RelayNodeClient {
 				System.err.println("Connected to relay peer!");
 			}
 		};
-		connectionManager.openConnection(relayPeerAddress, relayPeer);
+
+		InetSocketAddress relayAddress = new InetSocketAddress(relayPeerAddress, 8336);
+		if (relayAddress.isUnresolved()) {
+			System.err.println("Unable to resolve relay peer hostname");
+			relayConnectionClosed();
+		}
+
+		connectionManager.openConnection(relayAddress, relayPeer);
 	}
 
 	void reconnectLocal() {
