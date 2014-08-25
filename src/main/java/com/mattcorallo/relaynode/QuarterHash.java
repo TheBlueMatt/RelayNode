@@ -3,6 +3,7 @@ package com.mattcorallo.relaynode;
 import com.google.bitcoin.core.Sha256Hash;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -36,7 +37,7 @@ public class QuarterHash {
 				Arrays.equals(this.bytes, ((QuarterHash) o).bytes);
 	}
 
-	public static void writeBytes(Sha256Hash hash, ByteBuffer buff) {
-		buff.put(hash.getBytes(), 0, BYTE_LENGTH);
+	public static void writeBytes(Sha256Hash hash, ByteArrayOutputStream buff) {
+		buff.write(hash.getBytes(), 0, BYTE_LENGTH);
 	}
 }

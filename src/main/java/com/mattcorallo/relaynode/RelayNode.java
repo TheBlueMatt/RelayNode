@@ -21,6 +21,7 @@ import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
+import com.mattcorallo.relaynode.RDNS;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -220,7 +221,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "charming chameleon";
+	public static final String VERSION = "tiny tarantula";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
@@ -245,8 +246,6 @@ public class RelayNode {
 	@NotNull
 	BlockStore blockStore = new MemoryBlockStore(params);
 	BlockChain blockChain;
-	PeerGroup trustedOutboundPeerGroup;
-	volatile boolean chainDownloadDone = false;
 
 
 	/******************************************
@@ -281,9 +280,9 @@ public class RelayNode {
 						blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
 						try {
 							if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
-								LogBlockRelay(m.getHash(), "SPV check, from " + p.getAddress());
 								relayClients.sendBlock((Block) m);
 								blockPool.invGood(blocksClients, m.getHash());
+								LogBlockRelay(m.getHash(), "SPV check", p.getAddress().getAddr());
 							}
 						} catch (Exception e) { /* Invalid block, don't relay it */ }
 					}
@@ -322,19 +321,16 @@ public class RelayNode {
 
 		public volatile boolean inboundConnected = false; // Flag for UI only, very racy, often wrong
 		public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
-		@Nullable
-		private ScheduledFuture reconnectFuture = null;
 
 		private synchronized void disconnect() {
-			if (inbound != null) {
-				inbound.removeEventListener(trustedPeerDisconnectListener);
+			if (inbound != null)
 				inbound.close(); // Double-check closed
-			}
+			inbound = null;
 			inboundConnected = false;
-			if (outbound != null) {
-				outbound.removeEventListener(trustedPeerDisconnectListener);
+
+			if (outbound != null)
 				outbound.close(); // Double-check closed
-			}
+			outbound = null;
 			outboundConnected = false;
 		}
 
@@ -353,35 +349,32 @@ public class RelayNode {
 			});
 			trustedPeerManager.openConnection(addr, inbound);
 
-			outbound = trustedOutboundPeerGroup.connectTo(addr);
-			if (outbound == null)
-				onDisconnect();
+			outbound = new Peer(params, versionMessage, blockChain, new PeerAddress(addr));
 			trustedOutboundPeers.add(outbound);
 			outbound.addEventListener(trustedPeerDisconnectListener);
-			trustedOutboundPeerGroup.startBlockChainDownload(new DownloadListener() {
-				@Override
-				protected void doneDownload() {
-					chainDownloadDone = true;
-				}
-			});
 			outbound.addEventListener(new AbstractPeerEventListener() {
 				@Override
 				public void onPeerConnected(Peer p, int peerCount) {
+					outbound.setDownloadParameters(Long.MAX_VALUE, false);
+					outbound.startBlockChainDownload();
 					outboundConnected = true;
 				}
 			});
+			trustedPeerManager.openConnection(addr, outbound);
 		}
 
 		public synchronized void onDisconnect() {
 			disconnect();
 
-			if (reconnectFuture != null)
-				reconnectFuture.cancel(false);
-
-			reconnectFuture = reconnectExecutor.schedule(new Runnable() {
+			reconnectExecutor.schedule(new Runnable() {
 				@Override
 				public void run() {
-					connect();
+					synchronized (TrustedPeerConnections.this) {
+						if (inbound == null || outbound == null) {
+							disconnect();
+							connect();
+						}
+					}
 				}
 			}, 1, TimeUnit.SECONDS);
 		}
@@ -427,8 +420,8 @@ public class RelayNode {
 								Block b = blockPool.getObject(hash);
 								if (b != null)
 									relayClients.sendBlock(b);
-								LogBlockRelay(hash, "inv from node " + p.getAddress());
 								blockPool.invGood(blocksClients, hash);
+								LogBlockRelay(hash, "trusted inv", p.getAddress().getAddr());
 							}
 						}
 					});
@@ -459,8 +452,8 @@ public class RelayNode {
 					public void run() {
 						relayClients.sendBlock((Block) m);
 						blockPool.provideObject((Block) m);
-						LogBlockRelay(m.getHash(), "block from node " + p.getAddress());
 						blockPool.invGood(blocksClients, m.getHash());
+						LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr());
 						try {
 							blockChain.add(((Block) m).cloneAsHeader());
 						} catch (Exception e) {
@@ -506,12 +499,6 @@ public class RelayNode {
 		trustedPeerManager.startAsync().awaitRunning();
 
 		blockChain = new BlockChain(params, blockStore);
-
-		trustedOutboundPeerGroup = new PeerGroup(params, blockChain);
-		trustedOutboundPeerGroup.setUserAgent("RelayNode", VERSION);
-		trustedOutboundPeerGroup.addEventListener(trustedPeerDisconnectListener);
-		trustedOutboundPeerGroup.setFastCatchupTimeSecs(Long.MAX_VALUE); // We'll revert to full blocks after catchup, but oh well
-		trustedOutboundPeerGroup.startAsync().awaitRunning();
 	}
 
 	public void run(int onlyBlocksListenPort, int bothListenPort, int relayListenPort) {
@@ -648,18 +635,17 @@ public class RelayNode {
 					public void run() {
 						relayClients.sendBlock(b);
 						blockPool.provideObject(b);
-						LogBlockRelay(b.getHash(), "block from relay peer " + address);
 						blockPool.invGood(blocksClients, b.getHash());
+						LogBlockRelay(b.getHash(), "relay peer", address.getAddress());
 						try {
 							blockChain.add(b.cloneAsHeader());
 						} catch (Exception e) {
 							LogLine("WARNING: Exception adding block from relay peer " + address);
-							// Force reconnect of trusted peer
-							Peer downloadPeer = trustedOutboundPeerGroup.getDownloadPeer();
-							if (downloadPeer == null)
-								trustedOutboundPeerGroup.startBlockChainDownload(new AbstractPeerEventListener());
-							else
-								downloadPeer.close();
+							// Force reconnect of trusted peer(s)
+							synchronized (trustedPeerConnectionsMap) {
+								for (TrustedPeerConnections peer : trustedPeerConnectionsMap.values())
+									peer.onDisconnect();
+							}
 						}
 					}
 				});
@@ -704,13 +690,14 @@ public class RelayNode {
 	}
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
-	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String reason) {
+	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String source, InetAddress remote) {
 		if (blockRelayedSet.contains(blockHash))
 			return;
 		blockRelayedSet.add(blockHash);
-		LogLine(blockHash.toString().substring(4, 32) + " relayed (" + reason + ") " + System.currentTimeMillis());
+		source = source + " from " + remote.getHostAddress() + "/" + RDNS.getRDNS(remote);
+		LogLine(blockHash.toString().substring(4, 32) + " relayed (" + source + ") " + System.currentTimeMillis());
 		try {
-			relayLog.write((blockHash + " " + System.currentTimeMillis() + "\n").toCharArray());
+			relayLog.write((blockHash + " " + System.currentTimeMillis() + " " + source + "\n").toCharArray());
 			relayLog.flush();
 		} catch (IOException e) {
 			System.err.println("Failed to write to relay log");
@@ -804,8 +791,7 @@ public class RelayNode {
 			output.append("Connected block-only clients: ").append(blocksClients.size() - txnClients.size()).append("\n"); linesPrinted++;
 			output.append("Connected relay clients: ").append(relayPeers.size() - relayClientCount).append("\n"); linesPrinted++;
 			output.append("Connected relay node peers: ").append(relayClientCount).append("\n"); linesPrinted++;
-			output.append("Chain download at ").append(blockChain.getBestChainHeight())
-					.append(chainDownloadDone ? " (relaying SPV-checked blocks)" : "").append("\n"); linesPrinted++;
+			output.append("Chain download at ").append(blockChain.getBestChainHeight()).append("\n"); linesPrinted++;
 
 			output.append("\n"); linesPrinted++;
 			output.append("Commands:").append("\n"); linesPrinted++;

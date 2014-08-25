@@ -101,14 +101,17 @@ public class RelayNodeClient {
 
 			@Override
 			void receiveBlockHeader(Block b) {
+				System.err.println(System.currentTimeMillis() + ": Received block header " + b.getHashAsString());
 				InventoryMessage inv = new InventoryMessage(params);
 				inv.addBlock(b);
-				localNetworkPeer.sendMessage(inv);
+				try {
+					localNetworkPeer.sendMessage(inv);
+				} catch (NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override
 			void receiveBlock(@NotNull Block b) {
-				System.err.println("Received block " + b.getHashAsString());
+				System.err.println(System.currentTimeMillis() + ": Received block " + b.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(b);
 				} catch (NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
@@ -116,7 +119,7 @@ public class RelayNodeClient {
 
 			@Override
 			void receiveTransaction(@NotNull Transaction t) {
-				System.err.println("Received transaction " + t.getHashAsString());
+				System.err.println(System.currentTimeMillis() + ": Received transaction " + t.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(t);
 				} catch (NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
@@ -145,6 +148,7 @@ public class RelayNodeClient {
 
 	void reconnectLocal() {
 		localNetworkPeer = new Peer(params, new VersionMessage(params, 1), new PeerAddress(localPeerAddress), null, null);
+		localNetworkPeer.getVersionMessage().appendToSubVer("RelayNodeClient", RelayNode.VERSION, null);
 		localNetworkPeer.addEventListener(new AbstractPeerEventListener() {
 			@Override
 			public void onPeerConnected(Peer p, int peerCount) {
