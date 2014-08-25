@@ -66,7 +66,8 @@ public abstract class RelayConnection implements StreamParser {
 		}
 
 		synchronized void addTransaction(Integer index) {
-			Transaction t = newRelayTransactionCache.get(index);
+			Transaction t = newRelayTransactionCache.getByIndex(index);
+			newRelayTransactionCache.remove(t);
 			transactions.put(new QuarterHash(t.getHash()), t);
 		}
 
@@ -104,7 +105,7 @@ public abstract class RelayConnection implements StreamParser {
 
 			receiveBlock(block);
 
-			LogLine("Block built with " + bytesInBlock + " bytes on the wire");
+			LogStatsRecv("Block built with " + bytesInBlock + " bytes on the wire");
 		}
 	}
 
@@ -115,7 +116,7 @@ public abstract class RelayConnection implements StreamParser {
 
 	private volatile ArraySet<Sha256Hash> relayedTransactionCache = null;
 	private volatile Map<QuarterHash, Transaction> relayTransactionCache = null;
-	private volatile List<Transaction> newRelayTransactionCache = null;
+	private volatile ArraySet<Transaction> newRelayTransactionCache = null;
 
 	private MessageWriteTarget relayPeer;
 
@@ -189,6 +190,7 @@ public abstract class RelayConnection implements StreamParser {
 									}
 									out.write(index >> 8);
 									out.write(index     );
+									relayedTransactionCache.remove(t.getHash());
 								}
 							}
 						}
@@ -368,7 +370,7 @@ public abstract class RelayConnection implements StreamParser {
 
 						relayedTransactionCache = new ArraySet<>(TRANSACTIONS_CACHED.get(versionString));
 						relayTransactionCache = LimitedSynchronizedObjects.createMap(TRANSACTIONS_CACHED.get(versionString));
-						newRelayTransactionCache = LimitedSynchronizedObjects.createList(TRANSACTIONS_CACHED.get(versionString));
+						newRelayTransactionCache = new ArraySet<>(TRANSACTIONS_CACHED.get(versionString));
 
 						protocolVersion = versionString;
 

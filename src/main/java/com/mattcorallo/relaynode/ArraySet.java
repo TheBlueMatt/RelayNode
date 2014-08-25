@@ -11,6 +11,7 @@ import java.util.*;
 public class ArraySet<K> implements Set<K> {
 	final int maxSize;
 	final Map<K, Long> backingMap;
+	final Map<Long, K> backingReverseMap;
 
 	long offset = 0;
 	long total = 0;
@@ -18,6 +19,7 @@ public class ArraySet<K> implements Set<K> {
 	public ArraySet(int maxSize) {
 		this.maxSize = maxSize;
 		backingMap = LimitedSynchronizedObjects.createMap(maxSize);
+		backingReverseMap = LimitedSynchronizedObjects.createMap(maxSize);
 	}
 
 	@Override
@@ -60,7 +62,8 @@ public class ArraySet<K> implements Set<K> {
 				return false;
 
 			boolean wasFull = backingMap.size() == maxSize;
-			backingMap.put(k, total++);
+			backingMap.put(k, total);
+			backingReverseMap.put(total++, k);
 			if (wasFull)
 				offset++;
 			return true;
@@ -69,7 +72,13 @@ public class ArraySet<K> implements Set<K> {
 
 	@Override
 	public boolean remove(Object o) {
-		return backingMap.remove(o) != null;
+		synchronized (backingMap) {
+			Long index = backingMap.remove(o);
+			if (index == null)
+				return false;
+			backingReverseMap.remove(index);
+			return true;
+		}
 	}
 
 	@Override
@@ -96,6 +105,7 @@ public class ArraySet<K> implements Set<K> {
 	public void clear() {
 		synchronized (backingMap) {
 			backingMap.clear();
+			backingReverseMap.clear();
 			offset = 0;
 			total = 0;
 		}
@@ -107,6 +117,12 @@ public class ArraySet<K> implements Set<K> {
 			if (res == null)
 				return null;
 			return (int) (res - offset);
+		}
+	}
+
+	public K getByIndex(int index) {
+		synchronized (backingMap) {
+			return backingReverseMap.get(index + offset);
 		}
 	}
 }
