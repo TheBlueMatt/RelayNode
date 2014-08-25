@@ -100,13 +100,13 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			void receiveBlockHeader(Block b) {
+			void receiveBlockHeader(@NotNull Block b) {
 				System.err.println(System.currentTimeMillis() + ": Received block header " + b.getHashAsString());
 				InventoryMessage inv = new InventoryMessage(params);
 				inv.addBlock(b);
 				try {
 					localNetworkPeer.sendMessage(inv);
-				} catch (NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
+				} catch (@NotNull NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override

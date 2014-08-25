@@ -37,7 +37,7 @@ public class QuarterHash {
 				Arrays.equals(this.bytes, ((QuarterHash) o).bytes);
 	}
 
-	public static void writeBytes(Sha256Hash hash, ByteArrayOutputStream buff) {
+	public static void writeBytes(@NotNull Sha256Hash hash, @NotNull ByteArrayOutputStream buff) {
 		buff.write(hash.getBytes(), 0, BYTE_LENGTH);
 	}
 }

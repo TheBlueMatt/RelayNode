@@ -36,16 +36,7 @@ public class RelayConnectionListener {
 						lineLogger.LogLine(line);
 					}
 
-					@Override void LogStatsRecv(String lines) {
-						try {
-							for (String line : lines.split("\n"))
-								lineLogger.relayLog.write("STATS: " + line);
-							lineLogger.relayLog.flush();
-						} catch (IOException e) {
-							System.err.println("Failed to write to relay log");
-							System.exit(1);
-						}
-					}
+					@Override void LogStatsRecv(@NotNull String lines) { }
 
 					@Override void LogConnected(String line) { }
 

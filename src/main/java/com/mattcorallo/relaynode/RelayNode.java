@@ -21,7 +21,6 @@ import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
-import com.mattcorallo.relaynode.RDNS;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -151,7 +150,7 @@ abstract class Pool<Type extends Message> {
 								objects.remove(o.hash);
 								removeObjectList.remove(0);
 							}
-						} catch (IndexOutOfBoundsException e) {}
+						} catch (IndexOutOfBoundsException e) { /* Already removed? */}
 					}
 					Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
 				}
@@ -221,7 +220,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "tiny tarantula";
+	public static final String VERSION = "aggressive ant";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
@@ -282,7 +281,7 @@ public class RelayNode {
 							if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
 								relayClients.sendBlock((Block) m);
 								blockPool.invGood(blocksClients, m.getHash());
-								LogBlockRelay(m.getHash(), "SPV check", p.getAddress().getAddr());
+								LogBlockRelay(m.getHash(), "SPV check", p.getAddress().getAddr(), null);
 							}
 						} catch (Exception e) { /* Invalid block, don't relay it */ }
 					}
@@ -421,7 +420,7 @@ public class RelayNode {
 								if (b != null)
 									relayClients.sendBlock(b);
 								blockPool.invGood(blocksClients, hash);
-								LogBlockRelay(hash, "trusted inv", p.getAddress().getAddr());
+								LogBlockRelay(hash, "trusted inv", p.getAddress().getAddr(), null);
 							}
 						}
 					});
@@ -453,7 +452,7 @@ public class RelayNode {
 						relayClients.sendBlock((Block) m);
 						blockPool.provideObject((Block) m);
 						blockPool.invGood(blocksClients, m.getHash());
-						LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr());
+						LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr(), null);
 						try {
 							blockChain.add(((Block) m).cloneAsHeader());
 						} catch (Exception e) {
@@ -611,14 +610,18 @@ public class RelayNode {
 		}
 	}
 
-	public void ConnectToTrustedRelayPeer(final InetSocketAddress address) {
+	public void ConnectToTrustedRelayPeer(@NotNull final InetSocketAddress address) {
 		RelayConnection connection = new RelayConnection(true) {
+			String recvStats = "";
 			@Override
 			void LogLine(String line) {
 				RelayNode.this.LogLine(line);
 			}
 
-			@Override void LogStatsRecv(String lines) { }
+			@Override void LogStatsRecv(String lines) {
+				for (String line : lines.split("\n"))
+					recvStats += "STATS: " + line + "\n";
+			}
 
 			@Override
 			void LogConnected(String line) {
@@ -636,7 +639,8 @@ public class RelayNode {
 						relayClients.sendBlock(b);
 						blockPool.provideObject(b);
 						blockPool.invGood(blocksClients, b.getHash());
-						LogBlockRelay(b.getHash(), "relay peer", address.getAddress());
+						LogBlockRelay(b.getHash(), "relay peer", address.getAddress(), recvStats);
+						recvStats = "";
 						try {
 							blockChain.add(b.cloneAsHeader());
 						} catch (Exception e) {
@@ -690,14 +694,16 @@ public class RelayNode {
 	}
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
-	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String source, InetAddress remote) {
+	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String source, @NotNull InetAddress remote, String statsLines) {
 		if (blockRelayedSet.contains(blockHash))
 			return;
 		blockRelayedSet.add(blockHash);
 		source = source + " from " + remote.getHostAddress() + "/" + RDNS.getRDNS(remote);
 		LogLine(blockHash.toString().substring(4, 32) + " relayed (" + source + ") " + System.currentTimeMillis());
 		try {
-			relayLog.write((blockHash + " " + System.currentTimeMillis() + " " + source + "\n").toCharArray());
+			relayLog.write(blockHash + " " + System.currentTimeMillis() + " " + source + "\n");
+			if (statsLines != null)
+				relayLog.write(statsLines);
 			relayLog.flush();
 		} catch (IOException e) {
 			System.err.println("Failed to write to relay log");

@@ -1,5 +1,7 @@
 package com.mattcorallo.relaynode;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
@@ -10,7 +12,7 @@ import java.net.InetAddress;
  * results anyway, so we reach into the JDK and force it to give us what we want....
  */
 public class RDNS {
-	public static String getRDNS(InetAddress addr) {
+	public static String getRDNS(@NotNull InetAddress addr) {
 		try {
 			Field impl = InetAddress.class.getDeclaredField("impl");
 			impl.setAccessible(true);
