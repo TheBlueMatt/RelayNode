@@ -81,7 +81,7 @@ class PeerAndInvs {
  * Keeps track of a set of PeerAndInvs
  */
 class Peers {
-	public final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
+	private final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
 
 	@NotNull
 	public PeerAndInvs add(@NotNull Peer p) {
@@ -106,10 +106,12 @@ class Peers {
 	public int size() { return peers.size(); }
 
 	public void relayObject(Message m) {
+		PeerAndInvs[] peersArr;
 		synchronized (peers) {
-			for (PeerAndInvs p : peers)
-				p.maybeRelay(m);
+			peersArr = peers.toArray(new PeerAndInvs[peers.size()]);
 		}
+		for (PeerAndInvs p : peersArr)
+			p.maybeRelay(m);
 	}
 }
 
@@ -220,7 +222,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "fuck it, ship it!";
+	public static final String VERSION = "prioritized panther";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);
