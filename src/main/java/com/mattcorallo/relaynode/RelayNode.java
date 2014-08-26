@@ -257,7 +257,7 @@ public class RelayNode {
 	@NotNull
 	RelayConnectionListener relayClients;
 	@NotNull
-	PeerEventListener clientPeerListener = new AbstractPeerEventListener() {
+	PeerEventListener untrustedPeerListener = new AbstractPeerEventListener() {
 		@Nullable
 		@Override
 		public Message onPreMessageReceived(@NotNull final Peer p, final Message m) {
@@ -348,7 +348,7 @@ public class RelayNode {
 					inboundConnected = true;
 				}
 			});
-			trustedPeerManager.openConnection(addr, inbound);
+			connectionManager.openConnection(addr, inbound);
 
 			outbound = new Peer(params, versionMessage, blockChain, new PeerAddress(addr));
 			trustedOutboundPeers.add(outbound);
@@ -361,7 +361,7 @@ public class RelayNode {
 					outboundConnected = true;
 				}
 			});
-			trustedPeerManager.openConnection(addr, outbound);
+			connectionManager.openConnection(addr, outbound);
 		}
 
 		public synchronized void onDisconnect() {
@@ -389,7 +389,7 @@ public class RelayNode {
 
 	final Map<InetAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetAddress, TrustedPeerConnections>());
 	@NotNull
-	NioClientManager trustedPeerManager = new NioClientManager();
+	NioClientManager connectionManager = new NioClientManager();
 	@NotNull
 	PeerEventListener trustedPeerInboundListener = new AbstractPeerEventListener() {
 		@Override
@@ -485,6 +485,13 @@ public class RelayNode {
 	final Set<InetSocketAddress> relayPeersWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
 	final Set<InetSocketAddress> relayPeersConnected = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
 
+	/*******************************************************************************************
+	 ***** I keep a few outbound peers with nodes that reliably transport blocks regularly *****
+	 *******************************************************************************************/
+	final Set<InetSocketAddress> outboundP2PWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
+	final Set<InetSocketAddress> outboundP2PConnected = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
+	final Set<InetSocketAddress> outboundP2PDisconnect = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
+
 	/***************************
 	 ***** Stuff that runs *****
 	 ***************************/
@@ -497,7 +504,7 @@ public class RelayNode {
 
 		relayLog = new FileWriter("blockrelay.log", true);
 
-		trustedPeerManager.startAsync().awaitRunning();
+		connectionManager.startAsync().awaitRunning();
 
 		blockChain = new BlockChain(params, blockStore);
 	}
@@ -525,7 +532,7 @@ public class RelayNode {
 					versionMessage.time = System.currentTimeMillis()/1000;
 					Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
 					blocksClients.add(p); // Should come first to avoid relaying back to the sender
-					p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
+					p.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
 					return p;
 				}
 			}, new InetSocketAddress(onlyBlocksListenPort));
@@ -537,12 +544,12 @@ public class RelayNode {
 					versionMessage.time = System.currentTimeMillis()/1000;
 					Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
 					txnClients.add(blocksClients.add(p)); // Should come first to avoid relaying back to the sender
-					p.addEventListener(clientPeerListener, Threading.SAME_THREAD);
+					p.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
 					return p;
 				}
 			}, new InetSocketAddress(bothListenPort));
 
-			relayClients = new RelayConnectionListener(relayListenPort, clientPeerListener, this);
+			relayClients = new RelayConnectionListener(relayListenPort, untrustedPeerListener, this);
 
 			onlyBlocksServer.startAsync().awaitRunning();
 			bothServer.startAsync().awaitRunning();
@@ -600,8 +607,56 @@ public class RelayNode {
 					if (addr.isUnresolved())
 						LogLineEnter("Unable to resolve host");
 					else {
-						ConnectToTrustedRelayPeer(addr);
-						LogLineEnter("Added trusted relay peer " + addr);
+						if (relayPeersConnected.contains(addr) || relayPeersWaitingOnReconnection.contains(addr)) {
+							LogLineEnter("Already had relay peer " + addr);
+						} else {
+							ConnectToTrustedRelayPeer(addr);
+							LogLineEnter("Added trusted relay peer " + addr);
+						}
+					}
+				} catch (NumberFormatException e) {
+					LogLineEnter("Invalid argument");
+				}
+			} else if (line.startsWith("o ")) {
+				String[] hostPort = line.substring(2).split(":");
+				if (hostPort.length != 2) {
+					LogLineEnter("Invalid argument");
+					continue;
+				}
+				try {
+					int port = Integer.parseInt(hostPort[1]);
+					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
+					if (addr.isUnresolved())
+						LogLineEnter("Unable to resolve host");
+					else {
+						if (outboundP2PConnected.contains(addr) || outboundP2PWaitingOnReconnection.contains(addr)) {
+							LogLineEnter("Already had outbound connection to " + addr);
+						} else {
+							ConnectToUntrustedBitcoinP2P(addr);
+							LogLineEnter("Added outbound connection to " + addr);
+						}
+					}
+				} catch (NumberFormatException e) {
+					LogLineEnter("Invalid argument");
+				}
+			} else if (line.startsWith("o-")) {
+				String[] hostPort = line.substring(2).split(":");
+				if (hostPort.length != 2) {
+					LogLineEnter("Invalid argument");
+					continue;
+				}
+				try {
+					int port = Integer.parseInt(hostPort[1]);
+					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
+					if (addr.isUnresolved())
+						LogLineEnter("Unable to resolve host");
+					else {
+						if (!outboundP2PConnected.contains(addr) && !outboundP2PWaitingOnReconnection.contains(addr)) {
+							LogLineEnter("Had no outbound connection to " + addr);
+						} else {
+							outboundP2PDisconnect.add(addr);
+							LogLineEnter("Will remove outbound connection to " + addr + " after next disconnect");
+						}
 					}
 				} catch (NumberFormatException e) {
 					LogLineEnter("Invalid argument");
@@ -677,8 +732,37 @@ public class RelayNode {
 				relayPeersWaitingOnReconnection.remove(address);
 			}
 		};
-		trustedPeerManager.openConnection(address, connection);
+		connectionManager.openConnection(address, connection);
 		relayPeersWaitingOnReconnection.add(address);
+	}
+
+	public void ConnectToUntrustedBitcoinP2P(@NotNull final InetSocketAddress address) {
+		Peer peer = new Peer(params, new VersionMessage(params, 42), null, new PeerAddress(address));
+		peer.getVersionMessage().appendToSubVer("OutboundRelayNode - bitcoin-peering@mattcorallo.com", RelayNode.VERSION, null);
+		peer.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
+		peer.addEventListener(new AbstractPeerEventListener() {
+			@Override
+			public void onPeerDisconnected(Peer peer, int peerCount) {
+				outboundP2PConnected.remove(address);
+				if (outboundP2PDisconnect.contains(address))
+					return;
+				outboundP2PWaitingOnReconnection.add(address);
+				reconnectExecutor.schedule(new Runnable() {
+					@Override
+					public void run() {
+						ConnectToUntrustedBitcoinP2P(address);
+					}
+				}, 1, TimeUnit.SECONDS);
+			}
+
+			@Override
+			public void onPeerConnected(Peer peer, int peerCount) {
+				outboundP2PConnected.add(address);
+				outboundP2PWaitingOnReconnection.remove(address);
+			}
+		});
+		connectionManager.openConnection(address, peer);
+		outboundP2PWaitingOnReconnection.add(address);
 	}
 
 	final Queue<String> logLines = new LinkedList<>();
@@ -794,6 +878,22 @@ public class RelayNode {
 				}
 			}
 
+			if (outboundP2PWaitingOnReconnection.isEmpty() && outboundP2PConnected.isEmpty()) {
+				output.append("\nNo outbound Listeners").append("\n"); linesPrinted += 2;
+			} else {
+				output.append("\nOutbound Listeners:").append("\n"); linesPrinted += 2;
+				synchronized (outboundP2PConnected) {
+					for (InetSocketAddress peer : outboundP2PConnected) {
+						output.append("  ").append(peer).append(" connected").append("\n"); linesPrinted++;
+					}
+				}
+				synchronized (outboundP2PWaitingOnReconnection) {
+					for (InetSocketAddress peer : outboundP2PWaitingOnReconnection) {
+						output.append("  ").append(peer).append(" not connected").append("\n"); linesPrinted++;
+					}
+				}
+			}
+
 			output.append("\n"); linesPrinted++;
 			output.append("Connected block+transaction clients: ").append(txnClients.size()).append("\n"); linesPrinted++;
 			output.append("Connected block-only clients: ").append(blocksClients.size() - txnClients.size()).append("\n"); linesPrinted++;
@@ -805,6 +905,8 @@ public class RelayNode {
 			output.append("Commands:").append("\n"); linesPrinted++;
 			output.append("q        \t\tquit").append("\n"); linesPrinted++;
 			output.append("t IP:port\t\tadd node IP:port as a trusted peer").append("\n"); linesPrinted++;
+			output.append("o IP:port\t\tadd node IP:port as an untrusted peer").append("\n"); linesPrinted++;
+			output.append("o-IP:port\t\tremove node IP:port as an untrusted peer").append("\n"); linesPrinted++;
 			output.append("r IP\t\t\tadd trusted relay node to relay from").append("\n"); linesPrinted++;
 
 			if (firstIteration)
