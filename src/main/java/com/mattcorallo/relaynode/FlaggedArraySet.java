@@ -90,6 +90,7 @@ public class FlaggedArraySet<K> {
 				backingMap.put(t, i+1);
 				backingReverseMap.put(i+1, t);
 			}
+			offset++;
 		}
 
 		return true;

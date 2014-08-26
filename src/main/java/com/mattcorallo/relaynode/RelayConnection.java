@@ -42,12 +42,6 @@ public abstract class RelayConnection implements StreamParser {
 		MAX_EXTRA_OVERSIZE_TXN.put("charming chameleon", 0);
 		MAX_RELAY_OVERSIZE_TXN_BYTES.put("charming chameleon", 0);
 
-		MAX_RELAY_TRANSACTION_BYTES.put("tiny tarantula", 25000);
-		TRANSACTIONS_CACHED.put("tiny tarantula", 1000);
-		RELAY_MODE.put("tiny tarantula", RelayMode.CACHE_ID);
-		MAX_EXTRA_OVERSIZE_TXN.put("tiny tarantula", 0);
-		MAX_RELAY_OVERSIZE_TXN_BYTES.put("tiny tarantula", 0);
-
 		MAX_RELAY_TRANSACTION_BYTES.put(RelayNode.VERSION, 10000);
 		TRANSACTIONS_CACHED.put(RelayNode.VERSION, 1000);
 		RELAY_MODE.put(RelayNode.VERSION, RelayMode.CACHE_ID);
