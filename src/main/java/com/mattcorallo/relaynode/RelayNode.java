@@ -283,7 +283,10 @@ public class RelayNode {
 							if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
 								relayClients.sendBlock((Block) m);
 								blockPool.invGood(blocksClients, m.getHash());
-								LogBlockRelay(m.getHash(), "SPV check", p.getAddress().getAddr(), null);
+								if (p.getVersionMessage().subVer.contains("RelayNodeProtocol"))
+									LogBlockRelay(m.getHash(), "relay SPV", p.getAddress().getAddr(), null);
+								else
+									LogBlockRelay(m.getHash(), "p2p SPV", p.getAddress().getAddr(), null);
 							}
 						} catch (Exception e) { /* Invalid block, don't relay it */ }
 					}
@@ -319,6 +322,8 @@ public class RelayNode {
 		public Peer outbound;
 		/** The address to (re)connect to */
 		public InetSocketAddress addr;
+
+		boolean closedPermanently = false;
 
 		public volatile boolean inboundConnected = false; // Flag for UI only, very racy, often wrong
 		public volatile boolean outboundConnected = false; // Flag for UI only, very racy, often wrong
@@ -367,17 +372,24 @@ public class RelayNode {
 		public synchronized void onDisconnect() {
 			disconnect();
 
-			reconnectExecutor.schedule(new Runnable() {
-				@Override
-				public void run() {
-					synchronized (TrustedPeerConnections.this) {
-						if (inbound == null || outbound == null) {
-							disconnect();
-							connect();
+			if (!closedPermanently)
+				reconnectExecutor.schedule(new Runnable() {
+					@Override
+					public void run() {
+						synchronized (TrustedPeerConnections.this) {
+							if (inbound == null || outbound == null) {
+								disconnect();
+								connect();
+							}
 						}
 					}
-				}
-			}, 1, TimeUnit.SECONDS);
+				}, 1, TimeUnit.SECONDS);
+		}
+
+		public void disconnectPermanently() {
+			closedPermanently = true;
+			disconnect();
+			trustedPeerConnectionsMap.remove(addr.getAddress());
 		}
 
 		public TrustedPeerConnections(@NotNull InetSocketAddress addr) {
@@ -422,7 +434,8 @@ public class RelayNode {
 								if (b != null)
 									relayClients.sendBlock(b);
 								blockPool.invGood(blocksClients, hash);
-								LogBlockRelay(hash, "trusted inv", p.getAddress().getAddr(), null);
+								if (b != null)
+									LogBlockRelay(hash, "trusted inv", p.getAddress().getAddr(), null);
 							}
 						}
 					});
@@ -484,6 +497,7 @@ public class RelayNode {
 	 *******************************************************************/
 	final Set<InetSocketAddress> relayPeersWaitingOnReconnection = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
 	final Set<InetSocketAddress> relayPeersConnected = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
+	final Set<InetSocketAddress> relayPeersDisconnect = Collections.synchronizedSet(new HashSet<InetSocketAddress>());
 
 	/*******************************************************************************************
 	 ***** I keep a few outbound peers with nodes that reliably transport blocks regularly *****
@@ -579,85 +593,76 @@ public class RelayNode {
 				System.out.println("Quitting...");
 				// Wait...cleanup? naaaaa
 				System.exit(0);
-			} else if (line.startsWith("t ")) {
+			} else if (line.startsWith("t") || line.startsWith("o")) {
 				String[] hostPort = line.substring(2).split(":");
 				if (hostPort.length != 2) {
 					LogLineEnter("Invalid argument");
 					continue;
 				}
+				InetSocketAddress addr;
 				try {
 					int port = Integer.parseInt(hostPort[1]);
-					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
-					if (addr.isUnresolved())
+					addr = new InetSocketAddress(hostPort[0], port);
+					if (addr.isUnresolved()) {
 						LogLineEnter("Unable to resolve host");
-					else {
-						if (trustedPeerConnectionsMap.containsKey(addr.getAddress())) {
-							LogLineEnter("Already had trusted peer " + addr);
-						} else {
-							new TrustedPeerConnections(addr);
-							LogLineEnter("Added trusted peer " + addr);
-						}
+						continue;
 					}
 				} catch (NumberFormatException e) {
 					LogLineEnter("Invalid argument");
+					continue;
 				}
-			} else if (line.startsWith("r ")) {
+				if (line.startsWith("t ")) {
+					if (trustedPeerConnectionsMap.containsKey(addr.getAddress()))
+						LogLineEnter("Already had trusted peer " + addr);
+					else {
+						new TrustedPeerConnections(addr);
+						LogLineEnter("Added trusted peer " + addr);
+					}
+				} else if (line.startsWith("t-")) {
+					TrustedPeerConnections conn = trustedPeerConnectionsMap.get(addr.getAddress());
+					if (conn == null)
+						LogLineEnter("Had no trusted connection to " + addr);
+					else {
+						conn.disconnectPermanently();
+						LogLineEnter("Removed trusted connection to " + addr);
+					}
+				} else if (line.startsWith("o ")) {
+					if (outboundP2PConnected.contains(addr) || outboundP2PWaitingOnReconnection.contains(addr)) {
+						LogLineEnter("Already had outbound connection to " + addr);
+					} else {
+						ConnectToUntrustedBitcoinP2P(addr);
+						LogLineEnter("Added outbound connection to " + addr);
+					}
+				} else if (line.startsWith("o-")) {
+					if (!outboundP2PConnected.contains(addr) && !outboundP2PWaitingOnReconnection.contains(addr)) {
+						LogLineEnter("Had no outbound connection to " + addr);
+					} else {
+						outboundP2PDisconnect.add(addr);
+						LogLineEnter("Will remove outbound connection to " + addr + " after next disconnect");
+					}
+				} else
+					LogLine("Invalid command");
+			} else if (line.startsWith("r")) {
 				try {
 					InetSocketAddress addr = new InetSocketAddress(line.substring(2), 8336);
 					if (addr.isUnresolved())
 						LogLineEnter("Unable to resolve host");
-					else {
-						if (relayPeersConnected.contains(addr) || relayPeersWaitingOnReconnection.contains(addr)) {
+					else if (line.startsWith("r ")) {
+						if (relayPeersConnected.contains(addr) || relayPeersWaitingOnReconnection.contains(addr))
 							LogLineEnter("Already had relay peer " + addr);
-						} else {
+						else {
 							ConnectToTrustedRelayPeer(addr);
 							LogLineEnter("Added trusted relay peer " + addr);
 						}
-					}
-				} catch (NumberFormatException e) {
-					LogLineEnter("Invalid argument");
-				}
-			} else if (line.startsWith("o ")) {
-				String[] hostPort = line.substring(2).split(":");
-				if (hostPort.length != 2) {
-					LogLineEnter("Invalid argument");
-					continue;
-				}
-				try {
-					int port = Integer.parseInt(hostPort[1]);
-					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
-					if (addr.isUnresolved())
-						LogLineEnter("Unable to resolve host");
-					else {
-						if (outboundP2PConnected.contains(addr) || outboundP2PWaitingOnReconnection.contains(addr)) {
-							LogLineEnter("Already had outbound connection to " + addr);
-						} else {
-							ConnectToUntrustedBitcoinP2P(addr);
-							LogLineEnter("Added outbound connection to " + addr);
-						}
-					}
-				} catch (NumberFormatException e) {
-					LogLineEnter("Invalid argument");
-				}
-			} else if (line.startsWith("o-")) {
-				String[] hostPort = line.substring(2).split(":");
-				if (hostPort.length != 2) {
-					LogLineEnter("Invalid argument");
-					continue;
-				}
-				try {
-					int port = Integer.parseInt(hostPort[1]);
-					InetSocketAddress addr = new InetSocketAddress(hostPort[0], port);
-					if (addr.isUnresolved())
-						LogLineEnter("Unable to resolve host");
-					else {
-						if (!outboundP2PConnected.contains(addr) && !outboundP2PWaitingOnReconnection.contains(addr)) {
-							LogLineEnter("Had no outbound connection to " + addr);
-						} else {
-							outboundP2PDisconnect.add(addr);
+					} else if (line.startsWith("r-")) {
+						if (!relayPeersConnected.contains(addr) && !relayPeersWaitingOnReconnection.contains(addr))
+							LogLineEnter("Had no relay peer " + addr);
+						else {
+							relayPeersDisconnect.add(addr);
 							LogLineEnter("Will remove outbound connection to " + addr + " after next disconnect");
 						}
-					}
+					} else
+						LogLine("Invalid command");
 				} catch (NumberFormatException e) {
 					LogLineEnter("Invalid argument");
 				}
@@ -717,6 +722,8 @@ public class RelayNode {
 			@Override
 			public void connectionClosed() {
 				relayPeersConnected.remove(address);
+				if (relayPeersDisconnect.contains(address))
+					return;
 				relayPeersWaitingOnReconnection.add(address);
 				reconnectExecutor.schedule(new Runnable() {
 					@Override
@@ -781,13 +788,14 @@ public class RelayNode {
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
 	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String source, @NotNull InetAddress remote, String statsLines) {
+		long timeRelayed = System.currentTimeMillis();
 		if (blockRelayedSet.contains(blockHash))
 			return;
 		blockRelayedSet.add(blockHash);
 		source = source + " from " + remote.getHostAddress() + "/" + RDNS.getRDNS(remote);
-		LogLine(blockHash.toString().substring(4, 32) + " relayed (" + source + ") " + System.currentTimeMillis());
+		LogLine(blockHash.toString().substring(4, 32) + " relayed (" + source + ") " + timeRelayed);
 		try {
-			relayLog.write(blockHash + " " + System.currentTimeMillis() + " " + source + "\n");
+			relayLog.write(blockHash + " " + timeRelayed + " " + source + "\n");
 			if (statsLines != null)
 				relayLog.write(statsLines);
 			relayLog.flush();
@@ -829,9 +837,9 @@ public class RelayNode {
 			}
 
 			if (trustedPeerConnectionsMap.isEmpty()) {
-				output.append("\nNo trusted nodes (no transaction relay)").append("\n"); linesPrinted += 2;
+				output.append("\nNo Trusted Nodes (no transaction relay)").append("\n"); linesPrinted += 2;
 			} else {
-				output.append("\nTrusted nodes: ").append("\n"); linesPrinted += 2;
+				output.append("\nTrusted Nodes: ").append("\n"); linesPrinted += 2;
 				synchronized (trustedPeerConnectionsMap) {
 					for (Map.Entry<InetAddress, TrustedPeerConnections> entry : trustedPeerConnectionsMap.entrySet()) {
 						String status;
@@ -852,9 +860,9 @@ public class RelayNode {
 			Set<InetAddress> relayPeers = relayClients.getClientSet();
 			int relayClientCount = 0;
 			if (relayPeersWaitingOnReconnection.isEmpty() && relayPeersConnected.isEmpty()) {
-				output.append("\nNo relay peers").append("\n"); linesPrinted += 2;
+				output.append("\nNo Relay Peers").append("\n"); linesPrinted += 2;
 			} else {
-				output.append("\nRelay peers:").append("\n"); linesPrinted += 2;
+				output.append("\nRelay Peers:").append("\n"); linesPrinted += 2;
 
 				synchronized (relayPeersConnected) {
 					for (InetSocketAddress peer : relayPeersConnected) { // If its not connected, its not in the set
@@ -879,7 +887,7 @@ public class RelayNode {
 			}
 
 			if (outboundP2PWaitingOnReconnection.isEmpty() && outboundP2PConnected.isEmpty()) {
-				output.append("\nNo outbound Listeners").append("\n"); linesPrinted += 2;
+				output.append("\nNo Outbound Listeners").append("\n"); linesPrinted += 2;
 			} else {
 				output.append("\nOutbound Listeners:").append("\n"); linesPrinted += 2;
 				synchronized (outboundP2PConnected) {
@@ -905,9 +913,11 @@ public class RelayNode {
 			output.append("Commands:").append("\n"); linesPrinted++;
 			output.append("q        \t\tquit").append("\n"); linesPrinted++;
 			output.append("t IP:port\t\tadd node IP:port as a trusted peer").append("\n"); linesPrinted++;
+			output.append("t-IP:port\t\tremove node IP:port as a trusted peer").append("\n"); linesPrinted++;
 			output.append("o IP:port\t\tadd node IP:port as an untrusted peer").append("\n"); linesPrinted++;
 			output.append("o-IP:port\t\tremove node IP:port as an untrusted peer").append("\n"); linesPrinted++;
 			output.append("r IP\t\t\tadd trusted relay node to relay from").append("\n"); linesPrinted++;
+			output.append("r-IP\t\t\tremove trusted relay node to relay from").append("\n"); linesPrinted++;
 
 			if (firstIteration)
 				output.append("\n");

@@ -13,6 +13,8 @@ import java.net.InetAddress;
  */
 public class RDNS {
 	public static String getRDNS(@NotNull InetAddress addr) {
+		if (!addr.toString().equals("/" + addr.getHostAddress()) && !addr.toString().equals(addr.getHostAddress() + "/" + addr.getHostAddress()))
+			return addr.getHostName(); // Use hostname originally used to resolve the address
 		try {
 			Field impl = InetAddress.class.getDeclaredField("impl");
 			impl.setAccessible(true);

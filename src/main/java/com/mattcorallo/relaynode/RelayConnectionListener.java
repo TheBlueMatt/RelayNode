@@ -1,11 +1,10 @@
 package com.mattcorallo.relaynode;
 
-import com.google.bitcoin.core.Block;
-import com.google.bitcoin.core.PeerEventListener;
-import com.google.bitcoin.core.Transaction;
+import com.google.bitcoin.core.*;
 import com.google.bitcoin.net.NioServer;
 import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.net.StreamParserFactory;
+import com.google.bitcoin.params.MainNetParams;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import org.jetbrains.annotations.NotNull;
@@ -28,12 +27,18 @@ public class RelayConnectionListener {
 	private final Cache<InetAddress, Integer> oldHosts = CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.HOURS).maximumSize(100).build();
 
 	public RelayConnectionListener(int port, @NotNull final PeerEventListener clientPeerListener, @NotNull final RelayNode lineLogger) throws IOException {
+		final NetworkParameters params = MainNetParams.get();
+		final VersionMessage fakeVersionMessage = new VersionMessage(params, -1); // Used to identify connection as relay protocol
+		fakeVersionMessage.appendToSubVer("RelayNodeProtocol", "", null);
+
 		NioServer relayServer = new NioServer(new StreamParserFactory() {
 			@Nullable
 			@Override
 			public StreamParser getNewParser(final InetAddress inetAddress, int port) {
 				if (remoteSet.contains(inetAddress))
 					return null;
+
+				final Peer emulatedPeer = new Peer(params, fakeVersionMessage, null, new PeerAddress(inetAddress));
 
 				return new RelayConnection(false) {
 					@Override
@@ -56,12 +61,12 @@ public class RelayConnectionListener {
 
 					@Override
 					void receiveBlock(Block b) {
-						clientPeerListener.onPreMessageReceived(null, b);
+						clientPeerListener.onPreMessageReceived(emulatedPeer, b);
 					}
 
 					@Override
 					void receiveTransaction(Transaction t) {
-						clientPeerListener.onPreMessageReceived(null, t);
+						clientPeerListener.onPreMessageReceived(emulatedPeer, t);
 					}
 
 					@Override
