@@ -5,9 +5,10 @@
 # Distributed under the MIT/X11 software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
-import socket, sys
+import socket, sys, time, struct
 from struct import pack, unpack, unpack_from
-from threading import Timer, Lock
+from threading import Timer, Lock, RLock
+from hashlib import sha256
 try:
 	from collections import OrderedDict # Python 3.1
 except ImportError:
@@ -36,7 +37,7 @@ class FlaggedArraySet:
 	def len(self):
 		return len(self.backing_dict)
 
-	def flag_count(self):
+	def get_flag_count(self):
 		return self.flag_count
 
 	def contains(self, e):
@@ -92,6 +93,15 @@ class FlaggedArraySet:
 		else:
 			return None
 
+def decode_varint(data, offset):
+	if unpack_from('<B', data, offset)[0] < 0xfd:
+		return unpack_from('<B', data, offset + 0)[0], offset + 1
+	elif data[offset] == 0xfd:
+		return unpack_from('<H', data, offset + 1)[0], offset + 3
+	elif data[offset] == 0xfe:
+		return unpack_from('<I', data, offset + 1)[0], offset + 5
+	else:
+		return unpack_from('<Q', data, offset + 1)[0], offset + 9
 
 class RelayNetworkClient:
 	MAGIC_BYTES = int(0xF2BEEF42)
@@ -101,21 +111,31 @@ class RelayNetworkClient:
 	MAX_RELAY_OVERSIZE_TRANSACTION_BYTES = 250000
 	MAX_EXTRA_OVERSIZE_TRANSACTIONS = 20
 
-	def __init__(self, server):
+	def __init__(self, server, data_recipient):
 		self.server = server
+		self.data_recipient = data_recipient
 		self.send_lock = Lock()
-		Timer(0, self.reconnect).start() # becomes the message-processing thread
+		self.reconnect()
 
 	def reconnect(self):
+		t = Timer(1, self.connect) # becomes the message-processing thread
+		t.daemon = True
+		t.start()
+
+	def connect(self):
 		self.send_lock.acquire()
 		self.recv_transaction_cache = FlaggedArraySet(1000)
 		self.send_transaction_cache = FlaggedArraySet(1000)
 		self.relay_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.relay_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 		try:
-			self.relay_sock.connect((self.server, 8336))
-			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.VERSION_TYPE, len(self.VERSION_STRING)))
-			self.relay_sock.sendall(self.VERSION_STRING)
-			self.send_lock.release()
+			try:
+				self.relay_sock.connect((self.server, 8336))
+				self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.VERSION_TYPE, len(self.VERSION_STRING)))
+				self.relay_sock.sendall(self.VERSION_STRING)
+			finally:
+				self.send_lock.release()
+
 			while True:
 				msg_header = unpack('>3I', self.relay_sock.recv(3 * 4, socket.MSG_WAITALL))
 				if msg_header[0] != self.MAGIC_BYTES:
@@ -136,6 +156,7 @@ class RelayNetworkClient:
 
 					header_data = self.relay_sock.recv(80, socket.MSG_WAITALL)
 					wire_bytes += 80
+					self.data_recipient.provide_block_header(header_data)
 					if deserialize_utils:
 						header = CBlockHeader.deserialize(header_data)
 						print("Got block header: " + str(b2lx(header.GetHash())))
@@ -143,9 +164,9 @@ class RelayNetworkClient:
 					if msg_header[2] < 0xfd:
 						block_data = header_data + pack('B', msg_header[2])
 					elif msg_header[2] < 0xffff:
-						block_data = header_data + b'0xfd' + pack('>H', msg_header[2])
+						block_data = header_data + b'\xfd' + pack('<H', msg_header[2])
 					elif msg_header[2] < 0xffffffff:
-						block_data = header_data + b'0xfe' + pack('>I', msg_header[2])
+						block_data = header_data + b'\xfe' + pack('<I', msg_header[2])
 					else:
 						raise ProtocolError("WTF?????")
 
@@ -173,9 +194,7 @@ class RelayNetworkClient:
 							self.recv_transaction_cache.remove(transaction_data)
 							block_data += transaction_data
 
-					# TODO: Pass block to bitcoind
-					#TODO: rm
-					self.provide_block(block_data)
+					self.data_recipient.provide_block(block_data)
 
 					if deserialize_utils:
 						print("Got full block " + str(b2lx(header.GetHash())) + " with " + str(msg_header[2]) + " transactions in " + str(wire_bytes) + " wire bytes")
@@ -188,14 +207,12 @@ class RelayNetworkClient:
 						raise ProtocolError("Invalid END_BLOCK message after block")
 
 				elif msg_header[1] == self.TRANSACTION_TYPE:
-					if msg_header[2] > self.MAX_RELAY_TRANSACTION_BYTES and (self.recv_transaction_cache.flag_count() >= self.MAX_EXTRA_OVERSIZE_TRANSACTIONS or msg_header[2] > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES):
+					if msg_header[2] > self.MAX_RELAY_TRANSACTION_BYTES and (self.recv_transaction_cache.get_flag_count() >= self.MAX_EXTRA_OVERSIZE_TRANSACTIONS or msg_header[2] > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES):
 						raise ProtocolError("Got a freely relayed transaction too large (" + str(msg_header[2]) + ") bytes")
 					transaction_data = self.relay_sock.recv(msg_header[2], socket.MSG_WAITALL)
 					self.recv_transaction_cache.add(transaction_data, msg_header[2] > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)
 
-					# TODO: Pass transaction to bitcoind
-					#TODO: rm
-					self.provide_transaction(transaction_data)
+					self.data_recipient.provide_transaction(transaction_data)
 
 					if deserialize_utils:
 						transaction = CTransaction.deserialize(transaction_data)
@@ -210,12 +227,15 @@ class RelayNetworkClient:
 				else:
 					raise ProtocolError("Unknown message type: " + str(msg_header[1]))
 
-		except OSError as err:
+		except (OSError, socket.error) as err:
 			print("Lost connect to relay node:", err)
-			Timer(1, self.reconnect).start()
+			self.reconnect()
 		except ProtocolError as err:
 			print("Error processing data from relay node:", err)
-			Timer(1, self.reconnect).start()
+			self.reconnect()
+		except Exception as err:
+			print("Unknown error processing data from relay node:", err)
+			self.reconnect()
 
 	def provide_transaction(self, transaction_data):
 		self.send_lock.acquire()
@@ -223,50 +243,50 @@ class RelayNetworkClient:
 		if self.send_transaction_cache.contains(transaction_data):
 			self.send_lock.release()
 			return
-		if len(transaction_data) > self.MAX_RELAY_TRANSACTION_BYTES and (len(transaction_data) > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES or self.send_transaction_cache.flag_count() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS):
+		if len(transaction_data) > self.MAX_RELAY_TRANSACTION_BYTES and (len(transaction_data) > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES or self.send_transaction_cache.get_flag_count() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS):
 			self.send_lock.release()
 			return
 
 		try:
-			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.TRANSACTION_TYPE, len(transaction_data)))
-			self.relay_sock.sendall(transaction_data)
+			relay_data = pack('>3I', self.MAGIC_BYTES, self.TRANSACTION_TYPE, len(transaction_data))
+			relay_data += transaction_data
+			self.relay_sock.sendall(relay_data)
 			self.send_transaction_cache.add(transaction_data, len(transaction_data) > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)
-		except OSError as err:
+
+			if deserialize_utils:
+				transaction = CTransaction.deserialize(transaction_data)
+				print("Sent transaction " + str(b2lx(transaction.GetHash())) + " of size " + str(len(transaction_data)))
+			else:
+				print("Sent transaction of size " + str(len(transaction_data)))
+		except (OSError, socket.error) as err:
 			print("Failed to send to relay node: ", err)
 
 		self.send_lock.release()
 
-	def decode_varint(self, data, offset):
-		if data[offset] < 0xfd:
-			return data[offset], offset + 1
-		elif data[offset] == 0xfd:
-			return unpack_from('>H', data, offset + 1)[0], offset + 3
-		elif data[offset] == 0xfe:
-			return unpack_from('>I', data, offset + 1)[0], offset + 5
-		else:
-			raise ProtocolError("Tried to decode a too-large varint")
+	def provide_block_header(self, header_data):
+		return
 
 	def provide_block(self, block_data):
 		"""THIS METHOD WILL BLOCK UNTIL SENDING IS COMPLETE"""
-		tx_count, read_pos = self.decode_varint(block_data, 80)
+		tx_count, read_pos = decode_varint(block_data, 80)
 		self.send_lock.acquire()
 		try:
-			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count))
-			self.relay_sock.sendall(block_data[0:80]) # Send header
+			relay_data = pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count) + block_data[0:80]
+			wire_bytes = 3 * 4 + 80
 			for i in range(0, tx_count):
 				tx_start = read_pos
 				read_pos += 4
 
-				tx_in_count, read_pos = self.decode_varint(block_data, read_pos)
+				tx_in_count, read_pos = decode_varint(block_data, read_pos)
 				for j in range(0, tx_in_count):
 					read_pos += 36
-					script_len, read_pos = self.decode_varint(block_data, read_pos)
+					script_len, read_pos = decode_varint(block_data, read_pos)
 					read_pos += script_len + 4
 
-				tx_out_count, read_pos = self.decode_varint(block_data, read_pos)
+				tx_out_count, read_pos = decode_varint(block_data, read_pos)
 				for j in range(0, tx_out_count):
 					read_pos += 8
-					script_len, read_pos = self.decode_varint(block_data, read_pos)
+					script_len, read_pos = decode_varint(block_data, read_pos)
 					read_pos += script_len
 
 				read_pos += 4
@@ -274,28 +294,140 @@ class RelayNetworkClient:
 				transaction_data = block_data[tx_start:read_pos]
 				tx_index = self.send_transaction_cache.get_index(transaction_data)
 				if tx_index is None:
-					self.relay_sock.sendall(pack('>H', 0xffff))
-					self.relay_sock.sendall(pack('>HB', len(transaction_data) >> 8, len(transaction_data) & 0xff))
-					self.relay_sock.sendall(transaction_data)
+					relay_data += pack('>H', 0xffff) + pack('>HB', len(transaction_data) >> 8, len(transaction_data) & 0xff) + transaction_data
+					wire_bytes += 2 + 3 + len(transaction_data)
 				else:
-					self.relay_sock.sendall(pack('>H', tx_index))
+					relay_data += pack('>H', tx_index)
+					wire_bytes += 2
 					self.send_transaction_cache.remove(transaction_data)
 
-			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.END_BLOCK_TYPE, 0))
+			relay_data += pack('>3I', self.MAGIC_BYTES, self.END_BLOCK_TYPE, 0)
+			self.relay_sock.sendall(relay_data)
+
 			if deserialize_utils:
 				block = CBlock.deserialize(block_data)
-				print("Sent block " + str(b2lx(block.GetHash())) + " of size " + str(len(block_data)))
+				print("Sent block " + str(b2lx(block.GetHash())) + " of size " + str(len(block_data)) + " with " + str(wire_bytes) + " bytes on the wire")
 			else:
-				print("Sent block of size " + str(len(block_data)))
-		except OSError as err:
+				print("Sent block of size " + str(len(block_data)) + " with " + str(wire_bytes) + " bytes on the wire")
+		except (OSError, socket.error) as err:
 			print("Failed to send to relay node: ", err)
 		finally:
 			self.send_lock.release()
 
+import traceback
+class BitcoinP2PRelayer:
+	MSG_TX = 1
+	MSG_BLOCK = 2
+
+	def __init__(self, server, data_recipient):
+		self.server = server
+		self.data_recipient = data_recipient
+		self.send_lock = RLock()
+		self.reconnect()
+
+	def reconnect(self):
+		t = Timer(1, self.connect) # becomes the message-processing thread
+		t.daemon = True
+		t.start()
+
+	def send_message(self, command, data):
+		self.send_lock.acquire()
+		try:
+			checksum = sha256(sha256(data).digest()).digest()[0:4]
+			message = pack('<4s12sI4s', b'\xf9\xbe\xb4\xd9', command, len(data), checksum)
+			message += data
+			self.sock.sendall(message)
+		finally:
+			self.send_lock.release()
+
+	def make_dummy_address(self):
+		return pack('<Q16sH', 0, b'', 0)
+
+	def connect(self):
+		self.send_lock.acquire()
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+		try:
+			try:
+				self.sock.connect(self.server)
+				self.send_message(b'version', pack('<iQq26s26sQ1si', 70000, 0, int(time.time()), self.make_dummy_address(), self.make_dummy_address(), 42, b'', 0))
+			finally:
+				self.send_lock.release()
+
+			while True:
+				magic, command, data_len, checksum = unpack('<4s12sI4s', self.sock.recv(4 * 3 + 12, socket.MSG_WAITALL))
+				if magic != b'\xf9\xbe\xb4\xd9':
+					raise ProtocolError("Invalid protocol magic")
+				command = command[0:command.index(b'\00')]
+
+				if data_len > 5000000:
+					raise ProtocolError("Got message > 5M")
+				data = self.sock.recv(data_len, socket.MSG_WAITALL)
+				if checksum != sha256(sha256(data).digest()).digest()[0:4]:
+					raise ProtocolError("Invalid message checksum")
+
+				if command == b'version':
+					print("Connected to bitcoind with protocol version " + str(unpack('<i', data[0:4])[0]))
+					self.send_message(b'verack', b'')
+				elif command == b'verack':
+					print("Finished connect handshake with bitcoind")
+				elif command == b'ping':
+					self.send_message(b'pong', data)
+				elif command == b'inv':
+					self.send_message(b'getdata', data)
+				elif command == b'block':
+					self.data_recipient.provide_block(data)
+				elif command == b'tx':
+					self.data_recipient.provide_transaction(data)
+
+		except (OSError, socket.error, struct.error) as err:
+			print("Lost connect to bitcoind node:", err)
+			self.reconnect()
+		except ProtocolError as err:
+			print("Error processing data from bitcoind node:", err)
+			self.reconnect()
+		except Exception as err:
+			traceback.print_exc()
+			print("Unknown error processing data from bitcoind node:", err)
+			self.reconnect()
+
+	def provide_block_header(self, header_data):
+		try:
+			self.send_message(b'inv', b'\x01\x02\x00\x00\x00' + sha256(sha256(header_data).digest()).digest())
+		except (OSError, socket.error) as err:
+			print("Failed to send transaction to bitcoind node: ", err)
+
+	def provide_block(self, block_data):
+		try:
+			self.send_message(b'block', block_data)
+		except (OSError, socket.error) as err:
+			print("Failed to send block to bitcoind node: ", err)
+
+	def provide_transaction(self, transaction_data):
+		try:
+			self.send_message(b'tx', transaction_data)
+		except (OSError, socket.error) as err:
+			print("Failed to send transaction to bitcoind node: ", err)
+
+
+class Manager:
+	def __init__(self, relay_server, p2p_server):
+		relay = RelayNetworkClient(relay_server, self)
+		self.p2p = BitcoinP2PRelayer(p2p_server, relay)
+
+	def provide_block_header(self, header_data):
+		self.p2p.provide_block_header(header_data)
+
+	def provide_block(self, block_data):
+		self.p2p.provide_block(block_data)
+
+	def provide_transaction(self, transaction_data):
+		self.p2p.provide_transaction(transaction_data)
 
 if __name__ == "__main__":
 	if len(sys.argv) != 4:
 		print("USAGE: ", sys.argv[0], " RELAY_NODE.relay.mattcorallo.com LOCAL_BITCOIND LOCAL_BITCOIND_PORT")
 		sys.exit(1)
-	client = RelayNetworkClient(sys.argv[1])
-	# TODO: Set up a connection over bitcoin-p2p to (sys.argv[2], sys.argv[3])
+	Manager(sys.argv[1], (sys.argv[2], int(sys.argv[3])))
+	while True:
+		time.sleep(60 * 60 * 24)
