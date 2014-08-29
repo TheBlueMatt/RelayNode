@@ -253,21 +253,17 @@ class RelayNetworkClient:
 		try:
 			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count))
 			self.relay_sock.sendall(block_data[0:80]) # Send header
-			print("Got " + str(tx_count) + " txns at " + str(read_pos))
 			for i in range(0, tx_count):
-				print ("Got tx start at " + str(read_pos))
 				tx_start = read_pos
 				read_pos += 4
 
 				tx_in_count, read_pos = self.decode_varint(block_data, read_pos)
-				print ("With " + str(tx_in_count) + " txins at " + str(read_pos))
 				for j in range(0, tx_in_count):
 					read_pos += 36
 					script_len, read_pos = self.decode_varint(block_data, read_pos)
 					read_pos += script_len + 4
 
 				tx_out_count, read_pos = self.decode_varint(block_data, read_pos)
-				print ("and " + str(tx_in_count) + " txouts at " + str(read_pos))
 				for j in range(0, tx_out_count):
 					read_pos += 8
 					script_len, read_pos = self.decode_varint(block_data, read_pos)
@@ -286,6 +282,11 @@ class RelayNetworkClient:
 					self.send_transaction_cache.remove(transaction_data)
 
 			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.END_BLOCK_TYPE, 0))
+			if deserialize_utils:
+				block = CBlock.deserialize(block_data)
+				print("Sent block " + str(b2lx(block.GetHash())) + " of size " + str(len(block_data)))
+			else:
+				print("Sent block of size " + str(len(block_data)))
 		except OSError as err:
 			print("Failed to send to relay node: ", err)
 		finally:
