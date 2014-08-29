@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 #
 # RelayNetworkClient.py
 #
@@ -410,7 +410,7 @@ class BitcoinP2PRelayer:
 			print("Failed to send transaction to bitcoind node: ", err)
 
 
-class Manager:
+class RelayNetworkToP2PManager:
 	def __init__(self, relay_server, p2p_server):
 		relay = RelayNetworkClient(relay_server, self)
 		self.p2p = BitcoinP2PRelayer(p2p_server, relay)
@@ -428,6 +428,6 @@ if __name__ == "__main__":
 	if len(sys.argv) != 4:
 		print("USAGE: ", sys.argv[0], " RELAY_NODE.relay.mattcorallo.com LOCAL_BITCOIND LOCAL_BITCOIND_PORT")
 		sys.exit(1)
-	Manager(sys.argv[1], (sys.argv[2], int(sys.argv[3])))
+	RelayNetworkToP2PManager(sys.argv[1], (sys.argv[2], int(sys.argv[3])))
 	while True:
 		time.sleep(60 * 60 * 24)
