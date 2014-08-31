@@ -224,7 +224,7 @@ class RelayNetworkClient:
 					if msg_header[2] > self.MAX_RELAY_TRANSACTION_BYTES and (self.recv_transaction_cache.get_flag_count() >= self.MAX_EXTRA_OVERSIZE_TRANSACTIONS or msg_header[2] > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES):
 						raise ProtocolError("Got a freely relayed transaction too large (" + str(msg_header[2]) + ") bytes")
 					transaction_data = sock_recv(self.relay_sock, msg_header[2])
-					self.recv_transaction_cache.add(transaction_data, msg_header[2] > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)
+					self.recv_transaction_cache.add(transaction_data, msg_header[2] > self.MAX_RELAY_TRANSACTION_BYTES)
 
 					self.data_recipient.provide_transaction(transaction_data)
 
@@ -266,7 +266,7 @@ class RelayNetworkClient:
 			relay_data = pack('>3I', self.MAGIC_BYTES, self.TRANSACTION_TYPE, len(transaction_data))
 			relay_data += transaction_data
 			self.relay_sock.sendall(relay_data)
-			self.send_transaction_cache.add(tx_hash, len(transaction_data) > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)
+			self.send_transaction_cache.add(tx_hash, len(transaction_data) > self.MAX_RELAY_TRANSACTION_BYTES)
 
 			if deserialize_utils:
 				transaction = CTransaction.deserialize(transaction_data)
