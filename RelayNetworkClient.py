@@ -67,7 +67,7 @@ class FlaggedArraySet:
 		self.backing_reverse_dict[self.total] = (e, flag)
 		self.total += 1
 		if flag:
-			self.flalg_count += 1
+			self.flag_count += 1
 
 	def remove(self, e):
 		if (e, False) in self.backing_dict:
