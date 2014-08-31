@@ -104,18 +104,16 @@ def decode_varint(data, offset):
 		return unpack_from('<Q', data, offset + 1)[0], offset + 9
 
 def sock_recv(sock, size):
-	try:
-		flag = socket.MSG_WAITALL
-	except:
-		buff = b''
-		while len(buff) < size:
-			data = sock.recv(size - len(buff))
-			if not data:
-				sock.recv(1) # Try to get a readable error first
-				raise "Short read"
-			buff += data
-		return buff
-	return sock.recv(size, socket.MSG_WAITALL)
+	buff = b''
+	while len(buff) < size:
+		data = sock.recv(size - len(buff))
+		if not data:
+			sock.sendall(b' ') # Try to get a readable error first
+			raise Exception("Short read")
+		buff += data
+	return buff
+	# This seems to fail to throw if the socket dies
+	#return sock.recv(size, socket.MSG_WAITALL)
 
 class RelayNetworkClient:
 	MAGIC_BYTES = int(0xF2BEEF42)
