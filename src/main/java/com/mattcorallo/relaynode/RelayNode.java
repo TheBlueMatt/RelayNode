@@ -21,9 +21,9 @@ import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -40,7 +40,7 @@ class PeerAndInvs {
 	Peer p;
 	Set<InventoryItem> invs = LimitedSynchronizedObjects.createSet(500);
 
-	public PeerAndInvs(@NotNull Peer p) {
+	public PeerAndInvs(@Nonnull Peer p) {
 		this.p = p;
 		p.addEventListener(new AbstractPeerEventListener() {
 			@Override
@@ -83,14 +83,14 @@ class PeerAndInvs {
 class Peers {
 	private final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
 
-	@NotNull
-	public PeerAndInvs add(@NotNull Peer p) {
+	@Nonnull
+	public PeerAndInvs add(@Nonnull Peer p) {
 		PeerAndInvs peerAndInvs = new PeerAndInvs(p);
 		add(peerAndInvs);
 		return peerAndInvs;
 	}
 
-	public boolean add(@NotNull final PeerAndInvs peerAndInvs) {
+	public boolean add(@Nonnull final PeerAndInvs peerAndInvs) {
 		if (peers.add(peerAndInvs)) {
 			peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
 				@Override
@@ -128,7 +128,7 @@ abstract class Pool<Type extends Message> {
 	}
 	final List<AddedObject> removeObjectList = Collections.synchronizedList(new LinkedList<AddedObject>());
 
-	@NotNull
+	@Nonnull
 	Map<Sha256Hash, Type> objects = new HashMap<Sha256Hash, Type>() {
 		@Override
 		public Type put(Sha256Hash key, Type value) {
@@ -170,7 +170,7 @@ abstract class Pool<Type extends Message> {
 		return objects.get(hash);
 	}
 
-	public void provideObject(@NotNull final Type m) {
+	public void provideObject(@Nonnull final Type m) {
 		synchronized (this) {
 			if (!objectsRelayed.contains(m.getHash()))
 				objects.put(m.getHash(), m);
@@ -178,7 +178,7 @@ abstract class Pool<Type extends Message> {
 		trustedOutboundPeers.relayObject(m);
 	}
 
-	public void invGood(@NotNull final Peers clients, final Sha256Hash hash) {
+	public void invGood(@Nonnull final Peers clients, final Sha256Hash hash) {
 		boolean relay = false;
 		Type o;
 		synchronized (Pool.this) {
@@ -229,22 +229,22 @@ public class RelayNode {
 	}
 
 	// We do various things async to avoid blocking network threads on expensive processing
-	@NotNull
+	@Nonnull
 	public static Executor asyncExecutor = Executors.newCachedThreadPool();
 
 	NetworkParameters params = MainNetParams.get();
-	@NotNull
+	@Nonnull
 	VersionMessage versionMessage = new VersionMessage(params, 0);
 
-	@NotNull
+	@Nonnull
 	Peers trustedOutboundPeers = new Peers();
 
-	@NotNull
+	@Nonnull
 	TransactionPool txPool = new TransactionPool(trustedOutboundPeers);
-	@NotNull
+	@Nonnull
 	BlockPool blockPool = new BlockPool(trustedOutboundPeers);
 
-	@NotNull
+	@Nonnull
 	BlockStore blockStore = new MemoryBlockStore(params);
 	BlockChain blockChain;
 
@@ -254,13 +254,13 @@ public class RelayNode {
 	 ******************************************/
 	final Peers txnClients = new Peers();
 	final Peers blocksClients = new Peers();
-	@NotNull
+	@Nonnull
 	RelayConnectionListener relayClients;
-	@NotNull
+	@Nonnull
 	PeerEventListener untrustedPeerListener = new AbstractPeerEventListener() {
 		@Nullable
 		@Override
-		public Message onPreMessageReceived(@NotNull final Peer p, final Message m) {
+		public Message onPreMessageReceived(@Nonnull final Peer p, final Message m) {
 			if (m instanceof InventoryMessage) {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
 				for (InventoryItem item : ((InventoryMessage)m).getItems()) {
@@ -309,7 +309,7 @@ public class RelayNode {
 	 ************************************************/
 
 	/** Manages reconnecting to trusted peers and relay nodes, often sleeps */
-	@NotNull
+	@Nonnull
 	private static ScheduledExecutorService reconnectExecutor = Executors.newScheduledThreadPool(1);
 
 	/** Keeps track of a trusted peer connection (two connections per peer) */
@@ -392,7 +392,7 @@ public class RelayNode {
 			trustedPeerConnectionsMap.remove(addr.getAddress());
 		}
 
-		public TrustedPeerConnections(@NotNull InetSocketAddress addr) {
+		public TrustedPeerConnections(@Nonnull InetSocketAddress addr) {
 			this.addr = addr;
 			connect();
 			trustedPeerConnectionsMap.put(addr.getAddress(), this);
@@ -400,12 +400,12 @@ public class RelayNode {
 	}
 
 	final Map<InetAddress, TrustedPeerConnections> trustedPeerConnectionsMap = Collections.synchronizedMap(new HashMap<InetAddress, TrustedPeerConnections>());
-	@NotNull
+	@Nonnull
 	NioClientManager connectionManager = new NioClientManager();
-	@NotNull
+	@Nonnull
 	PeerEventListener trustedPeerInboundListener = new AbstractPeerEventListener() {
 		@Override
-		public Message onPreMessageReceived(@NotNull final Peer p, final Message m) {
+		public Message onPreMessageReceived(@Nonnull final Peer p, final Message m) {
 			if (m instanceof InventoryMessage) {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
 				final List<Sha256Hash> blocksGood = new LinkedList<>();
@@ -480,10 +480,10 @@ public class RelayNode {
 		}
 	};
 
-	@NotNull
+	@Nonnull
 	PeerEventListener trustedPeerDisconnectListener = new AbstractPeerEventListener() {
 		@Override
-		public void onPeerDisconnected(@NotNull Peer peer, int peerCount) {
+		public void onPeerDisconnected(@Nonnull Peer peer, int peerCount) {
 			TrustedPeerConnections connections = trustedPeerConnectionsMap.get(peer.getAddress().getAddr());
 			if (connections == null)
 				return;
@@ -526,7 +526,7 @@ public class RelayNode {
 	public void run(int onlyBlocksListenPort, int bothListenPort, int relayListenPort) {
 		Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
 			@Override
-			public void uncaughtException(@NotNull Thread t, @NotNull Throwable e) {
+			public void uncaughtException(@Nonnull Thread t, @Nonnull Throwable e) {
 				LogLine("Uncaught exception in thread " + t.getName());
 				UnsafeByteArrayOutputStream o = new UnsafeByteArrayOutputStream();
 				PrintStream b = new PrintStream(o);
@@ -672,7 +672,7 @@ public class RelayNode {
 		}
 	}
 
-	public void ConnectToTrustedRelayPeer(@NotNull final InetSocketAddress address) {
+	public void ConnectToTrustedRelayPeer(@Nonnull final InetSocketAddress address) {
 		RelayConnection connection = new RelayConnection(true) {
 			String recvStats = "";
 			@Override
@@ -694,7 +694,7 @@ public class RelayNode {
 			void receiveBlockHeader(Block b) { }
 
 			@Override
-			void receiveBlock(@NotNull final Block b) {
+			void receiveBlock(@Nonnull final Block b) {
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
@@ -743,7 +743,7 @@ public class RelayNode {
 		relayPeersWaitingOnReconnection.add(address);
 	}
 
-	public void ConnectToUntrustedBitcoinP2P(@NotNull final InetSocketAddress address) {
+	public void ConnectToUntrustedBitcoinP2P(@Nonnull final InetSocketAddress address) {
 		Peer peer = new Peer(params, new VersionMessage(params, 42), null, new PeerAddress(address));
 		peer.getVersionMessage().appendToSubVer("OutboundRelayNode - bitcoin-peering@mattcorallo.com", RelayNode.VERSION, null);
 		peer.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
@@ -787,7 +787,7 @@ public class RelayNode {
 	}
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
-	public void LogBlockRelay(@NotNull Sha256Hash blockHash, String source, @NotNull InetAddress remote, String statsLines) {
+	public void LogBlockRelay(@Nonnull Sha256Hash blockHash, String source, @Nonnull InetAddress remote, String statsLines) {
 		long timeRelayed = System.currentTimeMillis();
 		if (blockRelayedSet.contains(blockHash))
 			return;

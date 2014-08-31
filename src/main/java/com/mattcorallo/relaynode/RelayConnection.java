@@ -4,9 +4,9 @@ import com.google.bitcoin.core.*;
 import com.google.bitcoin.net.MessageWriteTarget;
 import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.params.MainNetParams;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
@@ -63,7 +63,7 @@ public abstract class RelayConnection implements StreamParser {
 
 	private class PendingBlock {
 		Block header;
-		@NotNull
+		@Nonnull
 		Map<QuarterHash, Transaction> transactions = new LinkedHashMap<>();
 		int pendingTransactionCount = 0;
 		boolean alreadyBuilt = false;
@@ -85,7 +85,7 @@ public abstract class RelayConnection implements StreamParser {
 			transactions.put(new QuarterHash(t.getHash()), t);
 		}
 
-		synchronized void foundTransaction(@NotNull Transaction t) throws VerificationException {
+		synchronized void foundTransaction(@Nonnull Transaction t) throws VerificationException {
 			if (transactions.containsKey(new QuarterHash(t.getHash()))) {
 				if (transactions.put(new QuarterHash(t.getHash()), t) != null)
 					throw new ProtocolException("Duplicate transaction in a single block");
@@ -154,7 +154,7 @@ public abstract class RelayConnection implements StreamParser {
 		this.sendVersionOnConnect = sendVersionOnConnect;
 	}
 
-	public void sendBlock(@NotNull final Block b) {
+	public void sendBlock(@Nonnull final Block b) {
 		if (protocolVersion == null)
 			return;
 		sendBlockExecutor.execute(new Runnable() {
@@ -236,7 +236,7 @@ public abstract class RelayConnection implements StreamParser {
 		});
 	}
 
-	public void sendTransaction(@NotNull final Transaction t) {
+	public void sendTransaction(@Nonnull final Transaction t) {
 		final byte[] transactionBytes = t.bitcoinSerialize();
 		if (protocolVersion == null ||
 				(transactionBytes.length > MAX_RELAY_TRANSACTION_BYTES.get(protocolVersion) &&
@@ -268,7 +268,7 @@ public abstract class RelayConnection implements StreamParser {
 	@Nullable
 	private byte[] readingTransaction; private int readingTransactionPos;
 
-	private int readBlockTransactions(@NotNull ByteBuffer buff) {
+	private int readBlockTransactions(@Nonnull ByteBuffer buff) {
 		if (readingBlock == null)
 			throw new RuntimeException();
 		int bytesRead = 0;
@@ -314,7 +314,7 @@ public abstract class RelayConnection implements StreamParser {
 	}
 
 	@Override
-	public int receiveBytes(@NotNull ByteBuffer buff) {
+	public int receiveBytes(@Nonnull ByteBuffer buff) {
 		int startPos = buff.position();
 		try {
 			if (readingTransaction != null) {
@@ -487,7 +487,7 @@ public abstract class RelayConnection implements StreamParser {
 		throw new RuntimeException();
 	}
 
-	private void sendVersionMessage(@NotNull MessageWriteTarget writeTarget, @NotNull String version) {
+	private void sendVersionMessage(@Nonnull MessageWriteTarget writeTarget, @Nonnull String version) {
 		try {
 			writeTarget.writeBytes(ByteBuffer.allocate(4 * 3 + version.length())
 					.putInt(MAGIC_BYTES).putInt(MessageTypes.VERSION.ordinal()).putInt(version.length())
@@ -500,7 +500,7 @@ public abstract class RelayConnection implements StreamParser {
 	}
 
 	@Override
-	public void setWriteTarget(@NotNull MessageWriteTarget writeTarget) {
+	public void setWriteTarget(@Nonnull MessageWriteTarget writeTarget) {
 		if (sendVersionOnConnect)
 			sendVersionMessage(writeTarget, RelayNode.VERSION);
 		relayPeer = writeTarget;

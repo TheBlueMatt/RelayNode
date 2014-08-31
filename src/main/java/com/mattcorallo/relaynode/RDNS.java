@@ -1,7 +1,6 @@
 package com.mattcorallo.relaynode;
 
-import org.jetbrains.annotations.NotNull;
-
+import javax.annotation.Nonnull;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
@@ -12,7 +11,7 @@ import java.net.InetAddress;
  * results anyway, so we reach into the JDK and force it to give us what we want....
  */
 public class RDNS {
-	public static String getRDNS(@NotNull InetAddress addr) {
+	public static String getRDNS(@Nonnull InetAddress addr) {
 		if (!addr.toString().equals("/" + addr.getHostAddress()) && !addr.toString().equals(addr.getHostAddress() + "/" + addr.getHostAddress()))
 			return addr.getHostName(); // Use hostname originally used to resolve the address
 		try {

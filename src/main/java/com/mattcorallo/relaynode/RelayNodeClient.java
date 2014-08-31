@@ -10,22 +10,12 @@
 package com.mattcorallo.relaynode;
 
 import com.google.bitcoin.core.*;
-import com.google.bitcoin.net.MessageWriteTarget;
-import com.google.bitcoin.net.NioClient;
 import com.google.bitcoin.net.NioClientManager;
-import com.google.bitcoin.net.StreamParser;
 import com.google.bitcoin.params.MainNetParams;
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import java.io.IOException;
+import javax.annotation.Nonnull;
 import java.net.InetSocketAddress;
-import java.nio.BufferUnderflowException;
-import java.nio.ByteBuffer;
 import java.nio.channels.NotYetConnectedException;
-import java.util.*;
 import java.util.concurrent.*;
 
 public class RelayNodeClient {
@@ -35,7 +25,7 @@ public class RelayNodeClient {
 		System.exit(1);
 	}
 
-	public static void main(@NotNull String[] args) {
+	public static void main(@Nonnull String[] args) {
 		if (args.length != 2)
 			usage();
 		try {
@@ -55,12 +45,12 @@ public class RelayNodeClient {
 	final NetworkParameters params = MainNetParams.get();
 	InetSocketAddress localPeerAddress;
 	String relayPeerAddress;
-	@NotNull
+	@Nonnull
 	Peer localNetworkPeer;
 
 	RelayConnection relayPeer;
 
-	@NotNull
+	@Nonnull
 	ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
 
 	public RelayNodeClient(String relayPeerAddress, InetSocketAddress localPeerAddress) {
@@ -100,17 +90,17 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			void receiveBlockHeader(@NotNull Block b) {
+			void receiveBlockHeader(@Nonnull Block b) {
 				System.err.println(System.currentTimeMillis() + ": Received block header " + b.getHashAsString());
 				InventoryMessage inv = new InventoryMessage(params);
 				inv.addBlock(b);
 				try {
 					localNetworkPeer.sendMessage(inv);
-				} catch (@NotNull NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
+				} catch (@Nonnull NullPointerException | NotYetConnectedException e) { /* We'll catch them next time */ }
 			}
 
 			@Override
-			void receiveBlock(@NotNull Block b) {
+			void receiveBlock(@Nonnull Block b) {
 				System.err.println(System.currentTimeMillis() + ": Received block " + b.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(b);
@@ -118,7 +108,7 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			void receiveTransaction(@NotNull Transaction t) {
+			void receiveTransaction(@Nonnull Transaction t) {
 				System.err.println(System.currentTimeMillis() + ": Received transaction " + t.getHashAsString());
 				try {
 					localNetworkPeer.sendMessage(t);
@@ -167,7 +157,7 @@ public class RelayNodeClient {
 			}
 
 			@Override
-			public Message onPreMessageReceived(@NotNull Peer p, Message m) {
+			public Message onPreMessageReceived(@Nonnull Peer p, Message m) {
 				if (m instanceof InventoryMessage) {
 					GetDataMessage getDataMessage = new GetDataMessage(params);
 					for (InventoryItem item : ((InventoryMessage)m).getItems()) {

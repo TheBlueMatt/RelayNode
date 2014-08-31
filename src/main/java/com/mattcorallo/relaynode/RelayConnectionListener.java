@@ -7,8 +7,8 @@ import com.google.bitcoin.net.StreamParserFactory;
 import com.google.bitcoin.params.MainNetParams;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import org.jetbrains.annotations.NotNull;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -26,7 +26,7 @@ public class RelayConnectionListener {
 
 	private final Cache<InetAddress, Integer> oldHosts = CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.HOURS).maximumSize(100).build();
 
-	public RelayConnectionListener(int port, @NotNull final PeerEventListener clientPeerListener, @NotNull final RelayNode lineLogger) throws IOException {
+	public RelayConnectionListener(int port, @Nonnull final PeerEventListener clientPeerListener, @Nonnull final RelayNode lineLogger) throws IOException {
 		final NetworkParameters params = MainNetParams.get();
 		final VersionMessage fakeVersionMessage = new VersionMessage(params, -1); // Used to identify connection as relay protocol
 		fakeVersionMessage.appendToSubVer("RelayNodeProtocol", "", null);
@@ -52,7 +52,7 @@ public class RelayConnectionListener {
 						lineLogger.LogLine(inetAddress.getHostAddress() + ": " + line);
 					}
 
-					@Override void LogStatsRecv(@NotNull String lines) { }
+					@Override void LogStatsRecv(@Nonnull String lines) { }
 
 					@Override void LogConnected(String line) { }
 
@@ -86,21 +86,21 @@ public class RelayConnectionListener {
 		relayServer.startAsync().awaitRunning();
 	}
 
-	public void sendTransaction(@NotNull Transaction t) {
+	public void sendTransaction(@Nonnull Transaction t) {
 		synchronized (connectionSet) {
 			for (RelayConnection connection : connectionSet)
 				connection.sendTransaction(t);
 		}
 	}
 
-	public void sendBlock(@NotNull Block b) {
+	public void sendBlock(@Nonnull Block b) {
 		synchronized (connectionSet) {
 			for (RelayConnection connection : connectionSet)
 				connection.sendBlock(b);
 		}
 	}
 
-	@NotNull
+	@Nonnull
 	public Set<InetAddress> getClientSet() {
 		synchronized (remoteSet) {
 			return new HashSet<>(remoteSet);

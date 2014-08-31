@@ -1,8 +1,7 @@
 package com.mattcorallo.relaynode;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.*;
 
 /**
@@ -12,8 +11,8 @@ public class FlaggedArraySet<K> {
 	private static class ElementAndFlag<T> {
 		boolean flag;
 		T element;
-		public ElementAndFlag(@NotNull T element, boolean flag) { this.element = element; this.flag = flag; }
-		public ElementAndFlag(@NotNull T element) { this(element, false); }
+		public ElementAndFlag(@Nonnull T element, boolean flag) { this.element = element; this.flag = flag; }
+		public ElementAndFlag(@Nonnull T element) { this(element, false); }
 
 		@Override
 		public boolean equals(Object o) {
@@ -31,7 +30,6 @@ public class FlaggedArraySet<K> {
 	private final int maxSize;
 	private final Map<ElementAndFlag<K>, Long> backingMap;
 	private final Map<Long, ElementAndFlag<K>> backingReverseMap;
-	private final Set<Long> indexesRemoved;
 
 	private long offset = 0;
 	private long total = 0;
@@ -41,7 +39,6 @@ public class FlaggedArraySet<K> {
 		this.maxSize = maxSize;
 		backingMap = new LinkedHashMap<>(maxSize);
 		backingReverseMap = new LinkedHashMap<>(maxSize);
-		indexesRemoved = new HashSet<>(maxSize);
 	}
 
 	public synchronized int size() {
@@ -52,11 +49,11 @@ public class FlaggedArraySet<K> {
 		return flagCount;
 	}
 
-	public synchronized boolean contains(@NotNull K o) {
+	public synchronized boolean contains(@Nonnull K o) {
 		return backingMap.containsKey(new ElementAndFlag<>(o));
 	}
 
-	public synchronized boolean add(@NotNull K k, boolean flag) {
+	public synchronized boolean add(@Nonnull K k, boolean flag) {
 		if (contains(k))
 			return false;
 
@@ -96,12 +93,12 @@ public class FlaggedArraySet<K> {
 		return true;
 	}
 
-	public boolean remove(@NotNull K o) {
+	public boolean remove(@Nonnull K o) {
 		return remove(new ElementAndFlag<>(o));
 	}
 
 	@Nullable
-	public synchronized Integer getIndex(@NotNull K key) {
+	public synchronized Integer getIndex(@Nonnull K key) {
 		Long res = backingMap.get(new ElementAndFlag<>(key));
 		if (res == null)
 			return null;
