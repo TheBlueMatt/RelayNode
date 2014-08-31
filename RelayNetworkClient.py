@@ -111,8 +111,8 @@ def sock_recv(sock, size):
 		while len(buff) < size:
 			data = sock.recv(size - len(buff))
 			if not data:
-				sock.recv(1) # Try to get a readable error first
-				raise "Short read"
+				sock.send(b' ') # Try to get a readable error first
+				raise Exception("Short read")
 			buff += data
 		return buff
 	return sock.recv(size, socket.MSG_WAITALL)
@@ -258,7 +258,7 @@ class RelayNetworkClient:
 		if self.send_transaction_cache.contains(tx_hash):
 			self.send_lock.release()
 			return
-		if len(transaction_data) > self.MAX_RELAY_TRANSACTION_BYTES and (len(transaction_data) > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES or self.send_transaction_cache.get_flag_count() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS):
+		if len(transaction_data) > self.MAX_RELAY_TRANSACTION_BYTES and (len(transaction_data) > self.MAX_RELAY_OVERSIZE_TRANSACTION_BYTES or self.send_transaction_cache.get_flag_count() >= self.MAX_EXTRA_OVERSIZE_TRANSACTIONS):
 			self.send_lock.release()
 			return
 
@@ -275,6 +275,7 @@ class RelayNetworkClient:
 				print("Sent transaction of size " + str(len(transaction_data)))
 		except (OSError, socket.error) as err:
 			print("Failed to send to relay node: ", err)
+			self.relay_sock.shutdown(socket.SHUT_RDWR)
 
 		self.send_lock.release()
 
@@ -327,6 +328,7 @@ class RelayNetworkClient:
 				print("Sent block of size " + str(len(block_data)) + " with " + str(wire_bytes) + " bytes on the wire")
 		except (OSError, socket.error) as err:
 			print("Failed to send to relay node: ", err)
+			self.relay_sock.shutdown(socket.SHUT_RDWR)
 		finally:
 			self.send_lock.release()
 
@@ -353,6 +355,9 @@ class BitcoinP2PRelayer:
 			message = pack('<4s12sI4s', b'\xf9\xbe\xb4\xd9', command, len(data), checksum)
 			message += data
 			self.sock.sendall(message)
+		except:
+			self.sock.shutdown(socket.SHUT_RDWR)
+			raise
 		finally:
 			self.send_lock.release()
 
