@@ -48,11 +48,18 @@ public abstract class RelayConnection implements StreamParser {
 		MAX_EXTRA_OVERSIZE_TXN.put("fuck it, ship it!", 250000);
 		MAX_RELAY_OVERSIZE_TXN_BYTES.put("fuck it, ship it!", 20);
 
+		MAX_RELAY_TRANSACTION_BYTES.put("prioritized panther", 10000);
+		TRANSACTIONS_CACHED.put("prioritized panther", 1000);
+		RELAY_MODE.put("prioritized panther", RelayMode.CACHE_ID);
+		MAX_EXTRA_OVERSIZE_TXN.put("prioritized panther", 250000);
+		MAX_RELAY_OVERSIZE_TXN_BYTES.put("prioritized panther", 20);
+
+		// 20MB + overhead
 		MAX_RELAY_TRANSACTION_BYTES.put(RelayNode.VERSION, 10000);
-		TRANSACTIONS_CACHED.put(RelayNode.VERSION, 1000);
+		TRANSACTIONS_CACHED.put(RelayNode.VERSION, 1525);
 		RELAY_MODE.put(RelayNode.VERSION, RelayMode.CACHE_ID);
-		MAX_EXTRA_OVERSIZE_TXN.put(RelayNode.VERSION, 250000);
-		MAX_RELAY_OVERSIZE_TXN_BYTES.put(RelayNode.VERSION, 20);
+		MAX_EXTRA_OVERSIZE_TXN.put(RelayNode.VERSION, 25);
+		MAX_RELAY_OVERSIZE_TXN_BYTES.put(RelayNode.VERSION, 200000);
 	}
 
 	private enum MessageTypes {
@@ -222,9 +229,14 @@ public abstract class RelayConnection implements StreamParser {
 							}
 						}
 
-						relayPeer.writeBytes(ByteBuffer.allocate(4 * 3).order(ByteOrder.BIG_ENDIAN)
-								.putInt(MAGIC_BYTES).putInt(MessageTypes.END_BLOCK.ordinal()).putInt(0)
-								.array());
+						boolean latestVersion = RelayNode.VERSION.equals(protocolVersion);
+						ByteBuffer lastPacket = ByteBuffer.allocate(4 * 3 + (latestVersion ? 0 : (4 * 3 + RelayNode.VERSION.length())))
+								.order(ByteOrder.BIG_ENDIAN);
+						lastPacket.putInt(MAGIC_BYTES).putInt(MessageTypes.END_BLOCK.ordinal()).putInt(0);
+						if (!latestVersion)
+							lastPacket.putInt(MAGIC_BYTES).putInt(MessageTypes.MAX_VERSION.ordinal()).putInt(RelayNode.VERSION.length())
+									.put(RelayNode.VERSION.getBytes());
+						relayPeer.writeBytes(lastPacket.array());
 
 						relayedBlockCache.add(b.getHash());
 					} catch (IOException e) {
@@ -313,8 +325,12 @@ public abstract class RelayConnection implements StreamParser {
 		return bytesRead;
 	}
 
+	boolean killConnection = false;
 	@Override
 	public int receiveBytes(@Nonnull ByteBuffer buff) {
+		if (killConnection)
+			return -1;
+
 		int startPos = buff.position();
 		try {
 			if (readingTransaction != null) {
@@ -328,6 +344,8 @@ public abstract class RelayConnection implements StreamParser {
 
 					if (readingBlock != null) {
 						readingBlock.foundTransaction(t);
+						if (transactionsLeft == 0)
+							readingBlock.buildBlock();
 						LogStatsRecv("Received in-block " + t.getHashAsString() + " size:" + t.getMessageSize());
 						txnRelayedInBlock++;
 					} else {
@@ -377,7 +395,13 @@ public abstract class RelayConnection implements StreamParser {
 
 					if (TRANSACTIONS_CACHED.get(versionString) == null) {
 						LogLine("Connected to node with bad version: " + versionString.replaceAll("[^ -~]", ""));
-						return -1; // Not same version
+						relayPeer.writeBytes(ByteBuffer.allocate(4 * 3 + RelayNode.VERSION.length()).order(ByteOrder.BIG_ENDIAN)
+								.putInt(MAGIC_BYTES).putInt(MessageTypes.MAX_VERSION.ordinal()).putInt(RelayNode.VERSION.length())
+								.put(RelayNode.VERSION.getBytes())
+								.array()); // Wont get written to OS buffers until after we return :(
+						killConnection = true;
+						buff.position(0);
+						return 0;
 					} else {
 						if (RelayNode.VERSION.equals(versionString))
 							LogConnected("Connected to node with version: " + versionString.replaceAll("[^ -~]", ""));

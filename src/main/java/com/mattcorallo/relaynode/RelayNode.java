@@ -222,7 +222,7 @@ class TransactionPool extends Pool<Transaction> {
  * good to relay.
  */
 public class RelayNode {
-	public static final String VERSION = "prioritized panther";
+	public static final String VERSION = "toucan twink";
 
 	public static void main(String[] args) throws Exception {
 		new RelayNode().run(8334, 8335, 8336);

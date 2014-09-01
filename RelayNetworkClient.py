@@ -120,10 +120,10 @@ def sock_recv(sock, size):
 class RelayNetworkClient:
 	MAGIC_BYTES = int(0xF2BEEF42)
 	VERSION_TYPE, BLOCK_TYPE, TRANSACTION_TYPE, END_BLOCK_TYPE, MAX_VERSION_TYPE = 0, 1, 2, 3, 4
-	VERSION_STRING = b'prioritized panther'
+	VERSION_STRING = b'toucan twink'
 	MAX_RELAY_TRANSACTION_BYTES = 10000
-	MAX_RELAY_OVERSIZE_TRANSACTION_BYTES = 250000
-	MAX_EXTRA_OVERSIZE_TRANSACTIONS = 20
+	MAX_RELAY_OVERSIZE_TRANSACTION_BYTES = 200000
+	MAX_EXTRA_OVERSIZE_TRANSACTIONS = 25
 
 	def __init__(self, server, data_recipient):
 		self.server = server
@@ -138,8 +138,9 @@ class RelayNetworkClient:
 
 	def connect(self):
 		self.send_lock.acquire()
-		self.recv_transaction_cache = FlaggedArraySet(1000)
-		self.send_transaction_cache = FlaggedArraySet(1000)
+		self.recv_transaction_cache = FlaggedArraySet(1525)
+		self.send_transaction_cache = FlaggedArraySet(1525)
+
 		self.relay_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.relay_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 		try:
