@@ -659,7 +659,7 @@ public class RelayNode {
 							LogLineEnter("Had no relay peer " + addr);
 						else {
 							relayPeersDisconnect.add(addr);
-							LogLineEnter("Will remove outbound connection to " + addr + " after next disconnect");
+							LogLineEnter("Will remove relay peer connection to " + addr + " after next disconnect");
 						}
 					} else
 						LogLine("Invalid command");

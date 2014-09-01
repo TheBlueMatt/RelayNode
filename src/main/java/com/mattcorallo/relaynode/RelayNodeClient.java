@@ -12,6 +12,7 @@ package com.mattcorallo.relaynode;
 import com.google.bitcoin.core.*;
 import com.google.bitcoin.net.NioClientManager;
 import com.google.bitcoin.params.MainNetParams;
+import com.google.bitcoin.utils.Threading;
 
 import javax.annotation.Nonnull;
 import java.net.InetSocketAddress;
@@ -177,7 +178,7 @@ public class RelayNodeClient {
 				}
 				return m;
 			}
-		});
+		}, Threading.SAME_THREAD);
 
 		connectionManager.openConnection(localPeerAddress, localNetworkPeer);
 	}
