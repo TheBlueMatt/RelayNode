@@ -8,7 +8,7 @@
 import socket, sys, time, struct
 from struct import pack, unpack, unpack_from
 from threading import Timer, Lock, RLock
-from hashlib import sha256
+from hashlib import md5, sha256
 try:
 	from collections import OrderedDict # Python 3.1
 except ImportError:
@@ -74,16 +74,12 @@ class FlaggedArraySet:
 			index = self.backing_dict[(e, False)]
 			del self.backing_dict[(e, False)]
 			self.removed_from_backing_dict(((e, False), index))
+			return index - self.offset + 1
 		elif (e, True) in self.backing_dict:
 			index = self.backing_dict[(e, True)]
 			del self.backing_dict[(e, True)]
 			self.removed_from_backing_dict(((e, True), index))
-
-	def get_index(self, e):
-		if (e, False) in self.backing_dict:
-			return self.backing_dict[(e, False)] - self.offset
-		elif (e, True) in self.backing_dict:
-			return self.backing_dict[(e, True)] - self.offset
+			return index - self.offset + 1
 		else:
 			return None
 
@@ -93,12 +89,18 @@ class FlaggedArraySet:
 		else:
 			return None
 
+IS_PYTHON3 = sys.version_info[0] == 3
 def decode_varint(data, offset):
-	if unpack_from('<B', data, offset)[0] < 0xfd:
-		return unpack_from('<B', data, offset + 0)[0], offset + 1
-	elif data[offset] == 0xfd:
+	if IS_PYTHON3:
+		first_byte = data[offset]
+	else:
+		first_byte = ord(data[offset])
+
+	if first_byte < 0xfd:
+		return first_byte, offset + 1
+	elif first_byte == 0xfd:
 		return unpack_from('<H', data, offset + 1)[0], offset + 3
-	elif data[offset] == 0xfe:
+	elif first_byte == 0xfe:
 		return unpack_from('<I', data, offset + 1)[0], offset + 5
 	else:
 		return unpack_from('<Q', data, offset + 1)[0], offset + 9
@@ -253,7 +255,7 @@ class RelayNetworkClient:
 			self.reconnect()
 
 	def provide_transaction(self, transaction_data):
-		tx_hash = sha256(transaction_data).digest()
+		tx_hash = md5(transaction_data).digest()
 		self.send_lock.acquire()
 
 		if self.send_transaction_cache.contains(tx_hash):
@@ -283,50 +285,46 @@ class RelayNetworkClient:
 	def provide_block_header(self, header_data):
 		return
 
+	def compress_tx(self, transaction_data):
+		tx_hash = md5(transaction_data).digest()
+		tx_index = self.send_transaction_cache.remove(tx_hash)
+		if tx_index is None:
+			return pack('>HHB', 0xffff, len(transaction_data) >> 8, len(transaction_data) & 0xff) + transaction_data
+		else:
+			return pack('>H', tx_index)
+
 	def provide_block(self, block_data):
-		"""THIS METHOD WILL BLOCK UNTIL SENDING IS COMPLETE"""
+		# THIS METHOD WILL BLOCK UNTIL SENDING IS COMPLETE
 		tx_count, read_pos = decode_varint(block_data, 80)
 		self.send_lock.acquire()
 		try:
-			relay_data = pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count) + block_data[0:80]
-			wire_bytes = 3 * 4 + 80
+			txn_bytes = []
 			for i in range(0, tx_count):
 				tx_start = read_pos
-				read_pos += 4
 
-				tx_in_count, read_pos = decode_varint(block_data, read_pos)
+				tx_in_count, read_pos = decode_varint(block_data, read_pos + 4)
 				for j in range(0, tx_in_count):
-					read_pos += 36
-					script_len, read_pos = decode_varint(block_data, read_pos)
+					script_len, read_pos = decode_varint(block_data, read_pos + 36)
 					read_pos += script_len + 4
 
 				tx_out_count, read_pos = decode_varint(block_data, read_pos)
 				for j in range(0, tx_out_count):
-					read_pos += 8
-					script_len, read_pos = decode_varint(block_data, read_pos)
+					script_len, read_pos = decode_varint(block_data, read_pos + 8)
 					read_pos += script_len
 
 				read_pos += 4
 
-				transaction_data = block_data[tx_start:read_pos]
-				tx_hash = sha256(transaction_data).digest()
-				tx_index = self.send_transaction_cache.get_index(tx_hash)
-				if tx_index is None:
-					relay_data += pack('>H', 0xffff) + pack('>HB', len(transaction_data) >> 8, len(transaction_data) & 0xff) + transaction_data
-					wire_bytes += 2 + 3 + len(transaction_data)
-				else:
-					relay_data += pack('>H', tx_index)
-					wire_bytes += 2
-					self.send_transaction_cache.remove(tx_hash)
+				txn_bytes.append(block_data[tx_start:read_pos])
 
-			relay_data += pack('>3I', self.MAGIC_BYTES, self.END_BLOCK_TYPE, 0)
-			self.relay_sock.sendall(relay_data)
+			send_data = pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count) + block_data[0:80] + b''.join([self.compress_tx(t) for t in txn_bytes])
+			self.relay_sock.sendall(send_data)
+			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.END_BLOCK_TYPE, 0))
 
 			if deserialize_utils:
 				block = CBlock.deserialize(block_data)
-				print("Sent block " + str(b2lx(block.GetHash())) + " of size " + str(len(block_data)) + " with " + str(wire_bytes) + " bytes on the wire")
+				print("Sent block " + str(b2lx(block.GetHash())) + " of size " + str(len(block_data)) + " with " + str(len(send_data)) + " bytes on the wire")
 			else:
-				print("Sent block of size " + str(len(block_data)) + " with " + str(wire_bytes) + " bytes on the wire")
+				print("Sent block of size " + str(len(block_data)) + " with " + str(len(send_data)) + " bytes on the wire")
 		except (OSError, socket.error) as err:
 			print("Failed to send to relay node: ", err)
 			self.relay_sock.shutdown(socket.SHUT_RDWR)
@@ -335,9 +333,6 @@ class RelayNetworkClient:
 
 
 class BitcoinP2PRelayer:
-	MSG_TX = 1
-	MSG_BLOCK = 2
-
 	def __init__(self, server, data_recipient):
 		self.server = server
 		self.data_recipient = data_recipient
