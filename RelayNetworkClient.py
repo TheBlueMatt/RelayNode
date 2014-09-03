@@ -316,7 +316,7 @@ class RelayNetworkClient:
 
 				txn_bytes.append(block_data[tx_start:read_pos])
 
-			send_data = pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count) + block_data[0:80] + b''.join([self.compress_tx(t) for t in txn_bytes])
+			send_data = pack('>3I', self.MAGIC_BYTES, self.BLOCK_TYPE, tx_count) + block_data[0:80] + b''.join((self.compress_tx(t) for t in txn_bytes))
 			self.relay_sock.sendall(send_data)
 			self.relay_sock.sendall(pack('>3I', self.MAGIC_BYTES, self.END_BLOCK_TYPE, 0))
 
