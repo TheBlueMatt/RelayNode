@@ -19,6 +19,11 @@ try:
 except ImportError:
 	deserialize_utils = False
 
+try:
+	import __pypy__
+except:
+	print("WARNING: RelayNetworkClient absolutely must be run under pypy (it is otherwise often slower than network latency, and thus largely worthless)")
+
 
 class ProtocolError(Exception):
 	pass
@@ -50,8 +55,7 @@ class FlaggedArraySet:
 
 		if self.offset != item_index_pair[1]:
 			for i in range(item_index_pair[1] - 1, self.offset - 1, -1):
-				e = self.backing_reverse_dict[i]
-				del self.backing_reverse_dict[i]
+				e = self.backing_reverse_dict.pop(i)
 				self.backing_dict[e] = i+1
 				self.backing_reverse_dict[i+1] = e
 		self.offset += 1
@@ -70,14 +74,13 @@ class FlaggedArraySet:
 			self.flag_count += 1
 
 	def remove(self, e):
-		if (e, False) in self.backing_dict:
-			index = self.backing_dict[(e, False)]
-			del self.backing_dict[(e, False)]
+		index = self.backing_dict.pop((e, False), None)
+		if index is not None:
 			self.removed_from_backing_dict(((e, False), index))
 			return index - self.offset + 1
-		elif (e, True) in self.backing_dict:
-			index = self.backing_dict[(e, True)]
-			del self.backing_dict[(e, True)]
+
+		index = self.backing_dict.pop((e, True), None)
+		if index is not None:
 			self.removed_from_backing_dict(((e, True), index))
 			return index - self.offset + 1
 		else:
