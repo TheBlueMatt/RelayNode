@@ -513,13 +513,17 @@ private:
 
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		if (!send_mutex.try_lock())
-			return;
+		#ifndef FOR_VALGRIND
+			if (!send_mutex.try_lock())
+				return;
+		#endif
 
 		if (send_tx_cache.contains(tx) ||
 				(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
 					(send_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES))) {
-			send_mutex.unlock();
+			#ifndef FOR_VALGRIND
+				send_mutex.unlock();
+			#endif
 			return;
 		}
 
@@ -536,16 +540,16 @@ public:
 			printf("Sent transaction of size %lu to relay server\n", (unsigned long)tx->size());
 		}
 
-		send_mutex.unlock();
+		#ifndef FOR_VALGRIND
+			send_mutex.unlock();
+		#endif
 	}
 
-private:
-
-
-public:
 	void receive_block(const std::vector<unsigned char>& block) {
-		if (!send_mutex.try_lock())
-			return;
+		#ifndef FOR_VALGRIND
+			if (!send_mutex.try_lock())
+				return;
+		#endif
 
 		std::vector<unsigned char> compressed_block;
 		compressed_block.reserve(1100000);
@@ -602,7 +606,9 @@ public:
 			}
 		} catch(read_exception) {
 			printf("Failed to process block from bitcoind\n");
-			send_mutex.unlock();
+			#ifndef FOR_VALGRIND
+				send_mutex.unlock();
+			#endif
 			return;
 		}
 
@@ -617,7 +623,9 @@ public:
 				printf("Sent block of size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block.size());
 		}
 
-		send_mutex.unlock();
+		#ifndef FOR_VALGRIND
+			send_mutex.unlock();
+		#endif
 	}
 };
 
@@ -775,19 +783,31 @@ private:
 
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		if (!send_mutex.try_lock())
-			return;
+		#ifndef FOR_VALGRIND
+			if (!send_mutex.try_lock())
+				return;
+		#endif
+
 		std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header));
 		resp.insert(resp.end(), tx->begin(), tx->end());
 		send_message("tx", &resp[0], tx->size());
-		send_mutex.unlock();
+
+		#ifndef FOR_VALGRIND
+			send_mutex.unlock();
+		#endif
 	}
 
 	void receive_block(std::vector<unsigned char>& block) {
-		if (!send_mutex.try_lock())
-			return;
+		#ifndef FOR_VALGRIND
+			if (!send_mutex.try_lock())
+				return;
+		#endif
+
 		send_message("block", &block[0], block.size() - RELAY_PASSED_BLOCK_PREFIX_SIZE);
-		send_mutex.unlock();
+
+		#ifndef FOR_VALGRIND
+			send_mutex.unlock();
+		#endif
 	}
 };
 
