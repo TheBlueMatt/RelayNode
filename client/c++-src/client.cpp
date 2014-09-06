@@ -516,14 +516,14 @@ public:
 		#ifndef FOR_VALGRIND
 			if (!send_mutex.try_lock())
 				return;
+		#else
+			send_mutex.lock();
 		#endif
 
 		if (send_tx_cache.contains(tx) ||
 				(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
 					(send_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES))) {
-			#ifndef FOR_VALGRIND
-				send_mutex.unlock();
-			#endif
+			send_mutex.unlock();
 			return;
 		}
 
@@ -540,15 +540,15 @@ public:
 			printf("Sent transaction of size %lu to relay server\n", (unsigned long)tx->size());
 		}
 
-		#ifndef FOR_VALGRIND
-			send_mutex.unlock();
-		#endif
+		send_mutex.unlock();
 	}
 
 	void receive_block(const std::vector<unsigned char>& block) {
 		#ifndef FOR_VALGRIND
 			if (!send_mutex.try_lock())
 				return;
+		#else
+			send_mutex.lock();
 		#endif
 
 		std::vector<unsigned char> compressed_block;
@@ -606,9 +606,7 @@ public:
 			}
 		} catch(read_exception) {
 			printf("Failed to process block from bitcoind\n");
-			#ifndef FOR_VALGRIND
-				send_mutex.unlock();
-			#endif
+			send_mutex.unlock();
 			return;
 		}
 
@@ -623,9 +621,7 @@ public:
 				printf("Sent block of size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block.size());
 		}
 
-		#ifndef FOR_VALGRIND
-			send_mutex.unlock();
-		#endif
+		send_mutex.unlock();
 	}
 };
 
@@ -786,28 +782,28 @@ public:
 		#ifndef FOR_VALGRIND
 			if (!send_mutex.try_lock())
 				return;
+		#else
+			send_mutex.lock();
 		#endif
 
 		std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header));
 		resp.insert(resp.end(), tx->begin(), tx->end());
 		send_message("tx", &resp[0], tx->size());
 
-		#ifndef FOR_VALGRIND
-			send_mutex.unlock();
-		#endif
+		send_mutex.unlock();
 	}
 
 	void receive_block(std::vector<unsigned char>& block) {
 		#ifndef FOR_VALGRIND
 			if (!send_mutex.try_lock())
 				return;
+		#else
+			send_mutex.lock();
 		#endif
 
 		send_message("block", &block[0], block.size() - RELAY_PASSED_BLOCK_PREFIX_SIZE);
 
-		#ifndef FOR_VALGRIND
-			send_mutex.unlock();
-		#endif
+		send_mutex.unlock();
 	}
 };
 
