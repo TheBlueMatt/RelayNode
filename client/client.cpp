@@ -308,27 +308,26 @@ private:
 	const std::function<void (std::vector<unsigned char>&)> provide_block;
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
+	FlaggedArraySet recv_tx_cache, send_tx_cache;
+
 	int sock;
 	std::mutex send_mutex;
-
-	FlaggedArraySet recv_tx_cache, send_tx_cache;
+	std::thread* net_thread, *new_thread;
 
 public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
 			: server_host(serverHostIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
-			sock(0), recv_tx_cache(1525), send_tx_cache(1525) {
-		new std::thread(do_first_connect, this);
+			recv_tx_cache(1525), send_tx_cache(1525), sock(0), net_thread(NULL), new_thread(NULL) {
+		send_mutex.lock();
+		new_thread = new std::thread(do_connect, this);
+		send_mutex.unlock();
 	}
 
 	RelayNetworkClient() : recv_tx_cache(0), send_tx_cache(0) {} // Fake...
 
 private:
-	static void do_first_connect(RelayNetworkClient* me) {
-		me->reconnect("connecting");
-	}
-
 	void reconnect(std::string disconnectReason, bool alreadyLocked=false) {
 		if (!alreadyLocked)
 			send_mutex.lock();
@@ -343,26 +342,37 @@ private:
 
 		sleep(1);
 
-		sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (sock <= 0)
-			return reconnect("unable to create socket", true);
+		new_thread = new std::thread(do_connect, this);
+		send_mutex.unlock();
+	}
+
+	static void do_connect(RelayNetworkClient* me) {
+		me->send_mutex.lock();
+
+		if (me->net_thread)
+			me->net_thread->join();
+		me->net_thread = me->new_thread;
+
+		me->sock = socket(AF_INET, SOCK_STREAM, 0);
+		if (me->sock <= 0)
+			return me->reconnect("unable to create socket", true);
 
 		sockaddr_in addr;
-		if (!lookup_address(server_host, &addr))
-			return reconnect("unable to lookup host", true);
+		if (!lookup_address(me->server_host, &addr))
+			return me->reconnect("unable to lookup host", true);
 
 		addr.sin_port = htons(8336);
-		if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)))
-			return reconnect("failed to connect()", true);
+		if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
+			return me->reconnect("failed to connect()", true);
 
 		#ifdef WIN32
 			unsigned long nonblocking = 0;
-			ioctlsocket(sock, FIONBIO, &nonblocking);
+			ioctlsocket(me->sock, FIONBIO, &nonblocking);
 		#else
-			fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) & ~O_NONBLOCK);
+			fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
 		#endif
 
-		net_process();
+		me->net_process();
 	}
 
 	void net_process() {
@@ -621,20 +631,20 @@ private:
 
 	int sock;
 	std::mutex send_mutex;
+	std::thread* net_thread, *new_thread;
 
 public:
 	P2PRelayer(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: server_host(serverHostIn), server_port(serverPortIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in), sock(0) {
-		new std::thread(do_first_connect, this);
+			: server_host(serverHostIn), server_port(serverPortIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
+			sock(0), net_thread(NULL), new_thread(NULL) {
+		send_mutex.lock();
+		new_thread = new std::thread(do_connect, this);
+		send_mutex.unlock();
 	}
 
 private:
-	static void do_first_connect(P2PRelayer* me) {
-		me->reconnect("connecting");
-	}
-
 	void reconnect(std::string disconnectReason, bool alreadyLocked=false) {
 		if (!alreadyLocked)
 			send_mutex.lock();
@@ -649,26 +659,37 @@ private:
 
 		sleep(1);
 
-		sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (sock <= 0)
-			return reconnect("unable to create socket", true);
+		new_thread = new std::thread(do_connect, this);
+		send_mutex.unlock();
+	}
+
+	static void do_connect(P2PRelayer* me) {
+		me->send_mutex.lock();
+
+		if (me->net_thread)
+			me->net_thread->join();
+		me->net_thread = me->new_thread;
+
+		me->sock = socket(AF_INET, SOCK_STREAM, 0);
+		if (me->sock <= 0)
+			return me->reconnect("unable to create socket", true);
 
 		sockaddr_in addr;
-		if (!lookup_address(server_host, &addr))
-			return reconnect("unable to lookup host", true);
+		if (!lookup_address(me->server_host, &addr))
+			return me->reconnect("unable to lookup host", true);
 
-		addr.sin_port = htons(server_port);
-		if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)))
-			return reconnect("failed to connect()", true);
+		addr.sin_port = htons(me->server_port);
+		if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
+			return me->reconnect("failed to connect()", true);
 
 		#ifdef WIN32
 			unsigned long nonblocking = 0;
-			ioctlsocket(sock, FIONBIO, &nonblocking);
+			ioctlsocket(me->sock, FIONBIO, &nonblocking);
 		#else
-			fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) & ~O_NONBLOCK);
+			fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
 		#endif
 
-		net_process();
+		me->net_process();
 	}
 
 	bool send_message(const char* command, unsigned char* data, size_t datalen) {
@@ -778,7 +799,8 @@ int main(int argc, char** argv) {
 
 #ifdef WIN32
 	WSADATA wsaData;
-	assert(!WSAStartup(MAKEWORD(2,2), &wsaData));
+	if (WSAStartup(MAKEWORD(2,2), &wsaData))
+		return -1;
 #endif
 
 	RelayNetworkClient* relayClient;
