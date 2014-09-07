@@ -8,16 +8,8 @@ public class LimitedSynchronizedObjects {
 	public static <K,V> Map<K,V> createMap(final int maxSize) {
 		return Collections.synchronizedMap(new LinkedHashMap<K,V>(maxSize) {
 			@Override
-			public V put(K k, V v) {
-				V res = super.put(k, v);
-				if (size() > maxSize)
-					remove(keySet().iterator().next());
-				return res;
-			}
-
-			@Override
-			public void putAll(Map<? extends K, ? extends V> m) {
-				throw new NotImplementedException();
+			public boolean removeEldestEntry(Map.Entry eldest) {
+				return size() > maxSize;
 			}
 		});
 	}

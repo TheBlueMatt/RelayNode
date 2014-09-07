@@ -11,15 +11,9 @@ package com.mattcorallo.relaynode;
 
 import com.google.bitcoin.core.*;
 import com.google.bitcoin.net.NioClientManager;
-import com.google.bitcoin.net.NioServer;
-import com.google.bitcoin.net.StreamParser;
-import com.google.bitcoin.net.StreamParserFactory;
 import com.google.bitcoin.params.MainNetParams;
-import com.google.bitcoin.store.BlockStore;
 import com.google.bitcoin.store.BlockStoreException;
-import com.google.bitcoin.store.MemoryBlockStore;
 import com.google.bitcoin.utils.Threading;
-import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import javax.annotation.Nonnull;
@@ -29,73 +23,21 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.nio.channels.NotYetConnectedException;
 import java.util.*;
 import java.util.concurrent.*;
-
-/**
- * Keeps a peer and a set of invs which it has told us about (ie that it has data for)
- */
-class PeerAndInvs {
-	Peer p;
-	Set<InventoryItem> invs = LimitedSynchronizedObjects.createSet(500);
-
-	public PeerAndInvs(@Nonnull Peer p) {
-		this.p = p;
-		p.addEventListener(new AbstractPeerEventListener() {
-			@Override
-			public Message onPreMessageReceived(Peer p, Message m) {
-				if (m instanceof InventoryMessage) {
-					for (InventoryItem item : ((InventoryMessage) m).getItems())
-						invs.add(item);
-				} else if (m instanceof Transaction)
-					invs.add(new InventoryItem(InventoryItem.Type.Transaction, m.getHash()));
-				else if (m instanceof Block)
-					invs.add(new InventoryItem(InventoryItem.Type.Block, m.getHash()));
-				return m;
-			}
-		}, Threading.SAME_THREAD);
-	}
-
-	public void maybeRelay(Message m) {
-		Preconditions.checkArgument(m instanceof Block || m instanceof Transaction);
-
-		InventoryItem item;
-		if (m instanceof Block)
-			item = new InventoryItem(InventoryItem.Type.Block, m.getHash());
-		else
-			item = new InventoryItem(InventoryItem.Type.Transaction, m.getHash());
-
-		if (invs.add(item)) {
-			try {
-				p.sendMessage(m);
-			} catch (NotYetConnectedException e) { /* We'll get them next time */ }
-		}
-	}
-
-	@Override public boolean equals(Object o) { return o instanceof PeerAndInvs && ((PeerAndInvs)o).p == this.p; }
-	@Override public int hashCode() { return p.hashCode(); }
-}
 
 /**
  * Keeps track of a set of PeerAndInvs
  */
 class Peers {
-	private final Set<PeerAndInvs> peers = Collections.synchronizedSet(new HashSet<PeerAndInvs>());
+	private final Set<Peer> peers = Collections.synchronizedSet(new HashSet<Peer>());
 
-	@Nonnull
-	public PeerAndInvs add(@Nonnull Peer p) {
-		PeerAndInvs peerAndInvs = new PeerAndInvs(p);
-		add(peerAndInvs);
-		return peerAndInvs;
-	}
-
-	public boolean add(@Nonnull final PeerAndInvs peerAndInvs) {
-		if (peers.add(peerAndInvs)) {
-			peerAndInvs.p.addEventListener(new AbstractPeerEventListener() {
+	public boolean add(@Nonnull final Peer p) {
+		if (peers.add(p)) {
+			p.addEventListener(new AbstractPeerEventListener() {
 				@Override
 				public void onPeerDisconnected(Peer peer, int peerCount) {
-					peers.remove(peerAndInvs);
+					peers.remove(p);
 				}
 			}, Threading.SAME_THREAD);
 			return true;
@@ -106,113 +48,12 @@ class Peers {
 	public int size() { return peers.size(); }
 
 	public void relayObject(Message m) {
-		PeerAndInvs[] peersArr;
+		Peer[] peersArr;
 		synchronized (peers) {
-			peersArr = peers.toArray(new PeerAndInvs[peers.size()]);
+			peersArr = peers.toArray(new Peer[peers.size()]);
 		}
-		for (PeerAndInvs p : peersArr)
-			p.maybeRelay(m);
-	}
-}
-
-/**
- * Keeps track of the set of known blocks and transactions for relay
- */
-abstract class Pool<Type extends Message> {
-	abstract int relayedCacheSize();
-
-	class AddedObject {
-		Sha256Hash hash;
-		long removeTime = System.currentTimeMillis() + 60*1000;
-		AddedObject(Sha256Hash hash) { this.hash = hash; }
-	}
-	final List<AddedObject> removeObjectList = Collections.synchronizedList(new LinkedList<AddedObject>());
-
-	@Nonnull
-	Map<Sha256Hash, Type> objects = new HashMap<Sha256Hash, Type>() {
-		@Override
-		public Type put(Sha256Hash key, Type value) {
-			removeObjectList.add(new AddedObject(key));
-			return super.put(key, value);
-		}
-	};
-	Set<Sha256Hash> objectsRelayed = LimitedSynchronizedObjects.createSet(relayedCacheSize());
-
-	Peers trustedOutboundPeers;
-	public Pool(Peers trustedOutboundPeers) {
-		this.trustedOutboundPeers = trustedOutboundPeers;
-		Thread t = new Thread(new Runnable() {
-			@Override
-			public void run() {
-				while (true) {
-					synchronized (removeObjectList) {
-						long targetTime = System.currentTimeMillis();
-						try {
-							for (AddedObject o = removeObjectList.get(0); o.removeTime < targetTime; o = removeObjectList.get(0)) {
-								objects.remove(o.hash);
-								removeObjectList.remove(0);
-							}
-						} catch (IndexOutOfBoundsException e) { /* Already removed? */}
-					}
-					Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
-				}
-			}
-		});
-		t.setName("Pool Invalid Object Remover");
-		t.start();
-	}
-
-	public synchronized boolean shouldRequestInv(Sha256Hash hash) {
-		return !objectsRelayed.contains(hash) && !objects.containsKey(hash);
-	}
-
-	public @Nullable Type getObject(Sha256Hash hash) {
-		return objects.get(hash);
-	}
-
-	public void provideObject(@Nonnull final Type m) {
-		synchronized (this) {
-			if (!objectsRelayed.contains(m.getHash()))
-				objects.put(m.getHash(), m);
-		}
-		trustedOutboundPeers.relayObject(m);
-	}
-
-	public void invGood(@Nonnull final Peers clients, final Sha256Hash hash) {
-		boolean relay = false;
-		Type o;
-		synchronized (Pool.this) {
-			o = objects.remove(hash);
-			if (!objectsRelayed.contains(hash)) {
-				objectsRelayed.add(hash);
-				if (o != null)
-					relay = true;
-			}
-		}
-		if (relay)
-			clients.relayObject(o);
-	}
-}
-
-class BlockPool extends Pool<Block> {
-	public BlockPool(Peers trustedOutboundPeers) {
-		super(trustedOutboundPeers);
-	}
-
-	@Override
-	int relayedCacheSize() {
-		return 100;
-	}
-}
-
-class TransactionPool extends Pool<Transaction> {
-	public TransactionPool(Peers trustedOutboundPeers) {
-		super(trustedOutboundPeers);
-	}
-
-	@Override
-	int relayedCacheSize() {
-		return 10000;
+		for (Peer p : peersArr)
+			p.sendMessage(m);
 	}
 }
 
@@ -225,12 +66,12 @@ public class RelayNode {
 	public static final String VERSION = "toucan twink";
 
 	public static void main(String[] args) throws Exception {
-		new RelayNode().run(8334, 8335, 8336);
+		new RelayNode().run(8336);
 	}
 
 	// We do various things async to avoid blocking network threads on expensive processing
 	@Nonnull
-	public static Executor asyncExecutor = Executors.newCachedThreadPool();
+	public static Executor asyncExecutor = Executors.newFixedThreadPool(100);
 
 	NetworkParameters params = MainNetParams.get();
 	@Nonnull
@@ -240,22 +81,20 @@ public class RelayNode {
 	Peers trustedOutboundPeers = new Peers();
 
 	@Nonnull
-	TransactionPool txPool = new TransactionPool(trustedOutboundPeers);
-	@Nonnull
-	BlockPool blockPool = new BlockPool(trustedOutboundPeers);
-
-	@Nonnull
-	BlockStore blockStore = new MemoryBlockStore(params);
+	UnlimitedMemoryBlockStore blockStore = new UnlimitedMemoryBlockStore(params);
 	BlockChain blockChain;
+
+	Set<Sha256Hash> txnRelayed = LimitedSynchronizedObjects.createSet(2500);
 
 
 	/******************************************
 	 ***** Stuff to keep track of clients *****
 	 ******************************************/
-	final Peers txnClients = new Peers();
-	final Peers blocksClients = new Peers();
 	@Nonnull
 	RelayConnectionListener relayClients;
+	@Nonnull
+	Peers untrustedPeers = new Peers();
+
 	@Nonnull
 	PeerEventListener untrustedPeerListener = new AbstractPeerEventListener() {
 		@Nullable
@@ -265,39 +104,37 @@ public class RelayNode {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
 				for (InventoryItem item : ((InventoryMessage)m).getItems()) {
 					if (item.type == InventoryItem.Type.Block) {
-						if (blockPool.shouldRequestInv(item.hash))
+						if (blockStore.get(item.hash) != null)
 							getDataMessage.addBlock(item.hash);
 					} else if (item.type == InventoryItem.Type.Transaction) {
-						if (txPool.shouldRequestInv(item.hash))
+						if (!txnRelayed.contains(item.hash))
 							getDataMessage.addTransaction(item.hash);
 					}
 				}
 				if (!getDataMessage.getItems().isEmpty())
 					p.sendMessage(getDataMessage);
+				return null;
 			} else if (m instanceof Block) {
-				asyncExecutor.execute(new Runnable() {
-					@Override
-					public void run() {
-						blockPool.provideObject((Block) m); // This will relay to trusted peers, just in case we reject something we shouldn't
-						try {
-							if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
-								relayClients.sendBlock((Block) m);
-								blockPool.invGood(blocksClients, m.getHash());
+				try {
+					if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
+						relayClients.sendBlock((Block) m, asyncExecutor);
+						asyncExecutor.execute(new Runnable() {
+							@Override
+							public void run() {
+								untrustedPeers.relayObject(m);
+								trustedOutboundPeers.relayObject(m);
 								if (p.getVersionMessage().subVer.contains("RelayNodeProtocol"))
 									LogBlockRelay(m.getHash(), "relay SPV", p.getAddress().getAddr(), null);
 								else
 									LogBlockRelay(m.getHash(), "p2p SPV", p.getAddress().getAddr(), null);
 							}
-						} catch (Exception e) { /* Invalid block, don't relay it */ }
+						});
 					}
-				});
+				} catch (Exception e) { /* Invalid block, don't relay it */ }
+				return null;
 			} else if (m instanceof Transaction) {
-				txPool.provideObject((Transaction) m);
-				try {
-					((Transaction) m).verify();
-				} catch (VerificationException e) {
-					return null; // Swallow "Transaction had no inputs or no outputs" without disconnecting client
-				}
+				trustedOutboundPeers.relayObject(m);
+				return null; // Swallow "Transaction had no inputs or no outputs" without disconnecting client
 			}
 			return m;
 		}
@@ -408,65 +245,33 @@ public class RelayNode {
 		public Message onPreMessageReceived(@Nonnull final Peer p, final Message m) {
 			if (m instanceof InventoryMessage) {
 				GetDataMessage getDataMessage = new GetDataMessage(params);
-				final List<Sha256Hash> blocksGood = new LinkedList<>();
-				final List<Sha256Hash> txGood = new LinkedList<>();
 				for (InventoryItem item : ((InventoryMessage)m).getItems()) {
-					if (item.type == InventoryItem.Type.Block) {
-						if (blockPool.shouldRequestInv(item.hash))
-							getDataMessage.addBlock(item.hash);
-						else
-							blocksGood.add(item.hash);
-					} else if (item.type == InventoryItem.Type.Transaction) {
-						if (txPool.shouldRequestInv(item.hash))
-							getDataMessage.addTransaction(item.hash);
-						else
-							txGood.add(item.hash);
-					}
+					if (item.type == InventoryItem.Type.Block)
+						getDataMessage.addBlock(item.hash);
+					else if (item.type == InventoryItem.Type.Transaction)
+						getDataMessage.addTransaction(item.hash);
 				}
 				if (!getDataMessage.getItems().isEmpty())
 					p.sendMessage(getDataMessage);
-				if (!blocksGood.isEmpty())
-					asyncExecutor.execute(new Runnable() {
-						@Override
-						public void run() {
-							for (Sha256Hash hash : blocksGood) {
-								Block b = blockPool.getObject(hash);
-								if (b != null)
-									relayClients.sendBlock(b);
-								blockPool.invGood(blocksClients, hash);
-								if (b != null)
-									LogBlockRelay(hash, "trusted inv", p.getAddress().getAddr(), null);
-							}
-						}
-					});
-				if (!txGood.isEmpty())
-					asyncExecutor.execute(new Runnable() {
-						@Override
-						public void run() {
-							for (Sha256Hash hash : txGood) {
-								Transaction t = txPool.getObject(hash);
-								if (t != null)
-									relayClients.sendTransaction(t);
-								txPool.invGood(txnClients, hash);
-							}
-						}
-					});
 			} else if (m instanceof Transaction) {
+				if (txnRelayed.contains(m.getHash()))
+					return null;
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
 						relayClients.sendTransaction((Transaction) m);
-						txPool.provideObject((Transaction) m);
-						txPool.invGood(txnClients, m.getHash());
+						untrustedPeers.relayObject(m);
+						txnRelayed.add(m.getHash());
 					}
 				});
 			} else if (m instanceof Block) {
+				if (blockStore.get(m.getHash()) != null)
+					return null;
+				relayClients.sendBlock((Block) m, asyncExecutor);
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
-						relayClients.sendBlock((Block) m);
-						blockPool.provideObject((Block) m);
-						blockPool.invGood(blocksClients, m.getHash());
+						untrustedPeers.relayObject(m);
 						LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr(), null);
 						try {
 							blockChain.add(((Block) m).cloneAsHeader());
@@ -509,21 +314,18 @@ public class RelayNode {
 	/***************************
 	 ***** Stuff that runs *****
 	 ***************************/
-	FileWriter relayLog;
 	public RelayNode() throws BlockStoreException, IOException {
 		versionMessage.appendToSubVer("RelayNode", VERSION, null);
 		// Fudge a few flags so that we can connect to other relay nodes
 		versionMessage.localServices = VersionMessage.NODE_NETWORK;
 		versionMessage.bestHeight = 1;
 
-		relayLog = new FileWriter("blockrelay.log", true);
-
 		connectionManager.startAsync().awaitRunning();
 
 		blockChain = new BlockChain(params, blockStore);
 	}
 
-	public void run(int onlyBlocksListenPort, int bothListenPort, int relayListenPort) {
+	public void run(int relayListenPort) {
 		Threading.uncaughtExceptionHandler = new Thread.UncaughtExceptionHandler() {
 			@Override
 			public void uncaughtException(@Nonnull Thread t, @Nonnull Throwable e) {
@@ -539,34 +341,7 @@ public class RelayNode {
 		};
 		// Listen for incoming client connections
 		try {
-			NioServer onlyBlocksServer = new NioServer(new StreamParserFactory() {
-				@Nullable
-				@Override
-				public StreamParser getNewParser(InetAddress inetAddress, int port) {
-					versionMessage.time = System.currentTimeMillis()/1000;
-					Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
-					blocksClients.add(p); // Should come first to avoid relaying back to the sender
-					p.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
-					return p;
-				}
-			}, new InetSocketAddress(onlyBlocksListenPort));
-
-			NioServer bothServer = new NioServer(new StreamParserFactory() {
-				@Nullable
-				@Override
-				public StreamParser getNewParser(InetAddress inetAddress, int port) {
-					versionMessage.time = System.currentTimeMillis()/1000;
-					Peer p = new Peer(params, versionMessage, null, new PeerAddress(inetAddress, port));
-					txnClients.add(blocksClients.add(p)); // Should come first to avoid relaying back to the sender
-					p.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
-					return p;
-				}
-			}, new InetSocketAddress(bothListenPort));
-
 			relayClients = new RelayConnectionListener(relayListenPort, untrustedPeerListener, this);
-
-			onlyBlocksServer.startAsync().awaitRunning();
-			bothServer.startAsync().awaitRunning();
 		} catch (IOException e) {
 			System.err.println("Failed to bind to port");
 			System.exit(1);
@@ -695,12 +470,13 @@ public class RelayNode {
 
 			@Override
 			void receiveBlock(@Nonnull final Block b) {
+				if (blockStore.get(b.getHash()) != null)
+					return;
+				relayClients.sendBlock(b, asyncExecutor);
 				asyncExecutor.execute(new Runnable() {
 					@Override
 					public void run() {
-						relayClients.sendBlock(b);
-						blockPool.provideObject(b);
-						blockPool.invGood(blocksClients, b.getHash());
+						untrustedPeers.relayObject(b);
 						LogBlockRelay(b.getHash(), "relay peer", address.getAddress(), recvStats);
 						recvStats = "";
 						try {
@@ -722,7 +498,7 @@ public class RelayNode {
 			@Override
 			public void connectionClosed() {
 				relayPeersConnected.remove(address);
-				if (relayPeersDisconnect.contains(address))
+				if (relayPeersDisconnect.remove(address))
 					return;
 				relayPeersWaitingOnReconnection.add(address);
 				reconnectExecutor.schedule(new Runnable() {
@@ -744,14 +520,15 @@ public class RelayNode {
 	}
 
 	public void ConnectToUntrustedBitcoinP2P(@Nonnull final InetSocketAddress address) {
-		Peer peer = new Peer(params, new VersionMessage(params, 42), null, new PeerAddress(address));
-		peer.getVersionMessage().appendToSubVer("OutboundRelayNode - bitcoin-peering@mattcorallo.com", RelayNode.VERSION, null);
+		VersionMessage version = new VersionMessage(params, 42);
+		version.appendToSubVer("RelayNode", RelayNode.VERSION, "Outbound - bitcoin-peering@mattcorallo.com");
+		Peer peer = new Peer(params, version, null, new PeerAddress(address));
 		peer.addEventListener(untrustedPeerListener, Threading.SAME_THREAD);
 		peer.addEventListener(new AbstractPeerEventListener() {
 			@Override
 			public void onPeerDisconnected(Peer peer, int peerCount) {
 				outboundP2PConnected.remove(address);
-				if (outboundP2PDisconnect.contains(address))
+				if (outboundP2PDisconnect.remove(address))
 					return;
 				outboundP2PWaitingOnReconnection.add(address);
 				reconnectExecutor.schedule(new Runnable() {
@@ -768,6 +545,7 @@ public class RelayNode {
 				outboundP2PWaitingOnReconnection.remove(address);
 			}
 		});
+		untrustedPeers.add(peer);
 		connectionManager.openConnection(address, peer);
 		outboundP2PWaitingOnReconnection.add(address);
 	}
@@ -787,22 +565,29 @@ public class RelayNode {
 	}
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
-	public void LogBlockRelay(@Nonnull Sha256Hash blockHash, String source, @Nonnull InetAddress remote, String statsLines) {
-		long timeRelayed = System.currentTimeMillis();
-		if (blockRelayedSet.contains(blockHash))
-			return;
-		blockRelayedSet.add(blockHash);
-		source = source + " from " + remote.getHostAddress() + "/" + RDNS.getRDNS(remote);
-		LogLine(blockHash.toString().substring(4, 32) + " relayed (" + source + ") " + timeRelayed);
-		try {
-			relayLog.write(blockHash + " " + timeRelayed + " " + source + "\n");
-			if (statsLines != null)
-				relayLog.write(statsLines);
-			relayLog.flush();
-		} catch (IOException e) {
-			System.err.println("Failed to write to relay log");
-			System.exit(1);
-		}
+	public void LogBlockRelay(@Nonnull final Sha256Hash blockHash, final String source, @Nonnull final InetAddress remote, final String statsLines) {
+		final long timeRelayed = System.currentTimeMillis();
+
+		asyncExecutor.execute(new Runnable() {
+			@Override
+			public void run() {
+				if (blockRelayedSet.contains(blockHash))
+					return;
+				blockRelayedSet.add(blockHash);
+				String psource = source + " from " + remote.getHostAddress() + "/" + RDNS.getRDNS(remote);
+				LogLine(blockHash.toString().substring(4, 32) + " relayed (" + psource + ") " + timeRelayed);
+				try {
+					FileWriter relayLog = new FileWriter("blockrelay.log", true);
+					relayLog.write(blockHash + " " + timeRelayed + " " + psource + "\n");
+					if (statsLines != null)
+						relayLog.write(statsLines);
+					relayLog.close();
+				} catch (IOException e) {
+					LogLine("Failed to write relay log");
+					System.exit(1);
+				}
+			}
+		});
 	}
 
 	public void printStats() {
@@ -867,10 +652,14 @@ public class RelayNode {
 				synchronized (relayPeersConnected) {
 					for (InetSocketAddress peer : relayPeersConnected) { // If its not connected, its not in the set
 						if (relayPeers.contains(peer.getAddress())) {
-							output.append("  ").append(peer.getAddress()).append(" fully connected").append("\n"); linesPrinted++;
+							output.append("  ").append(peer.getAddress())
+									.append(relayPeersDisconnect.contains(peer) ? " waiting on disconnect" : " fully connected")
+									.append("\n"); linesPrinted++;
 							relayClientCount++;
 						} else {
-							output.append("  ").append(peer.getAddress()).append(" connected outbound only").append("\n"); linesPrinted++;
+							output.append("  ").append(peer.getAddress())
+									.append(relayPeersDisconnect.contains(peer) ? "waiting on disconnect" : " connected outbound only")
+									.append("\n"); linesPrinted++;
 						}
 					}
 				}
@@ -892,7 +681,9 @@ public class RelayNode {
 				output.append("\nOutbound Listeners:").append("\n"); linesPrinted += 2;
 				synchronized (outboundP2PConnected) {
 					for (InetSocketAddress peer : outboundP2PConnected) {
-						output.append("  ").append(peer).append(" connected").append("\n"); linesPrinted++;
+						output.append("  ").append(peer)
+								.append(outboundP2PDisconnect.contains(peer) ? " waiting on disconnect" : " connected")
+								.append("\n"); linesPrinted++;
 					}
 				}
 				synchronized (outboundP2PWaitingOnReconnection) {
@@ -903,8 +694,6 @@ public class RelayNode {
 			}
 
 			output.append("\n"); linesPrinted++;
-			output.append("Connected block+transaction clients: ").append(txnClients.size()).append("\n"); linesPrinted++;
-			output.append("Connected block-only clients: ").append(blocksClients.size() - txnClients.size()).append("\n"); linesPrinted++;
 			output.append("Connected relay clients: ").append(relayPeers.size() - relayClientCount).append("\n"); linesPrinted++;
 			output.append("Connected relay node peers: ").append(relayClientCount).append("\n"); linesPrinted++;
 			output.append("Chain download at ").append(blockChain.getBestChainHeight()).append("\n"); linesPrinted++;

@@ -133,7 +133,7 @@ public abstract class RelayConnection implements StreamParser {
 	private boolean sendVersionOnConnect;
 	private String protocolVersion = null;
 
-	private final Set<Sha256Hash> relayedBlockCache = LimitedSynchronizedObjects.createSet(50);
+	private final Set<Sha256Hash> relayedBlockCache = LimitedSynchronizedObjects.createSet(10);
 
 	private volatile FlaggedArraySet<Sha256Hash> relayedTransactionCache = null;
 	private volatile Map<QuarterHash, Transaction> relayTransactionCache = null;
@@ -154,125 +154,107 @@ public abstract class RelayConnection implements StreamParser {
 	abstract void receiveBlock(Block b);
 	abstract void receiveTransaction(Transaction t);
 
-	static final Executor sendBlockExecutor = new ThreadPoolExecutor(4, 50, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
-	static final Executor sendTransactionExecutor = new ThreadPoolExecutor(4, 25, 2, TimeUnit.HOURS, new LinkedBlockingQueue<Runnable>());
-
 	public RelayConnection(boolean sendVersionOnConnect) {
 		this.sendVersionOnConnect = sendVersionOnConnect;
 	}
 
-	public void sendBlock(@Nonnull final Block b) {
+	public synchronized void sendBlock(@Nonnull final Block b) {
 		if (protocolVersion == null)
 			return;
-		sendBlockExecutor.execute(new Runnable() {
-			@Override
-			public void run() {
-				synchronized (RelayConnection.this) {
-					try {
-						if (relayedBlockCache.contains(b.getHash()))
+		try {
+			if (relayedBlockCache.contains(b.getHash()))
+				return;
+
+			byte[] blockHeader = b.cloneAsHeader().bitcoinSerialize();
+			int transactionCount = b.getTransactions().size();
+			RelayMode mode = RELAY_MODE.get(protocolVersion);
+
+			// Guess that we're only gonna relay the coinbase txn
+			ByteArrayOutputStream out = new ByteArrayOutputStream(4 * 4 + blockHeader.length + transactionCount * 2 + 3 + b.getTransactions().get(0).getMessageSize());
+			out.write(ByteBuffer.allocate(4 * 3 + blockHeader.length).order(ByteOrder.BIG_ENDIAN)
+					.putInt(MAGIC_BYTES).putInt(MessageTypes.BLOCK.ordinal())
+					.putInt(mode == RelayMode.ABBREV_HASH ? (blockHeader.length + 4 + transactionCount * QuarterHash.BYTE_LENGTH) : transactionCount)
+					.put(blockHeader).array());
+
+			if (mode == RelayMode.ABBREV_HASH)
+				out.write(ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(transactionCount).array());
+
+			for (Transaction t : b.getTransactions()) {
+				if (mode == RelayMode.ABBREV_HASH) {
+					QuarterHash.writeBytes(t.getHash(), out);
+				} else {
+					Integer index = relayedTransactionCache.getIndex(t.getHash());
+					if (index == null) {
+						byte[] transactionBytes = t.bitcoinSerialize();
+						if (transactionBytes.length > 16777215) {
+							LogLine("Tried to relay block with invalid transaction in it!");
+							throw new RuntimeException();
+						}
+						out.write((byte) 0xff);
+						out.write((byte) 0xff);
+						out.write(transactionBytes.length >> 16);
+						out.write(transactionBytes.length >> 8);
+						out.write(transactionBytes.length);
+						out.write(transactionBytes);
+					} else {
+						if (index >= Short.MAX_VALUE * 2) {
+							LogLine("INTERNAL ERROR: FlaggedArraySet is inconsistent");
+							relayPeer.closeConnection();
 							return;
-
-						byte[] blockHeader = b.cloneAsHeader().bitcoinSerialize();
-						int transactionCount = b.getTransactions().size();
-						RelayMode mode = RELAY_MODE.get(protocolVersion);
-
-						// Guess that we're only gonna relay the coinbase txn
-						ByteArrayOutputStream out = new ByteArrayOutputStream(4*4 + blockHeader.length + transactionCount*2 + 3 + b.getTransactions().get(0).getMessageSize());
-						out.write(ByteBuffer.allocate(4 * 3 + blockHeader.length).order(ByteOrder.BIG_ENDIAN)
-								.putInt(MAGIC_BYTES).putInt(MessageTypes.BLOCK.ordinal())
-								.putInt(mode == RelayMode.ABBREV_HASH ? (blockHeader.length + 4 + transactionCount * QuarterHash.BYTE_LENGTH) : transactionCount)
-								.put(blockHeader).array());
-
-						if (mode == RelayMode.ABBREV_HASH)
-							out.write(ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(transactionCount).array());
-
-						for (Transaction t : b.getTransactions()) {
-							if (mode == RelayMode.ABBREV_HASH) {
-								QuarterHash.writeBytes(t.getHash(), out);
-							} else {
-								Integer index = relayedTransactionCache.getIndex(t.getHash());
-								if (index == null) {
-									byte[] transactionBytes = t.bitcoinSerialize();
-									if (transactionBytes.length > 16777215) {
-										LogLine("Tried to relay block with invalid transaction in it!");
-										throw new RuntimeException();
-									}
-									out.write((byte) 0xff);
-									out.write((byte) 0xff);
-									out.write(transactionBytes.length >> 16);
-									out.write(transactionBytes.length >>  8);
-									out.write(transactionBytes.length      );
-									out.write(transactionBytes);
-								} else {
-									if (index >= Short.MAX_VALUE * 2) {
-										LogLine("INTERNAL ERROR: FlaggedArraySet is inconsistent");
-										relayPeer.closeConnection();
-										return;
-									}
-									out.write(index >> 8);
-									out.write(index     );
-									relayedTransactionCache.remove(t.getHash());
-								}
-							}
 						}
-
-						relayPeer.writeBytes(out.toByteArray());
-
-						if (mode == RelayMode.ABBREV_HASH) {
-							for (Transaction t : b.getTransactions()) {
-								if (!relayedTransactionCache.contains(t.getHash())) {
-									byte[] transactionBytes = t.bitcoinSerialize();
-									relayPeer.writeBytes(ByteBuffer.allocate(4 + transactionBytes.length).order(ByteOrder.BIG_ENDIAN)
-											.putInt(transactionBytes.length).put(transactionBytes)
-											.array());
-								}
-							}
-						}
-
-						boolean latestVersion = RelayNode.VERSION.equals(protocolVersion);
-						ByteBuffer lastPacket = ByteBuffer.allocate(4 * 3 + (latestVersion ? 0 : (4 * 3 + RelayNode.VERSION.length())))
-								.order(ByteOrder.BIG_ENDIAN);
-						lastPacket.putInt(MAGIC_BYTES).putInt(MessageTypes.END_BLOCK.ordinal()).putInt(0);
-						if (!latestVersion)
-							lastPacket.putInt(MAGIC_BYTES).putInt(MessageTypes.MAX_VERSION.ordinal()).putInt(RelayNode.VERSION.length())
-									.put(RelayNode.VERSION.getBytes());
-						relayPeer.writeBytes(lastPacket.array());
-
-						relayedBlockCache.add(b.getHash());
-					} catch (IOException e) {
-						/* Should get a disconnect automatically */
-						LogLine("Failed to write bytes");
+						out.write(index >> 8);
+						out.write(index);
+						relayedTransactionCache.remove(t.getHash());
 					}
 				}
 			}
-		});
+
+			relayPeer.writeBytes(out.toByteArray());
+
+			if (mode == RelayMode.ABBREV_HASH) {
+				for (Transaction t : b.getTransactions()) {
+					if (!relayedTransactionCache.contains(t.getHash())) {
+						byte[] transactionBytes = t.bitcoinSerialize();
+						relayPeer.writeBytes(ByteBuffer.allocate(4 + transactionBytes.length).order(ByteOrder.BIG_ENDIAN)
+								.putInt(transactionBytes.length).put(transactionBytes)
+								.array());
+					}
+				}
+			}
+
+			boolean latestVersion = RelayNode.VERSION.equals(protocolVersion);
+			ByteBuffer lastPacket = ByteBuffer.allocate(4 * 3 + (latestVersion ? 0 : (4 * 3 + RelayNode.VERSION.length())))
+					.order(ByteOrder.BIG_ENDIAN);
+			lastPacket.putInt(MAGIC_BYTES).putInt(MessageTypes.END_BLOCK.ordinal()).putInt(0);
+			if (!latestVersion)
+				lastPacket.putInt(MAGIC_BYTES).putInt(MessageTypes.MAX_VERSION.ordinal()).putInt(RelayNode.VERSION.length())
+						.put(RelayNode.VERSION.getBytes());
+			relayPeer.writeBytes(lastPacket.array());
+
+			relayedBlockCache.add(b.getHash());
+		} catch (IOException e) {
+						/* Should get a disconnect automatically */
+			LogLine("Failed to write bytes");
+		}
 	}
 
-	public void sendTransaction(@Nonnull final Transaction t) {
+	public synchronized void sendTransaction(@Nonnull final Transaction t) {
 		final byte[] transactionBytes = t.bitcoinSerialize();
 		if (protocolVersion == null ||
 				(transactionBytes.length > MAX_RELAY_TRANSACTION_BYTES.get(protocolVersion) &&
 						(transactionBytes.length > MAX_RELAY_OVERSIZE_TXN_BYTES.get(protocolVersion) || relayedTransactionCache.flagCount() >= MAX_EXTRA_OVERSIZE_TXN.get(protocolVersion))))
 			return;
-		sendTransactionExecutor.execute(new Runnable(){
-			@Override
-			public void run(){
-				synchronized(RelayConnection.this){
-					if (relayedTransactionCache.contains(t.getHash()))
-						return;
-					try {
-						relayPeer.writeBytes(ByteBuffer.allocate(4 * 3 + transactionBytes.length)
-								.putInt(MAGIC_BYTES).putInt(MessageTypes.TRANSACTION.ordinal())
-								.putInt(transactionBytes.length).put(transactionBytes)
-								.array());
-					} catch (IOException e) {
-						LogLine("Failed to write bytes");
-					}
-					relayedTransactionCache.add(t.getHash(), transactionBytes.length > MAX_RELAY_TRANSACTION_BYTES.get(protocolVersion));
-				}
-
-			}
-		});
+		if (relayedTransactionCache.contains(t.getHash()))
+			return;
+		try {
+			relayPeer.writeBytes(ByteBuffer.allocate(4 * 3 + transactionBytes.length)
+					.putInt(MAGIC_BYTES).putInt(MessageTypes.TRANSACTION.ordinal())
+					.putInt(transactionBytes.length).put(transactionBytes)
+					.array());
+		} catch (IOException e) {
+			LogLine("Failed to write bytes");
+		}
+		relayedTransactionCache.add(t.getHash(), transactionBytes.length > MAX_RELAY_TRANSACTION_BYTES.get(protocolVersion));
 	}
 
 	@Nullable
@@ -450,6 +432,7 @@ public abstract class RelayConnection implements StreamParser {
 						throw new ProtocolException("transactionCount: " + transactionCount + ", msgLength: " + msgLength);
 
 					receiveBlockHeader(block.header);
+					relayedBlockCache.add(block.header.getHash());
 
 					transactionsLeft = transactionCount;
 					readingBlock = block;

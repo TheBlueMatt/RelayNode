@@ -16,6 +16,7 @@ import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 public class RelayConnectionListener {
@@ -87,16 +88,23 @@ public class RelayConnectionListener {
 	}
 
 	public void sendTransaction(@Nonnull Transaction t) {
+		RelayConnection[] conns;
 		synchronized (connectionSet) {
-			for (RelayConnection connection : connectionSet)
-				connection.sendTransaction(t);
+			conns = connectionSet.toArray(new RelayConnection[connectionSet.size()]);
 		}
+		for (RelayConnection connection : conns)
+			connection.sendTransaction(t);
 	}
 
-	public void sendBlock(@Nonnull Block b) {
+	public void sendBlock(@Nonnull final Block b, Executor e) {
 		synchronized (connectionSet) {
-			for (RelayConnection connection : connectionSet)
-				connection.sendBlock(b);
+			for (final RelayConnection connection : connectionSet)
+				e.execute(new Runnable() {
+					@Override
+					public void run() {
+						connection.sendBlock(b);
+					}
+				});
 		}
 	}
 
