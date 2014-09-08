@@ -16,6 +16,7 @@
 #include <sys/time.h>
 
 #include "crypto/sha2.h"
+#include "mruset.h"
 
 
 
@@ -57,6 +58,67 @@ struct __attribute__((packed)) bitcoin_version_with_header{
 	struct bitcoin_version_end end;
 };
 static_assert(sizeof(struct bitcoin_version_with_header) == (4 + 12 + 4 + 4) + (4 + 8 + 8 + 26 + 26 + 8 + 1) + (36 + 4), "__attribute__((packed)) must work");
+
+
+
+
+/***************************
+ **** Varint processing ****
+ ***************************/
+class read_exception : std::exception {};
+
+inline void move_forward(std::vector<unsigned char>::const_iterator& it, size_t i, const std::vector<unsigned char>::const_iterator& end) {
+	if (it > end-i)
+		throw read_exception();
+	std::advance(it, i);
+}
+
+inline uint64_t read_varint(std::vector<unsigned char>::const_iterator& it, const std::vector<unsigned char>::const_iterator& end) {
+	move_forward(it, 1, end);
+	uint8_t first = *(it-1);
+	if (first < 0xfd)
+		return first;
+	else if (first == 0xfd) {
+		move_forward(it, 2, end);
+		return le16toh((*(it-1) << 8) | *(it-2));
+	} else if (first == 0xfe) {
+		move_forward(it, 4, end);
+		return le32toh((*(it-1) << 24) | (*(it-2) << 16) | (*(it-3) << 8) | *(it-4));
+	} else {
+		move_forward(it, 8, end);
+		return  le64toh((uint64_t(*(it-1)) << 56) |
+						(uint64_t(*(it-2)) << 48) |
+						(uint64_t(*(it-3)) << 40) |
+						(uint64_t(*(it-4)) << 32) |
+						(uint64_t(*(it-5)) << 24) |
+						(uint64_t(*(it-6)) << 16) |
+						(uint64_t(*(it-7)) << 8) |
+						 uint64_t(*(it-8)));
+	}
+}
+
+std::vector<unsigned char> varint(uint32_t size) {
+	if (size < 0xfd) {
+		uint8_t lesize = size;
+		return std::vector<unsigned char>(&lesize, &lesize + sizeof(lesize));
+	} else {
+		std::vector<unsigned char> res;
+		if (size <= 0xffff) {
+			res.push_back(0xfd);
+			uint16_t lesize = htole16(size);
+			res.insert(res.end(), (unsigned char*)&lesize, ((unsigned char*)&lesize) + sizeof(lesize));
+		} else if (size <= 0xffffffff) {
+			res.push_back(0xfe);
+			uint32_t lesize = htole32(size);
+			res.insert(res.end(), (unsigned char*)&lesize, ((unsigned char*)&lesize) + sizeof(lesize));
+		} else {
+			res.push_back(0xff);
+			uint64_t lesize = htole64(size);
+			res.insert(res.end(), (unsigned char*)&lesize, ((unsigned char*)&lesize) + sizeof(lesize));
+		}
+		return res;
+	}
+}
 
 
 
@@ -105,9 +167,9 @@ std::string gethostname(struct sockaddr_in6 *addr) {
 
 
 
-/***********************
- **** Network utils ****
- ***********************/
+/************************
+ **** P2P Connection ****
+ ************************/
 class P2PRelayer {
 private:
 	const std::string host;
@@ -122,6 +184,8 @@ private:
 	std::condition_variable cv;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_tx_queue;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_block_queue;
+	mruset<std::vector<unsigned char> > txnAlreadySeen;
+	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	uint32_t total_waiting_size;
 
 	std::thread *read_thread, *write_thread;
@@ -133,7 +197,7 @@ public:
 				const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
 				const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
 			: host(hostIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
-			sock(sockIn), connected(0), total_waiting_size(0), disconnectFlags(0) {
+			sock(sockIn), connected(0), txnAlreadySeen(100), blocksAlreadySeen(10), total_waiting_size(0), disconnectFlags(0) {
 		send_mutex.lock();
 		read_thread = new std::thread(do_setup_and_read, this);
 		write_thread = new std::thread(do_write, this);
@@ -274,14 +338,83 @@ private:
 			if (!strncmp(header.command, "ping", strlen("ping"))) {
 				memcpy(&header.command, "pong", sizeof("pong"));
 				memcpy(&(*msg)[0], &header, sizeof(struct bitcoin_msg_header));
+				std::lock_guard<std::mutex> lock(send_mutex);
 				if (send_all(sock, (char*)&(*msg)[0], sizeof(struct bitcoin_msg_header) + header.length) != int64_t(sizeof(struct bitcoin_msg_header) + header.length))
 					return disconnect("failed to send pong");
 				continue;
 			} else if (!strncmp(header.command, "inv", strlen("inv"))) {
-				memcpy(&header.command, "getdata", sizeof("getdata"));
-				memcpy(&(*msg)[0], &header, sizeof(struct bitcoin_msg_header));
-				if (send_all(sock, (char*)&(*msg)[0], sizeof(struct bitcoin_msg_header) + header.length) != int64_t(sizeof(struct bitcoin_msg_header) + header.length))
-					return disconnect("failed to send pong");
+				std::lock_guard<std::mutex> lock(send_mutex);
+
+				try {
+					std::set<std::vector<unsigned char> > setRequestBlocks;
+					std::set<std::vector<unsigned char> > setRequestTxn;
+
+					std::vector<unsigned char>::const_iterator it = msg->begin();
+					it += sizeof(struct bitcoin_msg_header);
+					uint64_t count = read_varint(it, msg->end());
+					if (count > 50000)
+						return disconnect("inv count > MAX_INV_SZ");
+
+					uint32_t MSG_TX = htole32(1);
+					uint32_t MSG_BLOCK = htole32(2);
+
+					for (uint64_t i = 0; i < count; i++) {
+						move_forward(it, 4 + 32, msg->end());
+						std::vector<unsigned char> hash(it-32, it);
+
+						const uint32_t type = (*(it-(1+32)) << 24) | (*(it-(2+32)) << 16) | (*(it-(3+32)) << 8) | *(it-(4+32));
+						if (type == MSG_TX) {
+							if (!txnAlreadySeen.insert(hash).second)
+								continue;
+							setRequestTxn.insert(hash);
+						} else if (type == MSG_BLOCK) {
+							if (!blocksAlreadySeen.insert(hash).second)
+								continue;
+							setRequestBlocks.insert(hash);
+						} else
+							return disconnect("unknown inv type");
+					}
+
+					if (setRequestBlocks.size()) {
+						std::vector<unsigned char> getdataMsg;
+						std::vector<unsigned char> invCount = varint(setRequestBlocks.size());
+						getdataMsg.reserve(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36);
+
+						getdataMsg.insert(getdataMsg.end(), sizeof(struct bitcoin_msg_header), 0);
+						getdataMsg.insert(getdataMsg.end(), invCount.begin(), invCount.end());
+
+						for (const std::vector<unsigned char>& hash : setRequestBlocks) {
+							getdataMsg.insert(getdataMsg.end(), (unsigned char*)&MSG_BLOCK, ((unsigned char*)&MSG_BLOCK) + 4);
+							getdataMsg.insert(getdataMsg.end(), hash.begin(), hash.end());
+						}
+
+						prepare_message("getdata", (unsigned char*)&getdataMsg[0], invCount.size() + setRequestBlocks.size()*36);
+						if (send_all(sock, (char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36) !=
+								int(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36))
+							return disconnect("error sending getdata");
+					}
+
+					if (setRequestTxn.size()) {
+						std::vector<unsigned char> getdataMsg;
+						std::vector<unsigned char> invCount = varint(setRequestTxn.size());
+						getdataMsg.reserve(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestTxn.size()*36);
+
+						getdataMsg.insert(getdataMsg.end(), sizeof(struct bitcoin_msg_header), 0);
+						getdataMsg.insert(getdataMsg.end(), invCount.begin(), invCount.end());
+
+						for (const std::vector<unsigned char>& hash : setRequestTxn) {
+							getdataMsg.insert(getdataMsg.end(), (unsigned char*)&MSG_TX, ((unsigned char*)&MSG_TX) + 4);
+							getdataMsg.insert(getdataMsg.end(), hash.begin(), hash.end());
+						}
+
+						prepare_message("getdata", (unsigned char*)&getdataMsg[0], invCount.size() + setRequestTxn.size()*36);
+						if (send_all(sock, (char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestTxn.size()*36) !=
+								int(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestTxn.size()*36))
+							return disconnect("error sending getdata");
+					}
+				} catch (read_exception) {
+					return disconnect("failed to process inv");
+				}
 				continue;
 			}
 
@@ -324,13 +457,18 @@ private:
 	}
 
 public:
-	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
+	void receive_transaction(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		#ifndef FOR_VALGRIND
 			if (!send_mutex.try_lock())
 				return;
 		#else
 			send_mutex.lock();
 		#endif
+
+		if (txnAlreadySeen.count(hash)) {
+			send_mutex.unlock();
+			return;
+		}
 
 		if (total_waiting_size >= 1500000)
 			return;
@@ -340,15 +478,14 @@ public:
 		send_mutex.unlock();
 	}
 
-	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
-		send_mutex.lock();
-		if (total_waiting_size >= 3000000)
+	void receive_block(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& block) {
+		std::lock_guard<std::mutex> lock(send_mutex);
+		if (total_waiting_size >= 3000000 || !blocksAlreadySeen.insert(hash).second)
 			return;
 
 		outbound_block_queue.push_back(block);
 		total_waiting_size += block->size();
 		cv.notify_all();
-		send_mutex.unlock();
 	}
 };
 
@@ -405,7 +542,14 @@ int main(int argc, char** argv) {
 
 	std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)> relayBlock =
 		[&](P2PRelayer* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
-			std::unique_lock<std::mutex> lock(list_mutex);
+			if (bytes->size() < 80)
+				return;
+			std::vector<unsigned char> fullhash(32);
+			CSHA256 hash; // Probably not BE-safe
+			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
+			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+
+			std::lock_guard<std::mutex> lock(list_mutex);
 			std::set<P2PRelayer*> *set;
 			if (localSet.count(from))
 				set = &blockSet;
@@ -413,12 +557,17 @@ int main(int argc, char** argv) {
 				set = &localSet;
 			for (auto it = set->begin(); it != set->end(); it++) {
 				if (!(*it)->disconnectFlags)
-					(*it)->receive_transaction(bytes);
+					(*it)->receive_block(fullhash, bytes);
 			}
 		};
 	std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
 		[&](P2PRelayer* from, std::shared_ptr<std::vector<unsigned char> >& bytes) {
-			std::unique_lock<std::mutex> lock(list_mutex);
+			std::vector<unsigned char> fullhash(32);
+			CSHA256 hash; // Probably not BE-safe
+			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], bytes->size() - sizeof(struct bitcoin_msg_header)).Finalize(&fullhash[0]);
+			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+
+			std::lock_guard<std::mutex> lock(list_mutex);
 			std::set<P2PRelayer*> *set;
 			if (localSet.count(from))
 				set = &txesSet;
@@ -426,7 +575,7 @@ int main(int argc, char** argv) {
 				set = &localSet;
 			for (auto it = set->begin(); it != set->end(); it++) {
 				if (!(*it)->disconnectFlags)
-					(*it)->receive_transaction(bytes);
+					(*it)->receive_transaction(fullhash, bytes);
 			}
 		};
 
@@ -445,7 +594,7 @@ int main(int argc, char** argv) {
 		}
 
 		socklen_t addr_size = sizeof(addr);
-		std::string localhost("::ffff:127.0.0.1");
+		std::string localhost("::ffff:127.0.0.1/");
 		std::string droppostfix(".uptimerobot.com");
 		if (FD_ISSET(blockonly_fd, &twofds)) {
 			if ((new_fd = accept(blockonly_fd, (struct sockaddr *) &addr, &addr_size)) < 0) {
@@ -457,7 +606,7 @@ int main(int argc, char** argv) {
 			if (host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix))
 				close(new_fd);
 			else {
-				std::unique_lock<std::mutex> lock(list_mutex);
+				std::lock_guard<std::mutex> lock(list_mutex);
 				P2PRelayer *relay = new P2PRelayer(new_fd, host, relayBlock, relayTx);
 				if (!host.compare(0, localhost.size(), localhost))
 					localSet.insert(relay);
@@ -475,7 +624,7 @@ int main(int argc, char** argv) {
 			if (host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix))
 				close(new_fd);
 			else {
-				std::unique_lock<std::mutex> lock(list_mutex);
+				std::lock_guard<std::mutex> lock(list_mutex);
 				P2PRelayer *relay = new P2PRelayer(new_fd, host, relayBlock, relayTx);
 				if (!host.compare(0, localhost.size(), localhost))
 					localSet.insert(relay);
@@ -486,7 +635,7 @@ int main(int argc, char** argv) {
 			}
 		}
 
-		std::unique_lock<std::mutex> lock(list_mutex);
+		std::lock_guard<std::mutex> lock(list_mutex);
 		for (auto it = blockSet.begin(); it != blockSet.end();) {
 			if ((*it)->disconnectFlags & 2) {
 				auto rm = it++; auto item = *rm;
