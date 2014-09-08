@@ -172,8 +172,6 @@ std::string gethostname(struct sockaddr_in6 *addr) {
  ************************/
 class P2PRelayer {
 private:
-	const std::string host;
-
 	const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
 	const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
@@ -191,13 +189,16 @@ private:
 	std::thread *read_thread, *write_thread;
 
 public:
+	const std::string host;
+
 	std::atomic<int> disconnectFlags;
 
 	P2PRelayer(int sockIn, std::string hostIn,
 				const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
 				const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: host(hostIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
-			sock(sockIn), connected(0), txnAlreadySeen(100), blocksAlreadySeen(10), total_waiting_size(0), disconnectFlags(0) {
+			: provide_block(provide_block_in), provide_transaction(provide_transaction_in),
+			sock(sockIn), connected(0), txnAlreadySeen(100), blocksAlreadySeen(10), total_waiting_size(0),
+			host(hostIn), disconnectFlags(0) {
 		send_mutex.lock();
 		read_thread = new std::thread(do_setup_and_read, this);
 		write_thread = new std::thread(do_write, this);
@@ -420,9 +421,6 @@ private:
 
 			memcpy(&(*msg)[0], &header, sizeof(struct bitcoin_msg_header));
 			if (!strncmp(header.command, "block", strlen("block"))) {
-				struct timeval tv;
-				gettimeofday(&tv, NULL);
-				printf("%s BLOCK %lu\n", host.c_str(), uint64_t(tv.tv_sec) * 1000 + uint64_t(tv.tv_usec) / 1000);
 				provide_block(this, msg);
 			} else if (!strncmp(header.command, "tx", strlen("tx"))) {
 				provide_transaction(this, msg);
@@ -548,6 +546,13 @@ int main(int argc, char** argv) {
 			CSHA256 hash; // Probably not BE-safe
 			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
 			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+
+			struct timeval tv;
+			gettimeofday(&tv, NULL);
+			printf("%s BLOCK %lu ", from->host.c_str(), uint64_t(tv.tv_sec) * 1000 + uint64_t(tv.tv_usec) / 1000);
+			for (unsigned int i = 0; i < fullhash.size(); i++)
+				printf("%02x", fullhash[fullhash.size() - i - 1]);
+			printf("\n");
 
 			std::lock_guard<std::mutex> lock(list_mutex);
 			std::set<P2PRelayer*> *set;
