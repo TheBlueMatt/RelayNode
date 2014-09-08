@@ -177,7 +177,7 @@ private:
 
 	const int sock;
 	std::mutex send_mutex;
-	int connected;
+	std::atomic<int> connected;
 
 	std::condition_variable cv;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_tx_queue;
@@ -336,6 +336,9 @@ private:
 				continue;
 			}
 
+			if (connected != 2)
+				return disconnect("got non-version, non-verack before version+verack");
+
 			if (!strncmp(header.command, "ping", strlen("ping"))) {
 				memcpy(&header.command, "pong", sizeof("pong"));
 				memcpy(&(*msg)[0], &header, sizeof(struct bitcoin_msg_header));
@@ -457,19 +460,17 @@ private:
 public:
 	void receive_transaction(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		#ifndef FOR_VALGRIND
-			if (!send_mutex.try_lock())
+			if (connected != 2 || !send_mutex.try_lock())
 				return;
 		#else
 			send_mutex.lock();
 		#endif
 
-		if (txnAlreadySeen.count(hash)) {
+		if (total_waiting_size >= 1500000 || txnAlreadySeen.count(hash)) {
 			send_mutex.unlock();
 			return;
 		}
 
-		if (total_waiting_size >= 1500000)
-			return;
 		outbound_tx_queue.push_back(tx);
 		total_waiting_size += tx->size();
 		cv.notify_all();
@@ -477,6 +478,9 @@ public:
 	}
 
 	void receive_block(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& block) {
+		if (connected != 2)
+			return;
+
 		std::lock_guard<std::mutex> lock(send_mutex);
 		if (total_waiting_size >= 3000000 || !blocksAlreadySeen.insert(hash).second)
 			return;
