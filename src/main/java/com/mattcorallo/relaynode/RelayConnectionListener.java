@@ -15,6 +15,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -22,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 public class RelayConnectionListener {
 	//TODO: Track memory usage and kill hungry connections
 
-	private final Set<RelayConnection> connectionSet = Collections.synchronizedSet(new HashSet<RelayConnection>());
+	private final Set<RelayConnection> connectionSet = Collections.synchronizedSet(new LinkedHashSet<RelayConnection>());
 	private final Set<InetAddress> remoteSet = Collections.synchronizedSet(new HashSet<InetAddress>());
 
 	private final Cache<InetAddress, Integer> oldHosts = CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.HOURS).maximumSize(100).build();
@@ -88,23 +89,16 @@ public class RelayConnectionListener {
 	}
 
 	public void sendTransaction(@Nonnull Transaction t) {
-		RelayConnection[] conns;
 		synchronized (connectionSet) {
-			conns = connectionSet.toArray(new RelayConnection[connectionSet.size()]);
+			for (RelayConnection connection : connectionSet)
+				connection.sendTransaction(t);
 		}
-		for (RelayConnection connection : conns)
-			connection.sendTransaction(t);
 	}
 
-	public void sendBlock(@Nonnull final Block b, Executor e) {
+	public void sendBlock(@Nonnull final Block b) {
 		synchronized (connectionSet) {
-			for (final RelayConnection connection : connectionSet)
-				e.execute(new Runnable() {
-					@Override
-					public void run() {
-						connection.sendBlock(b);
-					}
-				});
+			for (RelayConnection connection : connectionSet)
+				connection.sendBlock(b);
 		}
 	}
 

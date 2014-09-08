@@ -466,7 +466,7 @@ public:
 			send_mutex.lock();
 		#endif
 
-		if (total_waiting_size >= 1500000 || txnAlreadySeen.count(hash)) {
+		if (total_waiting_size >= 1500000 || !txnAlreadySeen.insert(hash).second) {
 			send_mutex.unlock();
 			return;
 		}
@@ -556,7 +556,7 @@ int main(int argc, char** argv) {
 			printf("%s BLOCK %lu ", from->host.c_str(), uint64_t(tv.tv_sec) * 1000 + uint64_t(tv.tv_usec) / 1000);
 			for (unsigned int i = 0; i < fullhash.size(); i++)
 				printf("%02x", fullhash[fullhash.size() - i - 1]);
-			printf("\n");
+			printf(" %s\n", localSet.count(from) ? "LOCAL" : "REMOTE");
 
 			std::lock_guard<std::mutex> lock(list_mutex);
 			std::set<P2PRelayer*> *set;

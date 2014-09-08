@@ -69,10 +69,6 @@ public class RelayNode {
 		new RelayNode().run(8336);
 	}
 
-	// We do various things async to avoid blocking network threads on expensive processing
-	@Nonnull
-	public static Executor asyncExecutor = Executors.newFixedThreadPool(100);
-
 	NetworkParameters params = MainNetParams.get();
 	@Nonnull
 	VersionMessage versionMessage = new VersionMessage(params, 0);
@@ -117,18 +113,13 @@ public class RelayNode {
 			} else if (m instanceof Block) {
 				try {
 					if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
-						relayClients.sendBlock((Block) m, asyncExecutor);
-						asyncExecutor.execute(new Runnable() {
-							@Override
-							public void run() {
-								untrustedPeers.relayObject(m);
-								trustedOutboundPeers.relayObject(m);
-								if (p.getVersionMessage().subVer.contains("RelayNodeProtocol"))
-									LogBlockRelay(m.getHash(), "relay SPV", p.getAddress().getAddr(), null);
-								else
-									LogBlockRelay(m.getHash(), "p2p SPV", p.getAddress().getAddr(), null);
-							}
-						});
+						relayClients.sendBlock((Block) m);
+						untrustedPeers.relayObject(m);
+						trustedOutboundPeers.relayObject(m);
+						if (p.getVersionMessage().subVer.contains("RelayNodeProtocol"))
+							LogBlockRelay(m.getHash(), "relay SPV", p.getAddress().getAddr(), null);
+						else
+							LogBlockRelay(m.getHash(), "p2p SPV", p.getAddress().getAddr(), null);
 					}
 				} catch (Exception e) { /* Invalid block, don't relay it */ }
 				return null;
@@ -256,30 +247,20 @@ public class RelayNode {
 			} else if (m instanceof Transaction) {
 				if (txnRelayed.contains(m.getHash()))
 					return null;
-				asyncExecutor.execute(new Runnable() {
-					@Override
-					public void run() {
-						relayClients.sendTransaction((Transaction) m);
-						untrustedPeers.relayObject(m);
-						txnRelayed.add(m.getHash());
-					}
-				});
+				relayClients.sendTransaction((Transaction) m);
+				untrustedPeers.relayObject(m);
+				txnRelayed.add(m.getHash());
 			} else if (m instanceof Block) {
 				if (blockStore.get(m.getHash()) != null)
 					return null;
-				relayClients.sendBlock((Block) m, asyncExecutor);
-				asyncExecutor.execute(new Runnable() {
-					@Override
-					public void run() {
-						untrustedPeers.relayObject(m);
-						LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr(), null);
-						try {
-							blockChain.add(((Block) m).cloneAsHeader());
-						} catch (Exception e) {
-							LogLine("WARNING: Exception adding block from trusted peer " + p.getAddress());
-						}
-					}
-				});
+				relayClients.sendBlock((Block) m);
+				untrustedPeers.relayObject(m);
+				LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr(), null);
+				try {
+					blockChain.add(((Block) m).cloneAsHeader());
+				} catch (Exception e) {
+					LogLine("WARNING: Exception adding block from trusted peer " + p.getAddress());
+				}
 			}
 			return m;
 		}
@@ -472,25 +453,20 @@ public class RelayNode {
 			void receiveBlock(@Nonnull final Block b) {
 				if (blockStore.get(b.getHash()) != null)
 					return;
-				relayClients.sendBlock(b, asyncExecutor);
-				asyncExecutor.execute(new Runnable() {
-					@Override
-					public void run() {
-						untrustedPeers.relayObject(b);
-						LogBlockRelay(b.getHash(), "relay peer", address.getAddress(), recvStats);
-						recvStats = "";
-						try {
-							blockChain.add(b.cloneAsHeader());
-						} catch (Exception e) {
-							LogLine("WARNING: Exception adding block from relay peer " + address);
-							// Force reconnect of trusted peer(s)
-							synchronized (trustedPeerConnectionsMap) {
-								for (TrustedPeerConnections peer : trustedPeerConnectionsMap.values())
-									peer.onDisconnect();
-							}
-						}
+				relayClients.sendBlock(b);
+				untrustedPeers.relayObject(b);
+				LogBlockRelay(b.getHash(), "relay peer", address.getAddress(), recvStats);
+				recvStats = "";
+				try {
+					blockChain.add(b.cloneAsHeader());
+				} catch (Exception e) {
+					LogLine("WARNING: Exception adding block from relay peer " + address);
+					// Force reconnect of trusted peer(s)
+					synchronized (trustedPeerConnectionsMap) {
+						for (TrustedPeerConnections peer : trustedPeerConnectionsMap.values())
+							peer.onDisconnect();
 					}
-				});
+				}
 			}
 
 			@Override void receiveTransaction(Transaction t) { }
@@ -565,10 +541,11 @@ public class RelayNode {
 	}
 
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
+	@Nonnull
+	public static Executor logExecutor = Executors.newFixedThreadPool(1);
 	public void LogBlockRelay(@Nonnull final Sha256Hash blockHash, final String source, @Nonnull final InetAddress remote, final String statsLines) {
 		final long timeRelayed = System.currentTimeMillis();
-
-		asyncExecutor.execute(new Runnable() {
+		logExecutor.execute(new Runnable() {
 			@Override
 			public void run() {
 				if (blockRelayedSet.contains(blockHash))
