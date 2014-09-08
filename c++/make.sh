@@ -4,6 +4,8 @@ set -e
 DEFINES=""
 [ "$1" = "test" ] && DEFINES="-DFOR_VALGRIND -g" || DEFINES="-DNDEBUG -O2"
 
+[ "$1" = "x86_bsd" ] && DEFINES="$DEFINES -DX86_BSD"
+
 ( g++ $DEFINES -std=c++11 -Wall -pthread -I. -I/usr/include ./client.cpp ./crypto/sha2.cpp -o relaynetworkclient &&
 ( [ "$1" != "test" ] && strip relaynetworkclient || echo -n ) &&
 mv relaynetworkclient ../client ) || ( echo "Failed to build client using g++"; exit -1 )

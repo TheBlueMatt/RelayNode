@@ -27,7 +27,20 @@
 	#include <netinet/tcp.h>
 	#include <netdb.h>
 	#include <fcntl.h>
+
+#ifdef X86_BSD
+	#define htole16(val) (val)
+	#define htole32(val) (val)
+	#define htole64(val) (val)
+	#define le64toh(val) (val)
+	#define le32toh(val) (val)
+	#define le16toh(val) (val)
+
+	#define MSG_NOSIGNAL 0
+#else
 	#include <endian.h>
+#endif
+
 #endif
 
 
@@ -372,6 +385,11 @@ private:
 			fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
 		#endif
 
+		#ifdef X86_BSD
+			int nosigpipe = 1;
+			setsockopt(sd, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
+		#endif
+
 		me->net_process();
 	}
 
@@ -691,6 +709,11 @@ private:
 			ioctlsocket(me->sock, FIONBIO, &nonblocking);
 		#else
 			fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
+		#endif
+
+		#ifdef X86_BSD
+			int nosigpipe = 1;
+			setsockopt(sd, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
 		#endif
 
 		me->net_process();
