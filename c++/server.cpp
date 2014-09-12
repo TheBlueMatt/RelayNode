@@ -308,7 +308,7 @@ int main(int argc, char** argv) {
 								delete *it;
 								clientList.erase(it);
 							}
-							printf("Have %lu relay clients\n", clientList.size());
+							fprintf(stderr, "Have %lu relay clients\n", clientList.size());
 						}
 					},
 					[&](std::vector<unsigned char>& bytes) {
@@ -385,7 +385,7 @@ int main(int argc, char** argv) {
 		else {
 			std::lock_guard<std::mutex> lock(list_mutex);
 			clientList.push_back(new RelayNetworkClient(new_fd, host, relayBlock, relayTx));
-			printf("Have %lu relay clients\n", clientList.size());
+			fprintf(stderr, "Have %lu relay clients\n", clientList.size());
 		}
 	}
 }

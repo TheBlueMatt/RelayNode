@@ -149,9 +149,9 @@ void P2PRelayer::net_process() {
 			provide_block(*msg, read_start);
 		} else if (!strncmp(header.command, "tx", strlen("tx"))) {
 			provide_transaction(msg);
-		} else if (!strncmp(header.command, "header", strlen("headers"))) {
+		} else if (!strncmp(header.command, "headers", strlen("headers"))) {
 			if (msg->size() < 82)
-				return reconnect("got invalid headers message");
+				continue; // Probably last one
 
 			if (provide_headers)
 				provide_headers(*msg);
@@ -163,10 +163,13 @@ void P2PRelayer::net_process() {
 
 			std::vector<unsigned char> fullhash(32);
 			CSHA256 hash;
-			hash.Write(&(*msg)[msg->size() - 82], 80).Finalize(&fullhash[0]);
+			hash.Write(&(*msg)[msg->size() - 81], 80).Finalize(&fullhash[0]);
 			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 			req.insert(req.end(), fullhash.begin(), fullhash.end());
 			req.insert(req.end(), 32, 0);
+
+			std::lock_guard<std::mutex> lock(send_mutex);
+			send_message("getheaders", &req[0], req.size() - sizeof(struct bitcoin_msg_header));
 		}
 	}
 }

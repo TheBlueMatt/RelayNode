@@ -3,10 +3,12 @@
 #include <set>
 #include <string.h>
 #include <algorithm>
+#include <mutex>
 
 #include "crypto/sha2.h"
 #include "utils.h"
 
+static std::mutex hashes_mutex;
 static std::set<std::vector<unsigned char> > hashesSeen;
 
 static inline void doubleDoubleHash(std::vector<unsigned char>& first, std::vector<unsigned char>& second) {
@@ -18,8 +20,11 @@ static inline void doubleDoubleHash(std::vector<unsigned char>& first, std::vect
 
 bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned char>::const_iterator readit, std::vector<unsigned char>::const_iterator end) {
 	try {
-		if (!hashesSeen.insert(hash).second || hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0)
-			return false;
+		{
+			std::lock_guard<std::mutex> lock(hashes_mutex);
+			if (!hashesSeen.insert(hash).second || hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0)
+				return false;
+		}
 
 		move_forward(readit, 4 + 32, end);
 		auto merkle_hash_it = readit;
@@ -86,6 +91,7 @@ bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned 
 
 void recv_headers_msg_from_trusted(const std::vector<unsigned char> headers) {
 	try {
+		std::lock_guard<std::mutex> lock(hashes_mutex);
 		auto it = headers.begin();
 		uint64_t count = read_varint(it, headers.end());
 
@@ -95,12 +101,13 @@ void recv_headers_msg_from_trusted(const std::vector<unsigned char> headers) {
 			if (*(it - 1) != 0)
 				return;
 
-			std::vector<unsigned char> fullhash(it - 81, it - 1);
+			std::vector<unsigned char> fullhash(32);
+			CSHA256 hash; // Probably not BE-safe
+			hash.Write(&(*(it - 81)), 80).Finalize(&fullhash[0]);
+			hash.Reset().Write(&fullhash[0], 32).Finalize(&fullhash[0]);
 			hashesSeen.insert(fullhash);
-
-			for (unsigned int i = 0; i < sizeof(fullhash); i++)
-				printf("%02x", fullhash[sizeof(fullhash) - i - 1]);
-			printf(" added to via trusted header\n");
 		}
+
+		printf("Added headers from trusted peers, seen %lu blocks\n", hashesSeen.size());
 	} catch (read_exception) { }
 }
