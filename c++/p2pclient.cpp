@@ -87,16 +87,6 @@ void P2PRelayer::net_process() {
 	if (errno)
 		return reconnect("error during connect", true);
 
-	if (provide_headers) {
-		std::vector<unsigned char> msg(sizeof(struct bitcoin_msg_header));
-		struct bitcoin_version_start sent_version;
-		msg.insert(msg.end(), (unsigned char*)&sent_version.protocol_version, ((unsigned char*)&sent_version.protocol_version) + sizeof(sent_version.protocol_version));
-		msg.insert(msg.end(), 1, 1);
-		msg.insert(msg.end(), 64, 0);
-		send_message("getheaders", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
-	}
-
-	connected = true;
 	send_mutex.unlock();
 
 	while (true) {
@@ -132,9 +122,22 @@ void P2PRelayer::net_process() {
 				return reconnect("got short version");
 			struct bitcoin_version_start *their_version = (struct bitcoin_version_start*) &(*msg)[0];
 
-			printf("Connected to bitcoind with version %u\n", le32toh(their_version->protocol_version));
+			std::lock_guard<std::mutex> lock(send_mutex);
+
 			struct bitcoin_msg_header new_header;
 			send_message("verack", (unsigned char*)&new_header, 0);
+
+			if (provide_headers) {
+				std::vector<unsigned char> msg(sizeof(struct bitcoin_msg_header));
+				struct bitcoin_version_start sent_version;
+				msg.insert(msg.end(), (unsigned char*)&sent_version.protocol_version, ((unsigned char*)&sent_version.protocol_version) + sizeof(sent_version.protocol_version));
+				msg.insert(msg.end(), 1, 1);
+				msg.insert(msg.end(), 64, 0);
+				send_message("getheaders", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
+			}
+
+			printf("Connected to bitcoind with version %u\n", le32toh(their_version->protocol_version));
+			connected = true;
 		} else if (!strncmp(header.command, "verack", strlen("verack"))) {
 			printf("Finished connect handshake with bitcoind\n");
 		} else if (!strncmp(header.command, "ping", strlen("ping"))) {

@@ -297,8 +297,6 @@ int main(int argc, char** argv) {
 			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
 			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 
-			printf("Hashed block message, now sending\n");
-
 			{
 				std::lock_guard<std::mutex> lock(list_mutex);
 				std::set<P2PRelayer*> *set;
