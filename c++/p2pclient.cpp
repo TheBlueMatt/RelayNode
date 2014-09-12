@@ -176,11 +176,16 @@ void P2PRelayer::net_process() {
 
 void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
 	#ifndef FOR_VALGRIND
-		if (!send_mutex.try_lock() || !connected)
+		if (!send_mutex.try_lock())
 			return;
 	#else
 		send_mutex.lock();
 	#endif
+
+	if (!connected) {
+		send_mutex.unlock();
+		return;
+	}
 
 	auto msg = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
 	msg.insert(msg.end(), tx->begin(), tx->end());
@@ -205,9 +210,8 @@ void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned 
 }
 
 void P2PRelayer::receive_block(std::vector<unsigned char>& block) {
+	std::lock_guard<std::mutex> lock(send_mutex);
 	if (!connected)
 		return;
-	std::lock_guard<std::mutex> lock(send_mutex);
 	send_message("block", &block[0], block.size() - sizeof(bitcoin_msg_header));
 }
-
