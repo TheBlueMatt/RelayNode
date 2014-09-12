@@ -87,8 +87,7 @@ public abstract class RelayConnection implements StreamParser {
 		}
 
 		synchronized void addTransaction(Integer index) {
-			Transaction t = newRelayTransactionCache.getByIndex(index);
-			newRelayTransactionCache.remove(t);
+			Transaction t = newRelayTransactionCache.remove(index);
 			transactions.put(new QuarterHash(t.getHash()), t);
 		}
 
@@ -183,7 +182,7 @@ public abstract class RelayConnection implements StreamParser {
 				if (mode == RelayMode.ABBREV_HASH) {
 					QuarterHash.writeBytes(t.getHash(), out);
 				} else {
-					Integer index = relayedTransactionCache.getIndex(t.getHash());
+					Integer index = relayedTransactionCache.remove(t.getHash());
 					if (index == null) {
 						byte[] transactionBytes = t.bitcoinSerialize();
 						if (transactionBytes.length > 16777215) {
@@ -204,7 +203,6 @@ public abstract class RelayConnection implements StreamParser {
 						}
 						out.write(index >> 8);
 						out.write(index);
-						relayedTransactionCache.remove(t.getHash());
 					}
 				}
 			}

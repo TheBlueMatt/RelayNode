@@ -8,11 +8,19 @@ import java.util.*;
  * Keeps a set with indexes of elements
  */
 public class FlaggedArraySet<K> {
+	private static class Index {
+		long index;
+		public Index(long index) { this.index = index; }
+		@Override public boolean equals(Object o) { return o instanceof  Index && ((Index) o).index == index; }
+		@Override public int hashCode() { return (int) (index ^ (index >> 32)); }
+	}
+
 	private static class ElementAndFlag<T> {
 		boolean flag;
 		T element;
-		public ElementAndFlag(@Nonnull T element, boolean flag) { this.element = element; this.flag = flag; }
-		public ElementAndFlag(@Nonnull T element) { this(element, false); }
+		Index index;
+		public ElementAndFlag(@Nonnull T element, boolean flag, Index index) { this.element = element; this.flag = flag; this.index = index; }
+		public ElementAndFlag(@Nonnull T element) { this(element, false, null); }
 
 		@Override
 		public boolean equals(Object o) {
@@ -28,7 +36,7 @@ public class FlaggedArraySet<K> {
 	}
 
 	private final int maxSize;
-	private final Map<ElementAndFlag<K>, Long> backingMap;
+	private final Map<ElementAndFlag<K>, Index> backingMap;
 	private final Map<Long, ElementAndFlag<K>> backingReverseMap;
 
 	private long offset = 0;
@@ -38,7 +46,7 @@ public class FlaggedArraySet<K> {
 	public FlaggedArraySet(int maxSize) {
 		this.maxSize = maxSize;
 		backingMap = new LinkedHashMap<>(maxSize);
-		backingReverseMap = new LinkedHashMap<>(maxSize);
+		backingReverseMap = new HashMap<>(maxSize);
 	}
 
 	public synchronized int size() {
@@ -58,10 +66,10 @@ public class FlaggedArraySet<K> {
 			return false;
 
 		while (size() >= maxSize)
-			remove(backingMap.keySet().iterator().next());
+			remove(backingMap.keySet().iterator().next(), true);
 
-		ElementAndFlag<K> newElement = new ElementAndFlag<>(k, flag);
-		backingMap.put(newElement, total);
+		ElementAndFlag<K> newElement = new ElementAndFlag<>(k, flag, new Index(total));
+		backingMap.put(newElement, newElement.index);
 		backingReverseMap.put(total++, newElement);
 
 		if (flag)
@@ -70,46 +78,39 @@ public class FlaggedArraySet<K> {
 		return true;
 	}
 
-	private synchronized boolean remove(ElementAndFlag<K> o) {
-		Long index = backingMap.remove(o);
+	private synchronized Integer remove(ElementAndFlag<K> o, boolean stillInReverseMap) {
+		Index index = backingMap.remove(o);
 		if (index == null)
-			return false;
-		o = backingReverseMap.remove(index);
+			return null;
+		if (stillInReverseMap)
+			o = backingReverseMap.remove(index.index);
 
 		if (o.flag)
 			flagCount--;
 
-		if (offset == index)
-			offset++;
-		else {
-			for (long i = index-1; i >= offset; i--) {
-				ElementAndFlag<K> t = backingReverseMap.remove(i);
-				backingMap.put(t, i+1);
-				backingReverseMap.put(i+1, t);
+		if (offset != index.index) {
+			ElementAndFlag<K> nextElem = backingReverseMap.remove(offset);
+			for (long i = offset; i < index.index; i++) {
+				ElementAndFlag<K> thisElem = backingReverseMap.put(i+1, nextElem);
+				nextElem.index.index = i + 1;
+				nextElem = thisElem;
 			}
-			offset++;
 		}
+		offset++;
 
-		return true;
+		return (int)(index.index - (offset - 1));
 	}
 
-	public boolean remove(@Nonnull K o) {
-		return remove(new ElementAndFlag<>(o));
-	}
-
-	@Nullable
-	public synchronized Integer getIndex(@Nonnull K key) {
-		Long res = backingMap.get(new ElementAndFlag<>(key));
-		if (res == null)
-			return null;
-		return (int) (res - offset);
+	public Integer remove(@Nonnull K o) {
+		return remove(new ElementAndFlag<>(o), true);
 	}
 
 	@Nullable
-	public synchronized K getByIndex(int index) {
-		ElementAndFlag<K> res = backingReverseMap.get(index + offset);
+	public synchronized K remove(int index) {
+		ElementAndFlag<K> res = backingReverseMap.remove(index + offset);
 		if (res == null)
 			return null;
+		remove(res, false);
 		return res.element;
 	}
 }

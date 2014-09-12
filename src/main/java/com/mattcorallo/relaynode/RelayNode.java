@@ -23,13 +23,16 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.channels.NotYetConnectedException;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Keeps track of a set of PeerAndInvs
  */
 class Peers {
+	Semaphore lock = new Semaphore(1);
 	private final Set<Peer> peers = Collections.synchronizedSet(new HashSet<Peer>());
 
 	public boolean add(@Nonnull final Peer p) {
@@ -37,9 +40,11 @@ class Peers {
 			p.addEventListener(new AbstractPeerEventListener() {
 				@Override
 				public void onPeerDisconnected(Peer peer, int peerCount) {
+					try { lock.acquire(); } catch (InterruptedException e) { throw new RuntimeException(e); }
 					peers.remove(p);
+					lock.release();
 				}
-			}, Threading.SAME_THREAD);
+			});
 			return true;
 		}
 		return false;
@@ -48,12 +53,13 @@ class Peers {
 	public int size() { return peers.size(); }
 
 	public void relayObject(Message m) {
-		Peer[] peersArr;
-		synchronized (peers) {
-			peersArr = peers.toArray(new Peer[peers.size()]);
+		try { lock.acquire(); } catch (InterruptedException e) { throw new RuntimeException(e); }
+		for (Peer p : peers) {
+			try {
+				p.sendMessage(m);
+			} catch (NotYetConnectedException e) { /* We'll catch them next time */ }
 		}
-		for (Peer p : peersArr)
-			p.sendMessage(m);
+		lock.release();
 	}
 }
 
@@ -112,14 +118,17 @@ public class RelayNode {
 				return null;
 			} else if (m instanceof Block) {
 				try {
+					long timeRecv = System.currentTimeMillis();
 					if (blockStore.get(m.getHash()) == null && blockChain.add(((Block) m).cloneAsHeader())) {
+						long timeRelayStart = System.currentTimeMillis();
 						relayClients.sendBlock((Block) m);
+						long timeRelayDone = System.currentTimeMillis();
 						untrustedPeers.relayObject(m);
 						trustedOutboundPeers.relayObject(m);
 						if (p.getVersionMessage().subVer.contains("RelayNodeProtocol"))
-							LogBlockRelay(m.getHash(), "relay SPV", p.getAddress().getAddr(), null);
+							LogBlockRelay(m.getHash(), "relay SPV", p.getAddress().getAddr(), null, timeRecv, timeRelayStart, timeRelayDone);
 						else
-							LogBlockRelay(m.getHash(), "p2p SPV", p.getAddress().getAddr(), null);
+							LogBlockRelay(m.getHash(), "p2p SPV", p.getAddress().getAddr(), null, timeRecv, timeRelayStart, timeRelayDone);
 					}
 				} catch (Exception e) { /* Invalid block, don't relay it */ }
 				return null;
@@ -251,11 +260,14 @@ public class RelayNode {
 				untrustedPeers.relayObject(m);
 				txnRelayed.add(m.getHash());
 			} else if (m instanceof Block) {
+				long timeRecv = System.currentTimeMillis();
 				if (blockStore.get(m.getHash()) != null)
 					return null;
+				long timeRelayStart = System.currentTimeMillis();
 				relayClients.sendBlock((Block) m);
+				long timeRelayDone = System.currentTimeMillis();
 				untrustedPeers.relayObject(m);
-				LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr(), null);
+				LogBlockRelay(m.getHash(), "trusted block", p.getAddress().getAddr(), null, timeRecv, timeRelayStart, timeRelayDone);
 				try {
 					blockChain.add(((Block) m).cloneAsHeader());
 				} catch (Exception e) {
@@ -451,11 +463,14 @@ public class RelayNode {
 
 			@Override
 			void receiveBlock(@Nonnull final Block b) {
+				long timeStart = System.currentTimeMillis();
 				if (blockStore.get(b.getHash()) != null)
 					return;
+				long timeRelayStart = System.currentTimeMillis();
 				relayClients.sendBlock(b);
+				long timeRelayDone = System.currentTimeMillis();
 				untrustedPeers.relayObject(b);
-				LogBlockRelay(b.getHash(), "relay peer", address.getAddress(), recvStats);
+				LogBlockRelay(b.getHash(), "relay peer", address.getAddress(), recvStats, timeStart, timeRelayStart, timeRelayDone);
 				recvStats = "";
 				try {
 					blockChain.add(b.cloneAsHeader());
@@ -543,8 +558,9 @@ public class RelayNode {
 	Set<Sha256Hash> blockRelayedSet = Collections.synchronizedSet(new HashSet<Sha256Hash>());
 	@Nonnull
 	public static Executor logExecutor = Executors.newFixedThreadPool(1);
-	public void LogBlockRelay(@Nonnull final Sha256Hash blockHash, final String source, @Nonnull final InetAddress remote, final String statsLines) {
-		final long timeRelayed = System.currentTimeMillis();
+	public void LogBlockRelay(@Nonnull final Sha256Hash blockHash, final String source, @Nonnull final InetAddress remote,
+							  final String statsLines, final long timeRecv, final long timeRelayStart, final long timeRelayDone) {
+		final long timeDone = System.currentTimeMillis();
 		logExecutor.execute(new Runnable() {
 			@Override
 			public void run() {
@@ -552,10 +568,11 @@ public class RelayNode {
 					return;
 				blockRelayedSet.add(blockHash);
 				String psource = source + " from " + remote.getHostAddress() + "/" + RDNS.getRDNS(remote);
-				LogLine(blockHash.toString().substring(4, 32) + " relayed (" + psource + ") " + timeRelayed);
+				LogLine(blockHash.toString().substring(4, 32) + " relayed (" + psource + ") " + timeDone +
+						" (" + (timeRelayStart - timeRecv) + ", " + (timeRelayDone - timeRelayStart) + ", " + (timeDone - timeRelayDone) + ")");
 				try {
 					FileWriter relayLog = new FileWriter("blockrelay.log", true);
-					relayLog.write(blockHash + " " + timeRelayed + " " + psource + "\n");
+					relayLog.write(blockHash + " " + timeDone + " " + psource + " " + (timeRelayStart - timeRecv) + (timeRelayDone - timeRelayStart) + " " + (timeDone - timeRelayDone) + "\n");
 					if (statsLines != null)
 						relayLog.write(statsLines);
 					relayLog.close();
@@ -563,6 +580,7 @@ public class RelayNode {
 					LogLine("Failed to write relay log");
 					System.exit(1);
 				}
+				System.gc();
 			}
 		});
 	}
