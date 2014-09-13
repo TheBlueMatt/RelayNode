@@ -284,8 +284,8 @@ int main(int argc, char** argv) {
 
 						gettimeofday(&send_end, NULL);
 
-						for (unsigned int i = 0; i < sizeof(fullhash); i++)
-							printf("%02x", fullhash[sizeof(fullhash) - i - 1]);
+						for (unsigned int i = 0; i < fullhash.size(); i++)
+							printf("%02x", fullhash[fullhash.size() - i - 1]);
 
 						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_end.tv_sec)*1000 + uint64_t(send_end.tv_usec)/1000, argv[1],
 														bytes.size(), bytes.size(),
