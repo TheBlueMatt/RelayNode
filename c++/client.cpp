@@ -95,6 +95,9 @@ private:
 		if (!lookup_address(me->server_host, &addr))
 			return me->reconnect("unable to lookup host", true);
 
+		int v6only = 0;
+		setsockopt(me->sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
+
 		addr.sin6_port = htons(8336);
 		if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
 			return me->reconnect("failed to connect()", true);
