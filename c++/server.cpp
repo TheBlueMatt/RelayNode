@@ -328,11 +328,11 @@ int main(int argc, char** argv) {
 						hash.Write(&bytes[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
 						hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 
-						const char* insane = is_block_sane(fullhash, bytes.begin(), bytes.end());
+						const char* insane = is_block_sane(fullhash, bytes.begin() + sizeof(struct bitcoin_msg_header), bytes.end());
 						if (insane) {
 							for (unsigned int i = 0; i < fullhash.size(); i++)
 								printf("%02x", fullhash[fullhash.size() - i - 1]);
-							printf(" INSANE  %s LOCALP2P\n", insane);
+							printf(" INSANE %s LOCALP2P\n", insane);
 							return;
 						}
 

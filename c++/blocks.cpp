@@ -20,11 +20,8 @@ static inline void doubleDoubleHash(std::vector<unsigned char>& first, std::vect
 
 const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned char>::const_iterator readit, std::vector<unsigned char>::const_iterator end) {
 	try {
-		{
-			std::lock_guard<std::mutex> lock(hashes_mutex);
-			if (!hashesSeen.insert(hash).second || hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0)
-				return "SEEN";
-		}
+		if (hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0)
+			return "BAD_WORK";
 
 		move_forward(readit, 4 + 32, end);
 		auto merkle_hash_it = readit;
@@ -69,6 +66,12 @@ const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<un
 		// their bodies
 		if (hashlist.back() == hashlist[hashlist.size() - 2])
 			return "DUPLICATE_TX";
+
+		{
+			std::lock_guard<std::mutex> lock(hashes_mutex);
+			if (!hashesSeen.insert(hash).second)
+				return "SEEN";
+		}
 
 		uint32_t stepCount = 1, lastMax = hashlist.size() - 1;
 		for (uint32_t rowSize = hashlist.size(); rowSize > 1; rowSize = (rowSize + 1) / 2) {
