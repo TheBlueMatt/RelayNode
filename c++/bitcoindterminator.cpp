@@ -162,7 +162,7 @@ private:
 						getdataMsg.insert(getdataMsg.end(), sizeof(struct bitcoin_msg_header), 0);
 						getdataMsg.insert(getdataMsg.end(), invCount.begin(), invCount.end());
 
-						for (const std::vector<unsigned char>& hash : setRequestBlocks) {
+						for (auto& hash : setRequestBlocks) {
 							getdataMsg.insert(getdataMsg.end(), (unsigned char*)&MSG_BLOCK, ((unsigned char*)&MSG_BLOCK) + 4);
 							getdataMsg.insert(getdataMsg.end(), hash.begin(), hash.end());
 						}
@@ -171,6 +171,14 @@ private:
 						if (send_all(sock, (char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36) !=
 								int(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36))
 							return disconnect("error sending getdata");
+
+						for (auto& hash : setRequestBlocks) {
+							struct timeval tv;
+							gettimeofday(&tv, NULL);
+							for (unsigned int i = 0; i < hash.size(); i++)
+								printf("%02x", hash[hash.size() - i - 1]);
+							printf(" requested from %s at %lu\n", host.c_str(), uint64_t(tv.tv_sec) * 1000 + uint64_t(tv.tv_usec) / 1000);
+						}
 					}
 
 					if (setRequestTxn.size()) {
