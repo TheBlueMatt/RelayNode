@@ -108,6 +108,7 @@ private: \
 			} \
 			if (send_all(sock, (char*)&(*msg)[0], msg->size()) != int64_t(msg->size())) \
 				return disconnect("failed to send msg"); \
+			total_waiting_size -= msg->size(); \
 		} \
 	}
 
