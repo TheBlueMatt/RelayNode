@@ -3,7 +3,7 @@
 
 #include <vector>
 
-bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned char>::const_iterator start, std::vector<unsigned char>::const_iterator end);
+const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned char>::const_iterator start, std::vector<unsigned char>::const_iterator end);
 void recv_headers_msg_from_trusted(const std::vector<unsigned char>);
 
 #endif

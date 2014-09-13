@@ -18,12 +18,12 @@ static inline void doubleDoubleHash(std::vector<unsigned char>& first, std::vect
 	hash.Reset().Write(&first[0], 32).Finalize(&first[0]);
 }
 
-bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned char>::const_iterator readit, std::vector<unsigned char>::const_iterator end) {
+const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned char>::const_iterator readit, std::vector<unsigned char>::const_iterator end) {
 	try {
 		{
 			std::lock_guard<std::mutex> lock(hashes_mutex);
 			if (!hashesSeen.insert(hash).second || hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0)
-				return false;
+				return "SEEN";
 		}
 
 		move_forward(readit, 4 + 32, end);
@@ -31,7 +31,7 @@ bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned 
 		move_forward(readit, 80 - (4 + 32), end);
 		uint64_t txcount = read_varint(readit, end);
 		if (txcount < 1 || txcount > 100000)
-			return false;
+			return "TXCOUNT_RANGE";
 
 		std::vector<std::vector<unsigned char> > hashlist;
 		hashlist.reserve(txcount);
@@ -68,7 +68,7 @@ bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned 
 		// transactions concatenated, which cant happen as transactions encode their length within
 		// their bodies
 		if (hashlist.back() == hashlist[hashlist.size() - 2])
-			return false;
+			return "DUPLICATE_TX";
 
 		uint32_t stepCount = 1, lastMax = hashlist.size() - 1;
 		for (uint32_t rowSize = hashlist.size(); rowSize > 1; rowSize = (rowSize + 1) / 2) {
@@ -81,11 +81,11 @@ bool is_block_sane(const std::vector<unsigned char>& hash, std::vector<unsigned 
 		}
 
 		if (memcmp(&(*merkle_hash_it), &hashlist[0][0], 32))
-			return false;
+			return "INVALID_MERKLE";
 
-		return true;
+		return NULL;
 	} catch (read_exception) {
-		return false;
+		return "INVALID_SIZE";
 	}
 }
 
