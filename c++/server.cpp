@@ -132,7 +132,7 @@ private:
 					for (unsigned int i = 0; i < fullhash.size(); i++)
 						printf("%02x", fullhash[fullhash.size() - i - 1]);
 
-					printf(" BLOCK %lu %s UNTRUSTED_RELAY %u / %u TIMES: %ld %ld\n", uint64_t(finish_send.tv_sec)*1000 + uint64_t(finish_send.tv_usec)/1000, host.c_str(),
+					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %u TIMES: %ld %ld\n", uint64_t(finish_send.tv_sec)*1000 + uint64_t(finish_send.tv_usec)/1000, host.c_str(),
 													(unsigned)std::get<0>(res), (unsigned)std::get<1>(res)->size(),
 													int64_t(finish_read.tv_sec - start.tv_sec)*1000 + (int64_t(finish_read.tv_usec) - start.tv_usec)/1000,
 													int64_t(finish_send.tv_sec - finish_read.tv_sec)*1000 + (int64_t(finish_send.tv_usec) - finish_read.tv_usec)/1000);
@@ -287,7 +287,7 @@ int main(int argc, char** argv) {
 						for (unsigned int i = 0; i < sizeof(fullhash); i++)
 							printf("%02x", fullhash[sizeof(fullhash) - i - 1]);
 
-						printf(" BLOCK %lu %s TRUSTED %lu / %lu TIMES: %ld %ld\n", uint64_t(send_end.tv_sec)*1000 + uint64_t(send_end.tv_usec)/1000, argv[1],
+						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_end.tv_sec)*1000 + uint64_t(send_end.tv_usec)/1000, argv[1],
 														bytes.size(), bytes.size(),
 														int64_t(send_start.tv_sec - read_start.tv_sec)*1000 + (int64_t(send_start.tv_usec) - read_start.tv_usec)/1000,
 														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
@@ -316,9 +316,13 @@ int main(int argc, char** argv) {
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
-					[&](std::vector<unsigned char>& bytes, struct timeval) {
+					[&](std::vector<unsigned char>& bytes, struct timeval read_start) {
 						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
 							return;
+
+						struct timeval send_start, send_end;
+						gettimeofday(&send_start, NULL);
+
 						std::vector<unsigned char> fullhash(32);
 						CSHA256 hash; // Probably not BE-safe
 						hash.Write(&bytes[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
@@ -334,6 +338,14 @@ int main(int argc, char** argv) {
 						}
 						localP2P->receive_block(bytes);
 						trustedP2P->receive_block(bytes);
+
+						gettimeofday(&send_end, NULL);
+						for (unsigned int i = 0; i < fullhash.size(); i++)
+							printf("%02x", fullhash[fullhash.size() - i - 1]);
+						printf(" BLOCK %lu %s LOCALP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_end.tv_sec)*1000 + uint64_t(send_end.tv_usec)/1000, argv[1],
+														bytes.size(), bytes.size(),
+														int64_t(send_start.tv_sec - read_start.tv_sec)*1000 + (int64_t(send_start.tv_usec) - read_start.tv_usec)/1000,
+														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						std::lock_guard<std::mutex> lock(list_mutex);
