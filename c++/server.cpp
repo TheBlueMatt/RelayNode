@@ -32,7 +32,7 @@
 class RelayNetworkClient {
 	//TODO: Accept old versions too
 private:
-	const std::function<bool (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
+	const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
 	RELAY_DECLARE_CLASS_VARS
@@ -41,7 +41,7 @@ private:
 
 public:
 	RelayNetworkClient(int sockIn, std::string hostIn,
-						const std::function<bool (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
+						const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
 			: provide_block(provide_block_in), provide_transaction(provide_transaction_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
@@ -111,7 +111,7 @@ private:
 				else
 					return disconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
-				struct timeval start, finish_read, finish_send;
+				struct timeval start, finish_read;
 
 				gettimeofday(&start, NULL);
 				auto res = decompressRelayBlock(sock, message_size);
@@ -125,17 +125,17 @@ private:
 				hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 				blocksAlreadySeen.insert(fullhash);
 
-				bool relayed = provide_block(this, std::get<1>(res));
-				gettimeofday(&finish_send, NULL);
+				struct timeval *finish_send = provide_block(this, std::get<1>(res));
 
-				if (relayed) {
+				if (finish_send) {
 					for (unsigned int i = 0; i < fullhash.size(); i++)
 						printf("%02x", fullhash[fullhash.size() - i - 1]);
 
-					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %u TIMES: %ld %ld\n", uint64_t(finish_send.tv_sec)*1000 + uint64_t(finish_send.tv_usec)/1000, host.c_str(),
+					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %u TIMES: %ld %ld\n", uint64_t(finish_read.tv_sec)*1000 + uint64_t(finish_read.tv_usec)/1000, host.c_str(),
 													(unsigned)std::get<0>(res), (unsigned)std::get<1>(res)->size(),
 													int64_t(finish_read.tv_sec - start.tv_sec)*1000 + (int64_t(finish_read.tv_usec) - start.tv_usec)/1000,
-													int64_t(finish_send.tv_sec - finish_read.tv_sec)*1000 + (int64_t(finish_send.tv_usec) - finish_read.tv_usec)/1000);
+													int64_t(finish_send->tv_sec - finish_read.tv_sec)*1000 + (int64_t(finish_send->tv_usec) - finish_read.tv_usec)/1000);
+					delete finish_send;
 				}
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
@@ -342,12 +342,12 @@ int main(int argc, char** argv) {
 								client->receive_block(fullhash, bytes);
 						}
 						localP2P->receive_block(bytes);
+						gettimeofday(&send_end, NULL);
 						trustedP2P->receive_block(bytes);
 
-						gettimeofday(&send_end, NULL);
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
-						printf(" BLOCK %lu %s LOCALP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_end.tv_sec)*1000 + uint64_t(send_end.tv_usec)/1000, argv[1],
+						printf(" BLOCK %lu %s LOCALP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_start.tv_sec)*1000 + uint64_t(send_start.tv_usec)/1000, "127.0.0.1",
 														bytes.size(), bytes.size(),
 														int64_t(send_start.tv_sec - read_start.tv_sec)*1000 + (int64_t(send_start.tv_usec) - read_start.tv_usec)/1000,
 														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
@@ -357,10 +357,10 @@ int main(int argc, char** argv) {
 						trustedP2P->receive_transaction(bytes);
 					});
 
-	std::function<bool (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayBlock =
+	std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayBlock =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
 			if (bytes->size() < sizeof(struct bitcoin_msg_header) + 80)
-				return false;
+				return (struct timeval*)NULL;
 			std::vector<unsigned char> fullhash(32);
 			CSHA256 hash; // Probably not BE-safe
 			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
@@ -371,7 +371,7 @@ int main(int argc, char** argv) {
 				for (unsigned int i = 0; i < fullhash.size(); i++)
 					printf("%02x", fullhash[fullhash.size() - i - 1]);
 				printf(" INSANE %s UNTRUSTEDRELAY\n", insane);
-				return false;
+				return (struct timeval*)NULL;
 			}
 
 			std::lock_guard<std::mutex> lock(list_mutex);
@@ -381,9 +381,13 @@ int main(int argc, char** argv) {
 			}
 
 			localP2P->receive_block(*bytes);
+
+			struct timeval *tv = new struct timeval;
+			gettimeofday(tv, NULL);
+
 			trustedP2P->receive_block(*bytes);
 
-			return true;
+			return tv;
 		};
 
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
