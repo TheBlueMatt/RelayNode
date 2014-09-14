@@ -29,10 +29,9 @@ public: \
 #define SERVER_DECLARE_CONSTRUCTOR_EXTENDS_AND_BODY \
 	sock(sockIn), connected(0), txnAlreadySeen(100), blocksAlreadySeen(10), total_waiting_size(0), \
 	host(hostIn), disconnectFlags(0) { \
-		send_mutex.lock(); \
+		std::lock_guard<std::mutex> lock(send_mutex); \
 		read_thread = new std::thread(do_setup_and_read, this); \
 		write_thread = new std::thread(do_write, this); \
-		send_mutex.unlock();
 
 #define SERVER_DECLARE_DESTRUCTOR \
 	if (disconnectFlags & 4) \
@@ -56,13 +55,11 @@ private: \
 			read_thread->join(); \
 			disconnectFlags |= 4; \
 		} else { \
-			if (connected == 2) \
-				send_mutex.lock(); \
- \
-			outbound_secondary_queue.push_back(std::make_shared<std::vector<unsigned char> >(1)); \
-			cv.notify_all(); \
-			send_mutex.unlock(); \
- \
+			{ \
+				std::lock_guard<std::mutex> lock(send_mutex); \
+				outbound_secondary_queue.push_back(std::make_shared<std::vector<unsigned char> >(1)); \
+				cv.notify_all(); \
+			} \
 			write_thread->join(); \
 		} \
  \
@@ -73,8 +70,6 @@ private: \
 	} \
  \
 	static void do_setup_and_read(CLASS* me) { \
-		me->send_mutex.lock(); \
- \
 		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK); \
  \
 		int nodelay = 1; \

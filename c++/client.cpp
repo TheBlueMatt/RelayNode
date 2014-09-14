@@ -277,7 +277,7 @@ private:
 		struct bitcoin_version_with_header version_msg;
 		version_msg.version.start.timestamp = htole64(time(0));
 		if (!send_message("version", (unsigned char*)&version_msg, sizeof(struct bitcoin_version))) {
-			reconnect("failed to send version message", true);
+			reconnect("failed to send version message");
 			return false;
 		}
 		return true;

@@ -11,8 +11,8 @@
 #include <netdb.h>
 #include <fcntl.h>
 
-#define BITCOIN_UA_LENGTH 24
-#define BITCOIN_UA {'/', 'R', 'e', 'l', 'a', 'y', 'N', 'e', 't', 'w', 'o', 'r', 'k', 'S', 'e', 'r', 'v', 'e', 'r', ':', '4', '2', '/', '\0'}
+#define BITCOIN_UA_LENGTH 23
+#define BITCOIN_UA {'/', 'R', 'e', 'l', 'a', 'y', 'N', 'e', 't', 'w', 'o', 'r', 'k', 'S', 'e', 'r', 'v', 'e', 'r', ':', '4', '2', '/'}
 
 #include "crypto/sha2.h"
 #include "flaggedarrayset.h"
@@ -95,10 +95,8 @@ private:
 				if (send_all(sock, VERSION_STRING, strlen(VERSION_STRING)) != strlen(VERSION_STRING))
 					return disconnect("failed to write version string");
 
-				connected = 2;
-				send_mutex.unlock();
-
 				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), VERSION_STRING);
+				connected = 2;
 			} else if (connected != 2) {
 				return disconnect("got non-version before version");
 			} else if (header.type == MAX_VERSION_TYPE) {
@@ -155,8 +153,11 @@ private:
 
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
+		if (connected != 2)
+			return;
+
 		#ifndef FOR_VALGRIND
-			if (connected != 2 || !send_mutex.try_lock())
+			if (!send_mutex.try_lock())
 				return;
 		#else
 			send_mutex.lock();
@@ -220,7 +221,7 @@ private:
 		struct bitcoin_version_with_header version_msg;
 		version_msg.version.start.timestamp = htole64(time(0));
 		if (!send_message("version", (unsigned char*)&version_msg, sizeof(struct bitcoin_version))) {
-			reconnect("failed to send version message", true);
+			reconnect("failed to send version message");
 			return false;
 		}
 		return true;

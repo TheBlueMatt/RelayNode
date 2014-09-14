@@ -16,11 +16,11 @@
 	#include <fcntl.h>
 #endif // !WIN32
 
-void P2PRelayer::reconnect(std::string disconnectReason, bool alreadyLocked) {
-	if (!alreadyLocked)
-		send_mutex.lock();
-
-	connected = false;
+void P2PRelayer::reconnect(std::string disconnectReason) {
+	{
+		std::lock_guard<std::mutex> lock(send_mutex);
+		connected = false;
+	}
 
 	if (sock) {
 		printf("Closing bitcoind socket, %s (%i: %s)\n", disconnectReason.c_str(), errno, errno ? strerror(errno) : "");
@@ -30,35 +30,34 @@ void P2PRelayer::reconnect(std::string disconnectReason, bool alreadyLocked) {
 		close(sock);
 	}
 
-	send_mutex.unlock();
 	sleep(1);
-	send_mutex.lock();
 
+	std::lock_guard<std::mutex> lock(send_mutex);
 	new_thread = new std::thread(do_connect, this);
-	send_mutex.unlock();
 }
 
 void P2PRelayer::do_connect(P2PRelayer* me) {
-	me->send_mutex.lock();
-
-	if (me->net_thread)
-		me->net_thread->join();
-	me->net_thread = me->new_thread;
+	{
+		std::lock_guard<std::mutex> lock(me->send_mutex);
+		if (me->net_thread)
+			me->net_thread->join();
+		me->net_thread = me->new_thread;
+	}
 
 	me->sock = socket(AF_INET6, SOCK_STREAM, 0);
 	if (me->sock <= 0)
-		return me->reconnect("unable to create socket", true);
+		return me->reconnect("unable to create socket");
 
 	sockaddr_in6 addr;
 	if (!lookup_address(me->server_host, &addr))
-		return me->reconnect("unable to lookup host", true);
+		return me->reconnect("unable to lookup host");
 
 	int v6only = 0;
 	setsockopt(me->sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
 
 	addr.sin6_port = htons(me->server_port);
 	if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
-		return me->reconnect("failed to connect()", true);
+		return me->reconnect("failed to connect()");
 
 	#ifdef WIN32
 		unsigned long nonblocking = 0;
@@ -88,9 +87,7 @@ void P2PRelayer::net_process() {
 	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
 
 	if (errno)
-		return reconnect("error during connect", true);
-
-	send_mutex.unlock();
+		return reconnect("error during connect");
 
 	while (true) {
 		struct bitcoin_msg_header header;

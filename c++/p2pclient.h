@@ -33,14 +33,13 @@ public:
 			: server_host(serverHostIn), server_port(serverPortIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
 			sock(0), connected(false), net_thread(NULL), new_thread(NULL),
 			provide_headers(provide_headers_in), requestAfterSend(requestAfterSendIn) {
-		send_mutex.lock();
+		std::lock_guard<std::mutex> lock(send_mutex);
 		new_thread = new std::thread(do_connect, this);
-		send_mutex.unlock();
 	}
 
 protected:
 	bool send_message(const char* command, unsigned char* headerAndData, size_t datalen);
-	void reconnect(std::string disconnectReason, bool alreadyLocked=false);
+	void reconnect(std::string disconnectReason);
 	virtual bool send_version()=0;
 private:
 	static void do_connect(P2PRelayer* me);

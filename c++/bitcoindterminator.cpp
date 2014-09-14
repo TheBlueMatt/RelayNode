@@ -106,8 +106,6 @@ private:
 				if (connected != 1)
 					return disconnect("got invalid verack");
 				connected = 2;
-				send_mutex.unlock();
-
 				continue;
 			}
 
@@ -216,8 +214,11 @@ private:
 
 public:
 	void receive_transaction(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& tx) {
+		if (connected != 2)
+			return;
+
 		#ifndef FOR_VALGRIND
-			if (connected != 2 || !send_mutex.try_lock())
+			if (!send_mutex.try_lock())
 				return;
 		#else
 			send_mutex.lock();
