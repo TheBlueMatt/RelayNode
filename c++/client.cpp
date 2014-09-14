@@ -172,7 +172,14 @@ private:
 					return reconnect(std::get<2>(res));
 
 				provide_block(*std::get<1>(res));
-				printf("Got block of length %lu with %u bytes on the wire\n", (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
+
+				std::vector<unsigned char> fullhash(32);
+				CSHA256 hash; // Probably not BE-safe
+				hash.Write(&(*std::get<1>(res))[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
+				hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+				for (unsigned int i = 0; i < fullhash.size(); i++)
+					printf("%02x", fullhash[fullhash.size() - i - 1]);
+				printf(" recv'd, size %lu with %u bytes on the wire\n", (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
 				if (message_size > MAX_RELAY_TRANSACTION_BYTES && (recv_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || message_size > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES))
@@ -243,8 +250,15 @@ public:
 			struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
 			if (send_all(sock, (char*)&header, sizeof(header)) != int(sizeof(header)))
 				printf("Error sending end block message to relay server\n");
-			else
-				printf("Sent block of size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block->size());
+			else {
+				std::vector<unsigned char> fullhash(32);
+				CSHA256 hash; // Probably not BE-safe
+				hash.Write(&block[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
+				hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+				for (unsigned int i = 0; i < fullhash.size(); i++)
+					printf("%02x", fullhash[fullhash.size() - i - 1]);
+				printf(" sent, size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block->size());
+			}
 		}
 
 		send_mutex.unlock();
