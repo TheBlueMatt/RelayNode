@@ -220,7 +220,8 @@ private:
 	bool send_version() {
 		struct bitcoin_version_with_header version_msg;
 		version_msg.version.start.timestamp = htole64(time(0));
-		return send_message("version", (unsigned char*)&version_msg, sizeof(struct bitcoin_version));
+		version_msg.version.start.user_agent_length = BITCOIN_UA_LENGTH; // Work around apparent gcc bug
+		return send_message("version", (unsigned char*)&version_msg, sizeof(version_msg.version));
 	}
 };
 

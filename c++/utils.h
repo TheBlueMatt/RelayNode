@@ -56,7 +56,7 @@ struct __attribute__((packed)) bitcoin_version_start {
 	uint64_t timestamp;
 	unsigned char addr_recv[26] = {0};
 	unsigned char addr_from[26] = {0};
-	uint64_t nonce = 0xDEADBEEF;
+	uint64_t nonce = 0xBADCAFE0DEADBEEF;
 #ifdef BITCOIN_UA_LENGTH
 	uint8_t user_agent_length = BITCOIN_UA_LENGTH;
 #else
