@@ -46,8 +46,8 @@ private:
 
 
 int main(int argc, char** argv) {
-	if (argc != 3) {
-		printf("USAGE: %s BITCOIND_ADDRESS BITCOIND_PORT\n", argv[0]);
+	if (argc != 4) {
+		printf("USAGE: %s BITCOIND_ADDRESS BITCOIND_PORT LOCAL_ADDRESS\n", argv[0]);
 		return -1;
 	}
 
@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
 						printf(" recv'd %s\n", argv[1]);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { inbound->receive_transaction(bytes); });
-	inbound = new P2PClient("127.0.0.1", 8334,
+	inbound = new P2PClient(argv[3], 8334,
 					[&](std::vector<unsigned char>& bytes, struct timeval) { outbound.receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { });
 
