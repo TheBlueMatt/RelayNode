@@ -11,6 +11,13 @@
 static std::mutex hashes_mutex;
 static std::set<std::vector<unsigned char> > hashesSeen;
 
+bool got_block_has_been_relayed(const std::vector<unsigned char>& hash) {
+	std::lock_guard<std::mutex> lock(hashes_mutex);
+	if (!hashesSeen.insert(hash).second)
+		return true;
+	return false;
+}
+
 static inline void doubleDoubleHash(std::vector<unsigned char>& first, std::vector<unsigned char>& second) {
 	assert(first.size() == 32);
 	CSHA256 hash; // Probably not BE-safe
