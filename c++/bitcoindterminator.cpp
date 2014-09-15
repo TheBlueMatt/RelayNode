@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
 			gettimeofday(&finish_send, NULL);
 			for (unsigned int i = 0; i < fullhash.size(); i++)
 				printf("%02x", fullhash[fullhash.size() - i - 1]);
-			printf(" BLOCK %lu %s %s %u / %u TIMES: %ld %ld\n", uint64_t(finish_send.tv_sec) * 1000 + uint64_t(finish_send.tv_usec) / 1000, from->host.c_str(),
+			printf(" BLOCK %lu %s %s %u / %u TIMES: %ld %ld\n", uint64_t(start_send.tv_sec) * 1000 + uint64_t(start_send.tv_usec) / 1000, from->host.c_str(),
 					localSet.count(from) ? "LOCALRELAY" : "REMOTEP2P", (unsigned)bytes->size(), (unsigned)bytes->size(),
 					int64_t(start_send.tv_sec - start_recv.tv_sec)*1000 + (int64_t(start_send.tv_usec) - start_recv.tv_usec)/1000,
 					int64_t(finish_send.tv_sec - start_send.tv_sec)*1000 + (int64_t(finish_send.tv_usec) - start_send.tv_usec)/1000);
