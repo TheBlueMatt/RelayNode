@@ -272,10 +272,12 @@ int main(int argc, char** argv) {
 						hash.Write(&bytes[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
 						hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 
-						std::lock_guard<std::mutex> lock(list_mutex);
-						for (RelayNetworkClient* client : clientList) {
-							if (!client->disconnectFlags)
-								client->receive_block(fullhash, bytes);
+						{
+							std::lock_guard<std::mutex> lock(list_mutex);
+							for (RelayNetworkClient* client : clientList) {
+								if (!client->disconnectFlags)
+									client->receive_block(fullhash, bytes);
+							}
 						}
 						localP2P->receive_block(bytes);
 
@@ -333,10 +335,12 @@ int main(int argc, char** argv) {
 							return;
 						}
 
-						std::lock_guard<std::mutex> lock(list_mutex);
-						for (RelayNetworkClient* client : clientList) {
-							if (!client->disconnectFlags)
-								client->receive_block(fullhash, bytes);
+						{
+							std::lock_guard<std::mutex> lock(list_mutex);
+							for (RelayNetworkClient* client : clientList) {
+								if (!client->disconnectFlags)
+									client->receive_block(fullhash, bytes);
+							}
 						}
 						localP2P->receive_block(bytes);
 						gettimeofday(&send_end, NULL);
@@ -350,7 +354,6 @@ int main(int argc, char** argv) {
 														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						std::lock_guard<std::mutex> lock(list_mutex);
 						trustedP2P->receive_transaction(bytes);
 					});
 
@@ -371,10 +374,12 @@ int main(int argc, char** argv) {
 				return (struct timeval*)NULL;
 			}
 
-			std::lock_guard<std::mutex> lock(list_mutex);
-			for (RelayNetworkClient* client : clientList) {
-				if (!client->disconnectFlags)
-					client->receive_block(fullhash, *bytes);
+			{
+				std::lock_guard<std::mutex> lock(list_mutex);
+				for (RelayNetworkClient* client : clientList) {
+					if (!client->disconnectFlags)
+						client->receive_block(fullhash, *bytes);
+				}
 			}
 
 			localP2P->receive_block(*bytes);
@@ -389,7 +394,6 @@ int main(int argc, char** argv) {
 
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
-			std::lock_guard<std::mutex> lock(list_mutex);
 			trustedP2P->receive_transaction(bytes);
 		};
 
