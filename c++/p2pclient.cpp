@@ -145,7 +145,7 @@ void P2PRelayer::net_process() {
 		} else if (!strncmp(header.command, "tx", strlen("tx"))) {
 			provide_transaction(msg);
 		} else if (!strncmp(header.command, "headers", strlen("headers"))) {
-			if (msg->size() < 82)
+			if (msg->size() <= 1 + 82)
 				continue; // Probably last one
 
 			if (provide_headers)
