@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #ifdef WIN32
 	#include <winsock2.h>
@@ -67,6 +68,8 @@ int main(int argc, char** argv) {
 	P2PClient* inbound;
 	P2PClient outbound(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes, struct timeval) {
+						struct timeval tv;
+						gettimeofday(&tv, NULL);
 						inbound->receive_block(bytes);
 
 						std::vector<unsigned char> fullhash(32);
@@ -75,7 +78,7 @@ int main(int argc, char** argv) {
 						hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
-						printf(" recv'd %s\n", argv[1]);
+						printf(" recv'd %s %lu\n", argv[1], uint64_t(tv.tv_sec)*1000 + uint64_t(tv.tv_usec)/1000);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { inbound->receive_transaction(bytes); });
 	inbound = new P2PClient(argv[3], 8334,
