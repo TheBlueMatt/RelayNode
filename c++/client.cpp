@@ -111,7 +111,7 @@ private:
 
 		#ifdef X86_BSD
 			int nosigpipe = 1;
-			setsockopt(sd, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
+			setsockopt(me->sock, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
 		#endif
 
 		me->net_process();

@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
 						}
 					},
 					[&](std::vector<unsigned char>& bytes) {
-						recv_headers_msg_from_trusted(bytes);
+						return recv_headers_msg_from_trusted(bytes);
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,

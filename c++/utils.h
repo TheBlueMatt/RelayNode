@@ -15,9 +15,19 @@
 
 #if defined(WIN32) || defined(X86_BSD)
 	// Windows is LE-only anyway...
+	#ifdef htole16
+		#undef htole16
+		#undef htole32
+		#undef htole64
+	#endif
 	#define htole16(val) (val)
 	#define htole32(val) (val)
 	#define htole64(val) (val)
+	#ifdef le16toh
+		#undef le64toh
+		#undef le32toh
+		#undef le16toh
+	#endif
 	#define le64toh(val) (val)
 	#define le32toh(val) (val)
 	#define le16toh(val) (val)

@@ -21,7 +21,7 @@ private:
 	std::thread* net_thread, *new_thread;
 
 protected:
-	typedef void (header_func_type) (std::vector<unsigned char>&);
+	typedef bool (header_func_type) (std::vector<unsigned char>&);
 private:
 	const header_func_type *provide_headers;
 	bool requestAfterSend;

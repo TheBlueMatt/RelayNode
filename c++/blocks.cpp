@@ -67,27 +67,23 @@ const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<un
 			hash.Reset().Write(&hashlist.back()[0], 32).Finalize(&hashlist.back()[0]);
 		}
 
-		// "Two" blocks may have the same hash if a transaction is duplicated on the end (sometimes)
-		// Otherwise, you'd have to create a transaction with the same representation as two
-		// transactions concatenated, which cant happen as transactions encode their length within
-		// their bodies
-		if (hashlist.back() == hashlist[hashlist.size() - 2])
-			return "DUPLICATE_TX";
-
-		{
-			std::lock_guard<std::mutex> lock(hashes_mutex);
-			if (!hashesSeen.insert(hash).second)
-				return "SEEN";
-		}
-
 		uint32_t stepCount = 1, lastMax = hashlist.size() - 1;
 		for (uint32_t rowSize = hashlist.size(); rowSize > 1; rowSize = (rowSize + 1) / 2) {
+			if (hashlist[lastMax - stepCount] == hashlist[lastMax])
+				return "DUPLICATE_TX";
+
 			for (uint32_t i = 0; i < rowSize; i += 2) {
 				assert(i*stepCount < hashlist.size() && lastMax < hashlist.size());
 				doubleDoubleHash(hashlist[i*stepCount], hashlist[std::min((i + 1)*stepCount, lastMax)]);
 			}
-			lastMax = ((rowSize - 1) / 2)*2 * stepCount;
+			lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
 			stepCount *= 2;
+		}
+
+		{ // This must come after all "DUPLICATE_TX" errors
+			std::lock_guard<std::mutex> lock(hashes_mutex);
+			if (!hashesSeen.insert(hash).second)
+				return "SEEN";
 		}
 
 		if (memcmp(&(*merkle_hash_it), &hashlist[0][0], 32))
@@ -99,7 +95,8 @@ const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<un
 	}
 }
 
-void recv_headers_msg_from_trusted(const std::vector<unsigned char> headers) {
+bool recv_headers_msg_from_trusted(const std::vector<unsigned char> headers) {
+	bool wasUseful = false;
 	try {
 		std::lock_guard<std::mutex> lock(hashes_mutex);
 		auto it = headers.begin();
@@ -109,15 +106,16 @@ void recv_headers_msg_from_trusted(const std::vector<unsigned char> headers) {
 			move_forward(it, 81, headers.end());
 
 			if (*(it - 1) != 0)
-				return;
+				return wasUseful;
 
 			std::vector<unsigned char> fullhash(32);
 			CSHA256 hash; // Probably not BE-safe
 			hash.Write(&(*(it - 81)), 80).Finalize(&fullhash[0]);
 			hash.Reset().Write(&fullhash[0], 32).Finalize(&fullhash[0]);
-			hashesSeen.insert(fullhash);
+			wasUseful |= hashesSeen.insert(fullhash).second;
 		}
 
 		printf("Added headers from trusted peers, seen %lu blocks\n", hashesSeen.size());
 	} catch (read_exception) { }
+	return wasUseful;
 }

@@ -148,8 +148,8 @@ void P2PRelayer::net_process() {
 			if (msg->size() <= 1 + 82)
 				continue; // Probably last one
 
-			if (provide_headers)
-				provide_headers(*msg);
+			if (!provide_headers || !provide_headers(*msg))
+				continue;
 
 			std::vector<unsigned char> req(sizeof(struct bitcoin_msg_header));
 			struct bitcoin_version_start sent_version;
