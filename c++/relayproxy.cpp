@@ -27,7 +27,7 @@ class RelayNetworkClient {
 private:
 	const char* server_host;
 
-	const std::function<void (std::vector<unsigned char>&)> provide_message;
+	const std::function<void (int)> provide_sock;
 
 	int sock;
 	std::mutex send_mutex;
@@ -35,8 +35,8 @@ private:
 
 public:
 	RelayNetworkClient(const char* serverHostIn,
-						const std::function<void (std::vector<unsigned char>&)>& provide_message_in)
-			: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, server_host(serverHostIn), provide_message(provide_message_in),
+						const std::function<void (int)>& provide_sock_in)
+			: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, server_host(serverHostIn), provide_sock(provide_sock_in),
 			sock(0), net_thread(NULL), new_thread(NULL) {
 		send_mutex.lock();
 		new_thread = new std::thread(do_connect, this);
@@ -91,38 +91,40 @@ private:
 
 		send_mutex.unlock();
 
-		while (true) {
-			relay_msg_header header;
-			if (read_all(sock, (char*)&header, 4*3) != 4*3)
-				return reconnect("failed to read message header");
+		relay_msg_header header;
+		if (read_all(sock, (char*)&header, 4*3) != 4*3)
+			return reconnect("failed to read message header");
 
-			if (header.magic != RELAY_MAGIC_BYTES)
-				return reconnect("invalid magic bytes");
+		if (header.magic != RELAY_MAGIC_BYTES)
+			return reconnect("invalid magic bytes");
+		if (header.type != VERSION_TYPE)
+			return reconnect("didnt get version first");
 
-			uint32_t message_size = ntohl(header.length);
+		uint32_t message_size = ntohl(header.length);
+		if (message_size > 1000000)
+			return reconnect("got message too large");
 
-			if (message_size > 1000000)
-				return reconnect("got message too large");
+		char msg[message_size];
+		if (read_all(sock, (char*)msg, message_size) < (int64_t)(message_size))
+			return reconnect("failed to read message data");
 
-			std::vector<unsigned char> msg(sizeof(struct relay_msg_header) + message_size);
-			struct relay_msg_header *new_header = (struct relay_msg_header*)&msg[0];
-			new_header->magic = RELAY_MAGIC_BYTES;
-			new_header->type = header.type;
-			new_header->length = htonl(message_size);
-			if (read_all(sock, (char*)&msg[sizeof(struct relay_msg_header)], message_size) < (int64_t)(message_size))
-				return reconnect("failed to read message data");
-			if (header.type != VERSION_TYPE)
-				provide_message(msg);
-		}
+		return provide_sock(sock);
 	}
 
 public:
-	void receive_message(const std::vector<unsigned char>& msg) {
+	void receive_sock(int recv_sock) {
 		std::lock_guard<std::mutex> lock(send_mutex);
-		if (send_all(sock, (char*)&msg[0], msg.size()) != int(msg.size()))
-			printf("Error sending message to relay server\n");
-		else
-			printf("Sent message of size %lu to relay server\n", (unsigned long)msg.size());
+		int pipes[2];
+		if (pipe(pipes))
+			exit(-42);
+		fcntl(recv_sock, F_SETFL, fcntl(recv_sock, F_GETFL) | O_NONBLOCK);
+		fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) | O_NONBLOCK);
+		while (true) {
+			ssize_t res = splice(recv_sock, NULL, pipes[1], NULL, 0xffff, SPLICE_F_MOVE);
+			if (res <= 0) printf("Error splicing from recv_sock to pipe: %ld (%s)\n", res, strerror(errno));
+			res = splice(pipes[0], NULL, sock, NULL, 0xffff, SPLICE_F_MOVE);
+			if (res <= 0) printf("Error splicing from pipe to sock: %ld (%s)\n", res, strerror(errno));
+		}
 	}
 };
 
@@ -136,10 +138,8 @@ int main(int argc, char** argv) {
 	}
 
 	RelayNetworkClient *relayClientA, *relayClientB;
-	relayClientA = new RelayNetworkClient(argv[1],
-										[&](std::vector<unsigned char>& bytes) { relayClientB->receive_message(bytes); });
-	relayClientB = new RelayNetworkClient(argv[2],
-										[&](std::vector<unsigned char>& bytes) { relayClientA->receive_message(bytes); });
+	relayClientA = new RelayNetworkClient(argv[1], [&](int sock) { relayClientB->receive_sock(sock); });
+	relayClientB = new RelayNetworkClient(argv[2], [&](int sock) { relayClientA->receive_sock(sock); });
 
 	while (true) { sleep(1000); }
 }
