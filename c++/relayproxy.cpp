@@ -117,13 +117,13 @@ public:
 		int pipes[2];
 		if (pipe(pipes))
 			exit(-42);
-		fcntl(recv_sock, F_SETFL, fcntl(recv_sock, F_GETFL) | O_NONBLOCK);
-		fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) | O_NONBLOCK);
+		fcntl(recv_sock, F_SETFL, fcntl(recv_sock, F_GETFL) & ~O_NONBLOCK);
+		fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) & ~O_NONBLOCK);
 		while (true) {
 			ssize_t res = splice(recv_sock, NULL, pipes[1], NULL, 0xffff, SPLICE_F_MOVE);
-			if (res <= 0) printf("Error splicing from recv_sock to pipe: %ld (%s)\n", res, strerror(errno));
+			if (res <= 0) { printf("Error splicing from recv_sock %d to pipe %d: %ld (%s)\n", recv_sock, pipes[1], res, strerror(errno)); continue; }
 			res = splice(pipes[0], NULL, sock, NULL, 0xffff, SPLICE_F_MOVE);
-			if (res <= 0) printf("Error splicing from pipe to sock: %ld (%s)\n", res, strerror(errno));
+			if (res <= 0) printf("Error splicing from pipe %d to sock %d: %ld (%s)\n", pipes[0], sock, res, strerror(errno));
 		}
 	}
 };
