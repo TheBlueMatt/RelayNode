@@ -34,6 +34,7 @@ class RelayNetworkClient {
 private:
 	const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
+	const std::function<void (RelayNetworkClient*)> connected_callback;
 
 	RELAY_DECLARE_CLASS_VARS
 
@@ -42,8 +43,9 @@ private:
 public:
 	RelayNetworkClient(int sockIn, std::string hostIn,
 						const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
-						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: provide_block(provide_block_in), provide_transaction(provide_transaction_in),
+						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
+						const std::function<void (RelayNetworkClient*)>& connected_callback_in)
+			: provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
 		SERVER_DECLARE_CONSTRUCTOR_EXTENDS_AND_BODY
 	}
@@ -97,6 +99,7 @@ private:
 
 				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), VERSION_STRING);
 				connected = 2;
+				connected_callback(this); // Called unlocked
 			} else if (connected != 2) {
 				return disconnect("got non-version before version");
 			} else if (header.type == MAX_VERSION_TYPE) {
@@ -155,22 +158,55 @@ public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		if (connected != 2)
 			return;
+		std::lock_guard<std::mutex> lock(send_mutex);
 
-		#ifndef FOR_VALGRIND
-			if (!send_mutex.try_lock())
-				return;
-		#else
-			send_mutex.lock();
-		#endif
+		if (total_waiting_size > 4000000)
+			return disconnect_from_outside("total_waiting_size blew up :(");;
 
-		if (total_waiting_size > 1500000 || send_tx_cache.contains(tx) ||
-				(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
-					(send_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES))) {
-			send_mutex.unlock();
+		outbound_primary_queue.push_back(tx); // Have to strictly order all messages
+		total_waiting_size += tx->size();
+		cv.notify_all();
+	}
+
+	void initial_txn_start() {
+		std::lock_guard<std::mutex> lock(send_mutex);
+		initial_outbound_throttle = true;
+		total_waiting_size += 1; // Wow this is bastardized
+	}
+
+	void initial_txn_done() {
+		std::lock_guard<std::mutex> lock(send_mutex);
+		total_waiting_size -= 1;
+	}
+
+	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
+		if (connected != 2)
 			return;
-		}
-		send_tx_cache.add(tx, tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES);
 
+		std::lock_guard<std::mutex> lock(send_mutex);
+		if (total_waiting_size > 4000000)
+			return disconnect_from_outside("total_waiting_size blew up :(");;
+
+		outbound_primary_queue.push_back(block);
+		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
+		outbound_primary_queue.push_back(std::make_shared<std::vector<unsigned char> >((unsigned char*)&header, ((unsigned char*)&header) + sizeof(header)));
+
+		total_waiting_size += block->size() + sizeof(header);
+		cv.notify_all();
+	}
+};
+
+class RelayNetworkCompressor {
+	//TODO: Handle old versions too?
+	RELAY_DECLARE_CLASS_VARS
+	RELAY_DECLARE_FUNCTIONS
+
+	mruset<std::vector<unsigned char> > blocksAlreadySeen;
+
+	std::mutex mutex;
+public:
+	RelayNetworkCompressor() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, blocksAlreadySeen(10) {}
+	std::shared_ptr<std::vector<unsigned char> > get_relay_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		auto msg = std::make_shared<std::vector<unsigned char> > (sizeof(struct relay_msg_header));
 		struct relay_msg_header *header = (struct relay_msg_header*)&(*msg)[0];
 		header->magic = RELAY_MAGIC_BYTES;
@@ -178,33 +214,39 @@ public:
 		header->length = htonl(tx->size());
 		msg->insert(msg->end(), tx->begin(), tx->end());
 
-		outbound_primary_queue.push_back(msg); // Have to strictly order all messages
-		total_waiting_size += msg->size();
-		cv.notify_all();
+		std::lock_guard<std::mutex> lock(mutex);
 
-		send_mutex.unlock();
+		if (send_tx_cache.contains(msg) ||
+				(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
+					(send_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)))
+			return std::shared_ptr<std::vector<unsigned char> >();
+		send_tx_cache.add(msg, tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES);
+
+		return msg;
 	}
 
-	void receive_block(const std::vector<unsigned char> hash, const std::vector<unsigned char>& block) {
-		if (connected != 2)
-			return;
+	std::shared_ptr<std::vector<unsigned char> > compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block) {
+		std::lock_guard<std::mutex> lock(mutex);
 
-		std::lock_guard<std::mutex> lock(send_mutex);
-		if (total_waiting_size >= 3000000 || !blocksAlreadySeen.insert(hash).second)
-			return;
+		if (!blocksAlreadySeen.insert(hash).second)
+			return std::shared_ptr<std::vector<unsigned char> >();
 
 		auto compressed_block = compressRelayBlock(block);
 		if (!compressed_block->size()) {
 			printf("Failed to process block from bitcoind\n");
-			return;
+			return std::shared_ptr<std::vector<unsigned char> >();
 		}
 
-		outbound_primary_queue.push_back(compressed_block);
-		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-		outbound_primary_queue.push_back(std::make_shared<std::vector<unsigned char> >((unsigned char*)&header, ((unsigned char*)&header) + sizeof(header)));
+		return compressed_block;
+	}
 
-		total_waiting_size += compressed_block->size() + sizeof(header);
-		cv.notify_all();
+	void relay_node_connected(RelayNetworkClient* client) {
+		std::lock_guard<std::mutex> lock(mutex);
+		client->initial_txn_start();
+		send_tx_cache.for_all_txn([&] (std::shared_ptr<std::vector<unsigned char> > tx) {
+			client->receive_transaction(tx);
+		});
+		client->initial_txn_done();
 	}
 };
 
@@ -261,6 +303,8 @@ int main(int argc, char** argv) {
 	// This is because the things are setup for the relay <-> p2p case (both to optimize
 	// the client and because that is the case we want to optimize for)
 
+	RelayNetworkCompressor compressor;
+
 	trustedP2P = new P2PClient(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes, struct timeval read_start) {
 						struct timeval send_start, send_end;
@@ -276,11 +320,12 @@ int main(int argc, char** argv) {
 						if (got_block_has_been_relayed(fullhash))
 							return;
 
-						{
+						auto block = compressor.compress_block(fullhash, bytes);
+						if (block.use_count()) {
 							std::lock_guard<std::mutex> lock(list_mutex);
 							for (RelayNetworkClient* client : clientList) {
 								if (!client->disconnectFlags)
-									client->receive_block(fullhash, bytes);
+									client->receive_block(block);
 							}
 						}
 						localP2P->receive_block(bytes);
@@ -296,22 +341,25 @@ int main(int argc, char** argv) {
 														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						std::lock_guard<std::mutex> lock(list_mutex);
 						std::list<std::list<RelayNetworkClient*>::iterator> rmList;
-						for (auto it = clientList.begin(); it != clientList.end(); it++) {
-							if (!(*it)->disconnectFlags)
-								(*it)->receive_transaction(bytes);
-							else
-								rmList.push_back(it);
-						}
-						localP2P->receive_transaction(bytes);
-
-						if (rmList.size()) {
-							for (auto& it : rmList) {
-								delete *it;
-								clientList.erase(it);
+						auto tx = compressor.get_relay_transaction(bytes);
+						if (tx.use_count()) {
+							std::lock_guard<std::mutex> lock(list_mutex);
+							for (auto it = clientList.begin(); it != clientList.end(); it++) {
+								if (!(*it)->disconnectFlags)
+									(*it)->receive_transaction(tx);
+								else
+									rmList.push_back(it);
 							}
-							fprintf(stderr, "Have %lu relay clients\n", clientList.size());
+							localP2P->receive_transaction(bytes);
+
+							if (rmList.size()) {
+								for (auto& it : rmList) {
+									delete *it;
+									clientList.erase(it);
+								}
+								fprintf(stderr, "Have %lu relay clients\n", clientList.size());
+							}
 						}
 					},
 					[&](std::vector<unsigned char>& bytes) {
@@ -339,11 +387,12 @@ int main(int argc, char** argv) {
 							return;
 						}
 
-						{
+						auto block = compressor.compress_block(fullhash, bytes);
+						if (block.use_count()) {
 							std::lock_guard<std::mutex> lock(list_mutex);
 							for (RelayNetworkClient* client : clientList) {
 								if (!client->disconnectFlags)
-									client->receive_block(fullhash, bytes);
+									client->receive_block(block);
 							}
 						}
 						localP2P->receive_block(bytes);
@@ -378,11 +427,12 @@ int main(int argc, char** argv) {
 				return (struct timeval*)NULL;
 			}
 
-			{
+			auto block = compressor.compress_block(fullhash, *bytes);
+			if (block.use_count()) {
 				std::lock_guard<std::mutex> lock(list_mutex);
 				for (RelayNetworkClient* client : clientList) {
 					if (!client->disconnectFlags)
-						client->receive_block(fullhash, *bytes);
+						client->receive_block(block);
 				}
 			}
 
@@ -401,6 +451,11 @@ int main(int argc, char** argv) {
 			trustedP2P->receive_transaction(bytes);
 		};
 
+	std::function<void (RelayNetworkClient*)> connected =
+		[&](RelayNetworkClient* client) {
+			compressor.relay_node_connected(client);
+		};
+
 	std::string droppostfix(".uptimerobot.com");
 	socklen_t addr_size = sizeof(addr);
 	while (true) {
@@ -415,7 +470,7 @@ int main(int argc, char** argv) {
 			close(new_fd);
 		else {
 			std::lock_guard<std::mutex> lock(list_mutex);
-			clientList.push_back(new RelayNetworkClient(new_fd, host, relayBlock, relayTx));
+			clientList.push_back(new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected));
 			fprintf(stderr, "Have %lu relay clients\n", clientList.size());
 		}
 	}

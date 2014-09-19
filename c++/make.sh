@@ -22,6 +22,10 @@ if [ "$2" = "all" ]; then
 	( [ "$1" != "test" ] && strip relaynetworkoutbound || echo -n ) &&
 	mv relaynetworkoutbound .. ) || ( echo "Failed to build server outbound client using g++"; exit -1 )
 
+	( g++ $DEFINES -std=c++11 -Wall -pthread -I. -I/usr/include ./flaggedarrayset.cpp ./relayproxy.cpp ./utils.cpp ./crypto/sha2.cpp -o relaynetworkproxy &&
+	( [ "$1" != "test" ] && strip relaynetworkproxy || echo -n ) &&
+	mv relaynetworkproxy .. ) || ( echo "Failed to build server proxy using g++"; exit -1 )
+
 	( i686-w64-mingw32-g++ $DEFINES -std=c++11 -Wall -DWIN32 -mno-ms-bitfields -static -static-libgcc -I. ./client.cpp ./flaggedarrayset.cpp ./utils.cpp ./p2pclient.cpp ./crypto/sha2.cpp -lwsock32 -lmingwthrd -lws2_32 -o relaynetworkclient.exe &&
 	( [ "$1" != "test" ] && i686-w64-mingw32-strip relaynetworkclient.exe || echo -n ) &&
 	mv relaynetworkclient.exe ../client ) || ( echo "Failed to build windows client with mingw"; exit -1 )

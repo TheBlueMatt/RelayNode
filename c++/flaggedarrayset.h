@@ -26,7 +26,8 @@ private:
 	std::map<uint64_t, std::map<ElemAndFlag, uint64_t>::iterator> backingReverseMap;
 
 public:
-	FlaggedArraySet(unsigned int maxSizeIn) : maxSize(maxSizeIn) {}
+	void clear();
+	FlaggedArraySet(unsigned int maxSizeIn) : maxSize(maxSizeIn) { clear(); }
 
 	size_t size() { return backingMap.size(); }
 	size_t flagCount() { return flag_count; }
@@ -39,7 +40,8 @@ public:
 	void add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag);
 	int remove(const std::shared_ptr<std::vector<unsigned char> >& e);
 	std::shared_ptr<std::vector<unsigned char> > remove(int index);
-	void clear();
+
+	void for_all_txn(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback);
 };
 
 #endif

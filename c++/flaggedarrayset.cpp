@@ -99,3 +99,9 @@ void FlaggedArraySet::clear() {
 	flag_count = 0; total = 0; offset = 0;
 	backingMap.clear(); backingReverseMap.clear();
 }
+
+void FlaggedArraySet::for_all_txn(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback) {
+	for (std::pair<const ElemAndFlag, uint64_t>& e : backingMap) {
+		callback(e.first.elem);
+	}
+}
