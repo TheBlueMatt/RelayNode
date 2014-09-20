@@ -348,7 +348,7 @@ int main(int argc, char** argv) {
 							for (auto it = clientList.begin(); it != clientList.end(); it++) {
 								if (!(*it)->disconnectFlags)
 									(*it)->receive_transaction(tx);
-								else
+								else if ((*it)->disconnectFlags & 2)
 									rmList.push_back(it);
 							}
 							localP2P->receive_transaction(bytes);
