@@ -101,7 +101,6 @@ void FlaggedArraySet::clear() {
 }
 
 void FlaggedArraySet::for_all_txn(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback) {
-	for (std::pair<const ElemAndFlag, uint64_t>& e : backingMap) {
-		callback(e.first.elem);
-	}
+	for (std::pair<const uint64_t, std::map<ElemAndFlag, uint64_t>::iterator>& e : backingReverseMap)
+		callback(e.second->first.elem);
 }

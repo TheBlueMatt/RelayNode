@@ -309,6 +309,7 @@ int main(int argc, char** argv) {
 
 	std::mutex list_mutex;
 	std::list<RelayNetworkClient*> clientList;
+	std::set<std::string> hostsConnected;
 	P2PClient *trustedP2P, *localP2P;
 
 	// You'll notice in the below callbacks that we have to do some header adding/removing
@@ -367,6 +368,7 @@ int main(int argc, char** argv) {
 
 							if (rmList.size()) {
 								for (auto& it : rmList) {
+									hostsConnected.erase((*it)->host);
 									delete *it;
 									clientList.erase(it);
 								}
@@ -478,10 +480,11 @@ int main(int argc, char** argv) {
 		}
 
 		std::string host = gethostname(&addr);
-		if (host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix))
+		std::lock_guard<std::mutex> lock(list_mutex);
+		if (hostsConnected.count(host) || (host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix)))
 			close(new_fd);
 		else {
-			std::lock_guard<std::mutex> lock(list_mutex);
+			hostsConnected.insert(host);
 			clientList.push_back(new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected));
 			fprintf(stderr, "Have %lu relay clients\n", clientList.size());
 		}
