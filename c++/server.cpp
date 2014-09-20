@@ -154,29 +154,39 @@ private:
 		}
 	}
 
+	bool in_initial_txn = false;
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		if (connected != 2)
 			return;
-		std::lock_guard<std::mutex> lock(send_mutex);
 
-		if (total_waiting_size > 4000000)
+		if (!in_initial_txn)
+			send_mutex.lock();
+
+		if (total_waiting_size > 4000000) {
+			if (!in_initial_txn)
+				send_mutex.unlock();
 			return disconnect_from_outside("total_waiting_size blew up :(");;
+		}
 
 		outbound_primary_queue.push_back(tx); // Have to strictly order all messages
 		total_waiting_size += tx->size();
-		cv.notify_all();
+
+		if (!in_initial_txn) {
+			cv.notify_all();
+			send_mutex.unlock();
+		}
 	}
 
 	void initial_txn_start() {
-		std::lock_guard<std::mutex> lock(send_mutex);
-		initial_outbound_throttle = true;
-		total_waiting_size += 1; // Wow this is bastardized
+		send_mutex.lock();
+		in_initial_txn = true;
 	}
 
 	void initial_txn_done() {
-		std::lock_guard<std::mutex> lock(send_mutex);
-		total_waiting_size -= 1;
+		initial_outbound_throttle = true;
+		in_initial_txn = false;
+		send_mutex.unlock();
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
@@ -425,7 +435,7 @@ int main(int argc, char** argv) {
 			if (insane) {
 				for (unsigned int i = 0; i < fullhash.size(); i++)
 					printf("%02x", fullhash[fullhash.size() - i - 1]);
-				printf(" INSANE %s UNTRUSTEDRELAY\n", insane);
+				printf(" INSANE %s UNTRUSTEDRELAY %s\n", insane, from->host.c_str());
 				return (struct timeval*)NULL;
 			}
 

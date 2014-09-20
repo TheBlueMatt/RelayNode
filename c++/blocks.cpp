@@ -80,14 +80,14 @@ const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<un
 			stepCount *= 2;
 		}
 
-		{ // This must come after all "DUPLICATE_TX" errors
+		if (memcmp(&(*merkle_hash_it), &hashlist[0][0], 32))
+			return "INVALID_MERKLE";
+
+		{ // This must come after all merkle-related errors
 			std::lock_guard<std::mutex> lock(hashes_mutex);
 			if (!hashesSeen.insert(hash).second)
 				return "SEEN";
 		}
-
-		if (memcmp(&(*merkle_hash_it), &hashlist[0][0], 32))
-			return "INVALID_MERKLE";
 
 		return NULL;
 	} catch (read_exception) {
