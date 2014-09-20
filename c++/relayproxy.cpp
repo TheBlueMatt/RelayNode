@@ -108,22 +108,19 @@ private:
 		if (read_all(sock, (char*)msg, message_size) < (int64_t)(message_size))
 			return reconnect("failed to read message data");
 
-		return provide_sock(sock);
+		provide_sock(sock);
+		return reconnect("provide_sock returned");
 	}
 
 public:
 	void receive_sock(int recv_sock) {
 		std::lock_guard<std::mutex> lock(send_mutex);
-		int pipes[2];
-		if (pipe(pipes))
-			exit(-42);
-		fcntl(recv_sock, F_SETFL, fcntl(recv_sock, F_GETFL) & ~O_NONBLOCK);
-		fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) & ~O_NONBLOCK);
+		char buff[0xffff];
 		while (true) {
-			ssize_t res = splice(recv_sock, NULL, pipes[1], NULL, 0xffff, SPLICE_F_MOVE);
-			if (res <= 0) { printf("Error splicing from recv_sock %d to pipe %d: %ld (%s)\n", recv_sock, pipes[1], res, strerror(errno)); continue; }
-			res = splice(pipes[0], NULL, sock, NULL, 0xffff, SPLICE_F_MOVE);
-			if (res <= 0) printf("Error splicing from pipe %d to sock %d: %ld (%s)\n", pipes[0], sock, res, strerror(errno));
+			ssize_t res = recv(recv_sock, buff, sizeof(buff), 0);
+			if (res <= 0) { printf("Error reading from recv_sock %d: %ld (%s)\n", recv_sock, res, strerror(errno)); return; }
+			res = send_all(sock, buff, res);
+			if (res <= 0) { printf("Error sending to sock %d: %ld (%s)\n", sock, res, strerror(errno)); return; }
 		}
 	}
 };
