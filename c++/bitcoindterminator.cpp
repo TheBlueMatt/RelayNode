@@ -276,14 +276,18 @@ int main(int argc, char** argv) {
 	addr.sin6_addr = in6addr_any;
 	addr.sin6_port = htons(8334);
 
-	if (bind(blockonly_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
+	int reuse = 1;
+
+	if (setsockopt(blockonly_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) ||
+			bind(blockonly_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
 			listen(blockonly_fd, 3) < 0) {
 		printf("Failed to bind 8334: %s\n", strerror(errno));
 		return -1;
 	}
 
 	addr.sin6_port = htons(8335);
-	if (bind(txes_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
+	if (setsockopt(txes_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) ||
+			bind(txes_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
 			listen(txes_fd, 3) < 0) {
 		printf("Failed to bind 8335: %s\n", strerror(errno));
 		return -1;

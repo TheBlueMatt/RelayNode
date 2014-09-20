@@ -301,7 +301,9 @@ int main(int argc, char** argv) {
 	addr.sin6_addr = in6addr_any;
 	addr.sin6_port = htons(8336);
 
-	if (bind(listen_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
+	int reuse = 1;
+	if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) ||
+			bind(listen_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0 ||
 			listen(listen_fd, 3) < 0) {
 		printf("Failed to bind 8336: %s\n", strerror(errno));
 		return -1;
