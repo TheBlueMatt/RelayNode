@@ -23,22 +23,20 @@ targets = $(addprefix relaynetwork,client server terminator proxy outbound)
 all: $(targets)
 
 relaynetworkclient: $(common_objs) client.o
-	$(CXX) $^ -o $@
 
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 	$(MINGW_CXX) $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc -lwsock32 -lmingwthrd -lws2_32 $^ -o $@
 
 relaynetworkserver: $(common_objs) server.o
-	$(CXX) $^ -o $@
 
 relaynetworkterminator: $(common_objs) bitcoindterminator.o
-	$(CXX) $^ -o $@
 
 relaynetworkproxy: $(common_objs) relayproxy.o
-	$(CXX) $^ -o $@
 
 relaynetworkoutbound: $(common_objs) p2poutbound.o
-	$(CXX) $^ -o $@
+
+relaynetwork%:
+	$(CXX) $(LDFLAGS) $^ -o $@
 
 clean:
 	rm -f *.o *~ *.exe $(targets)
