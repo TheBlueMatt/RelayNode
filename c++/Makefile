@@ -18,7 +18,7 @@ UNIX_CXXFLAGS := -pthread -I/usr/include
 CXXFLAGS := $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
 
 # list of all targets
-targets = $(addprefix relaynetwork,client server terminator proxy outbound)
+targets = $(addprefix relaynetwork,client terminator proxy outbound)
 
 all: $(targets)
 
