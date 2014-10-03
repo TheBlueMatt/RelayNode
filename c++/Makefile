@@ -39,4 +39,4 @@ relaynetwork%:
 	$(CXX) $(LDFLAGS) $^ -o $@
 
 clean:
-	rm -f *.o *~ *.exe $(targets)
+	rm -f *.o crypto/*.o crypto/*~ *~ *.exe $(targets)
