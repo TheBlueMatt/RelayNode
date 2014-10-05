@@ -20,7 +20,9 @@ CXXFLAGS := $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
 # list of all targets
 targets = $(addprefix relaynetwork,client terminator proxy outbound)
 
-all: $(targets)
+all: $(filter %client,$(targets))
+
+all-targets: $(targets)
 
 relaynetworkclient: $(common_objs) client.o
 
