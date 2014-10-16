@@ -15,8 +15,8 @@ endif
 COMMON_CXXFLAGS += -std=c++11 -Wall
 UNIX_CXXFLAGS := -I/usr/include
 
-CXXFLAGS := $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
-LDFLAGS := -pthread
+CXXFLAGS += $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
+LDFLAGS += -pthread
 
 # list of all targets
 targets = $(addprefix relaynetwork,client terminator proxy outbound)
