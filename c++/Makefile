@@ -13,10 +13,10 @@ else
 endif
 
 COMMON_CXXFLAGS += -std=c++11 -Wall
-UNIX_CXXFLAGS := -pthread -I/usr/include
+UNIX_CXXFLAGS := -I/usr/include
 
 CXXFLAGS := $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
-
+LDFLAGS := -pthread
 
 # list of all targets
 targets = $(addprefix relaynetwork,client terminator proxy outbound)
@@ -39,7 +39,7 @@ relaynetworkproxy: $(common_objs) relayproxy.o
 relaynetworkoutbound: $(common_objs) p2poutbound.o
 
 relaynetwork%:
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
 clean:
 	rm -f *.o crypto/*.o crypto/*~ *~ *.exe $(targets)
