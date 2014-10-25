@@ -177,6 +177,10 @@ private:
 				CSHA256 hash; // Probably not BE-safe
 				hash.Write(&(*std::get<1>(res))[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
 				hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+				struct tm tm;
+				time_t now = time(NULL);
+				gmtime_r(&now, &tm);
+				printf("[%d-%02d-%02d %02d:%02d:%02d+00] ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 				for (unsigned int i = 0; i < fullhash.size(); i++)
 					printf("%02x", fullhash[fullhash.size() - i - 1]);
 				printf(" recv'd, size %lu with %u bytes on the wire\n", (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
