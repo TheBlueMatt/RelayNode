@@ -12,6 +12,11 @@ else
   COMMON_CXXFLAGS += -DNDEBUG -O2 -flto
 endif
 
+platform ?= linux
+ifeq ($(platform),bsd)
+  COMMON_CXXFLAGS += -DX86_BSD
+endif
+
 COMMON_CXXFLAGS += -std=c++11 -Wall
 UNIX_CXXFLAGS := -I/usr/include
 
@@ -19,7 +24,7 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
 LDFLAGS += -pthread
 
 # list of all targets
-targets = $(addprefix relaynetwork,client terminator proxy outbound)
+targets = $(addprefix relaynetwork,client terminator proxy outbound) relaynetworkclient.exe
 
 all: $(filter %client,$(targets))
 
@@ -28,7 +33,7 @@ all-targets: $(targets)
 relaynetworkclient: $(common_objs) client.o
 
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
-	$(MINGW_CXX) $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc -lwsock32 -lmingwthrd -lws2_32 $^ -o $@
+	$(MINGW_CXX) $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
 relaynetworkserver: $(common_objs) server.o
 
