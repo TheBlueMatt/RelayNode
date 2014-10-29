@@ -1,19 +1,29 @@
 # all common objects that need to be build for all targets except for windows version
 common_objs := flaggedarrayset.o utils.o p2pclient.o ./crypto/sha2.o
 
+CXX=c++
+
 MINGW_CXX = i686-w64-mingw32-g++
 
 COMMON_CXXFLAGS := -I.
+
+UNAME_S := $(shell uname -s)
 
 variant ?= production
 ifeq ($(variant),test)
   COMMON_CXXFLAGS += -DFOR_VALGRIND -g
 else
-  COMMON_CXXFLAGS += -DNDEBUG -O2 -flto
+  COMMON_CXXFLAGS += -DNDEBUG -O2
 endif
 
 platform ?= linux
-ifeq ($(platform),bsd)
+ifeq ($(UNAME_S),Linux)
+  COMMON_CXXFLAGS += -flto
+endif
+ifeq ($(UNAME_S),Darwin)
+  COMMON_CXXFLAGS += -flto -DX86_BSD
+endif
+ifeq ($(UNAME_S),FreeBSD)
   COMMON_CXXFLAGS += -DX86_BSD
 endif
 

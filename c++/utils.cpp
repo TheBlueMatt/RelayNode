@@ -3,6 +3,9 @@
 
 #include <vector>
 #include <string.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/errno.h>
 
 #ifdef WIN32
 	// MinGW doesnt have this line (copied from Wine) for licensing reasons
@@ -10,10 +13,59 @@
 	#include <winsock2.h>
 	#include <ws2tcpip.h>
 #else // WIN32
+	#include <arpa/inet.h>
+	#include <netinet/in.h>
 	#include <netinet/tcp.h>
 	#include <netdb.h>
 	#include <fcntl.h>
+	#include <sys/socket.h>
 #endif // !WIN32
+
+#if defined(__APPLE__) && defined(__MACH__)
+#define MSG_NOSIGNAL 0
+
+uint16_t
+htole16 (uint16_t n)
+{
+  uint16_t r;
+  uint8_t * p = (uint8_t *) &r;
+  p[0] = n & 0xff;
+  p[1] = n >> 8;
+  return r;
+}
+
+uint32_t
+htole32 (uint32_t n)
+{
+  uint32_t r;
+  uint8_t * p = (uint8_t *) &r;
+  p[0] = (n >> 0)  & 0xff;
+  p[1] = (n >> 8)  & 0xff;
+  p[2] = (n >> 16) & 0xff;
+  p[3] = (n >> 24) & 0xff;
+  return r;
+}
+
+uint64_t
+htole64 (uint64_t n)
+{
+  uint64_t r;
+  uint8_t * p = (uint8_t *) &r;
+  int i;
+  for (i=0; i < 8; i++) {
+    p[i] = (n >> (8*i)) & 0xff;
+  }
+  return r;
+}
+
+uint32_t
+le32toh (uint32_t n)
+{
+  uint8_t * p = (uint8_t *) &n;
+  return (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];
+}
+
+#endif
 
 /***************************
  **** Varint processing ****
@@ -31,13 +83,13 @@ uint64_t read_varint(std::vector<unsigned char>::const_iterator& it, const std::
 		return first;
 	else if (first == 0xfd) {
 		move_forward(it, 2, end);
-		return le16toh((*(it-1) << 8) | *(it-2));
+		return ((*(it-1) << 8) | *(it-2));
 	} else if (first == 0xfe) {
 		move_forward(it, 4, end);
-		return le32toh((*(it-1) << 24) | (*(it-2) << 16) | (*(it-3) << 8) | *(it-4));
+		return ((*(it-1) << 24) | (*(it-2) << 16) | (*(it-3) << 8) | *(it-4));
 	} else {
 		move_forward(it, 8, end);
-		return  le64toh((uint64_t(*(it-1)) << 56) |
+		return ((uint64_t(*(it-1)) << 56) |
 						(uint64_t(*(it-2)) << 48) |
 						(uint64_t(*(it-3)) << 40) |
 						(uint64_t(*(it-4)) << 32) |
@@ -96,10 +148,14 @@ ssize_t send_all(int filedes, const char *buf, size_t nbyte) {
 	size_t total = 0;
 	while (total < nbyte && (count = send(filedes, buf + total, nbyte-total, MSG_NOSIGNAL)) > 0)
 		total += count;
-	if (count <= 0)
+	if (count == 0) {
 		return count;
-	else
+	} else if (count < 0) {
+		fprintf (stderr, "send failed: (%d: %s)\n", errno, strerror (errno));
+		return count;
+	} else {
 		return total;
+	}
 }
 
 std::string gethostname(struct sockaddr_in6 *addr) {
@@ -123,20 +179,43 @@ bool lookup_address(const char* addr, struct sockaddr_in6* res) {
 	hints.ai_family = AF_INET6;
 
 	int gaires = getaddrinfo(addr, NULL, &hints, &server);
-	if (gaires) {
+	if (gaires == EAI_BADFLAGS) {
+		// FreeBSD still does not implement AI_V4MAPPED
+		hints.ai_flags = 0;
+		hints.ai_family = AF_INET;
+		gaires = getaddrinfo(addr, NULL, &hints, &server);
+		if (gaires) {
+			printf("Unable to lookup hostname: %d (%s)\n", gaires, gai_strerror(gaires));
+			return false;
+		} else {
+			struct sockaddr_in * in4 = (struct sockaddr_in *)server->ai_addr;
+			uint8_t * p4 = (uint8_t *) &(in4->sin_addr);
+			uint8_t * p6 = (uint8_t *) &(res->sin6_addr);
+			for (int i=0; i < 10; i++) {
+				p6[i] = 0x00;
+			}
+			p6[10] = 0xff;
+			p6[11] = 0xff;
+			for (int i=0; i < 4; i++) {
+				p6[12+i] = p4[i];
+			}
+			res->sin6_family = AF_INET6;
+			return true;
+		}
+	} else if (gaires) {
 		printf("Unable to lookup hostname: %d (%s)\n", gaires, gai_strerror(gaires));
+		freeaddrinfo(server);
 		return false;
+	} else if (server->ai_addrlen != sizeof(*res)) {
+		freeaddrinfo(server);
+		return false;
+	} else {
+		memset((void*)res, 0, sizeof(*res));
+		res->sin6_family = AF_INET6;
+		res->sin6_addr = ((struct sockaddr_in6*)server->ai_addr)->sin6_addr;
+		freeaddrinfo(server);
+		return true;
 	}
-
-	if (server->ai_addrlen != sizeof(*res))
-		return false;
-
-	memset((void*)res, 0, sizeof(*res));
-	res->sin6_family = AF_INET6;
-	res->sin6_addr = ((struct sockaddr_in6*)server->ai_addr)->sin6_addr;
-
-	freeaddrinfo(server);
-	return true;
 }
 
 void prepare_message(const char* command, unsigned char* headerAndData, size_t datalen) {
