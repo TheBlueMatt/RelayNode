@@ -36,13 +36,11 @@
 	#define MSG_NOSIGNAL 0
 #elif (defined(__APPLE__) && defined(__MACH__))
 #include <sys/param.h>
-	#if defined(BSD)
 	uint16_t htole16 (uint16_t n);
 	uint32_t htole32 (uint32_t n);
 	uint64_t htole64 (uint64_t n);
 	uint32_t le32toh (uint32_t n);
-	#endif
-#elif defined(__BSD__)
+#elif defined(__FreeBSD__)
 	#include <sys/endian.h>
 #else
 	#include <endian.h>
