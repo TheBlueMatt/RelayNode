@@ -6,11 +6,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <stdio.h>
 
 #ifdef WIN32
 	#include <winsock2.h>
 	#include <ws2tcpip.h>
 #else // WIN32
+	#include <sys/socket.h>
+	#include <netinet/in.h>
 	#include <netinet/tcp.h>
 	#include <netdb.h>
 	#include <fcntl.h>
