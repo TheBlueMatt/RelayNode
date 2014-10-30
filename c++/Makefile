@@ -24,9 +24,9 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
 LDFLAGS += -pthread
 
 # list of all targets
-targets = $(addprefix relaynetwork,client terminator proxy outbound) relaynetworkclient.exe
+targets = $(addprefix relaynetwork,client terminator proxy outbound server) relaynetworkclient.exe
 
-all: $(filter %client,$(targets))
+all: relaynetworkclient
 
 all-targets: $(targets)
 
@@ -35,7 +35,7 @@ relaynetworkclient: $(common_objs) client.o
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 	$(MINGW_CXX) $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
-relaynetworkserver: $(common_objs) server.o
+relaynetworkserver: $(common_objs) blocks.o server.o
 
 relaynetworkterminator: $(common_objs) bitcoindterminator.o
 
