@@ -1,7 +1,7 @@
 # all common objects that need to be build for all targets except for windows version
 common_objs := flaggedarrayset.o utils.o p2pclient.o ./crypto/sha2.o
 
-MINGW_CXX = i686-w64-mingw32-g++
+MINGW_PREFIX := i686-w64-mingw32
 
 COMMON_CXXFLAGS := -I.
 
@@ -33,7 +33,7 @@ all-targets: $(targets)
 relaynetworkclient: $(common_objs) client.o
 
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
-	$(MINGW_CXX) $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
+	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
 relaynetworkserver: $(common_objs) blocks.o server.o
 
@@ -45,6 +45,10 @@ relaynetworkoutbound: $(common_objs) p2poutbound.o
 
 relaynetwork%:
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
+
+install: relaynetworkclient relaynetworkclient.exe
+	install -s relaynetworkclient ../client/
+	install -s --strip-program=$(MINGW_PREFIX)-strip relaynetworkclient.exe ../client/
 
 clean:
 	rm -f *.o crypto/*.o crypto/*~ *~ *.exe $(targets)
