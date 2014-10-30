@@ -82,17 +82,15 @@ const char* is_block_sane(const std::vector<unsigned char>& hash, std::vector<un
 
 		if (memcmp(&(*merkle_hash_it), &hashlist[0][0], 32))
 			return "INVALID_MERKLE";
-
-		{ // This must come after all merkle-related errors
-			std::lock_guard<std::mutex> lock(hashes_mutex);
-			if (!hashesSeen.insert(hash).second)
-				return "SEEN";
-		}
-
-		return NULL;
 	} catch (read_exception) {
 		return "INVALID_SIZE";
 	}
+
+	// This must come after all merkle-related errors
+	std::lock_guard<std::mutex> lock(hashes_mutex);
+	if (!hashesSeen.insert(hash).second)
+		return "SEEN";
+	return NULL;
 }
 
 bool recv_headers_msg_from_trusted(const std::vector<unsigned char> headers) {

@@ -19,7 +19,7 @@
 void P2PRelayer::reconnect(std::string disconnectReason) {
 	connected = false;
 	if (sock) {
-		printf("Closing bitcoind socket, %s (%i: %s)\n", disconnectReason.c_str(), errno, errno ? strerror(errno) : "");
+		printf("Closing bitcoind socket with %s, %s (%i: %s)\n", server_host, disconnectReason.c_str(), errno, errno ? strerror(errno) : "");
 		#ifndef WIN32
 			errno = 0;
 		#endif
