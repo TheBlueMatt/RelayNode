@@ -1,6 +1,7 @@
 #include <map>
 #include <vector>
 #include <thread>
+#include <chrono>
 #include <mutex>
 
 #include <assert.h>
@@ -356,26 +357,14 @@ int main(int argc, char** argv) {
 														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						std::list<std::list<RelayNetworkClient*>::iterator> rmList;
 						auto tx = compressor.get_relay_transaction(bytes);
 						if (tx.use_count()) {
 							std::lock_guard<std::mutex> lock(list_mutex);
 							for (auto it = clientList.begin(); it != clientList.end(); it++) {
 								if (!(*it)->disconnectFlags)
 									(*it)->receive_transaction(tx);
-								else if ((*it)->disconnectFlags & 2)
-									rmList.push_back(it);
 							}
 							localP2P->receive_transaction(bytes);
-
-							if (rmList.size()) {
-								for (auto& it : rmList) {
-									hostsConnected.erase((*it)->host);
-									delete *it;
-									clientList.erase(it);
-								}
-								fprintf(stderr, "Have %lu relay clients\n", clientList.size());
-							}
 						}
 					},
 					[&](std::vector<unsigned char>& bytes) {
@@ -471,6 +460,25 @@ int main(int argc, char** argv) {
 		[&](RelayNetworkClient* client) {
 			compressor.relay_node_connected(client);
 		};
+
+	std::thread([&](void) {
+		while (true) {
+			std::this_thread::sleep_for(std::chrono::seconds(10)); // Implicit new-connection rate-limit
+			{
+				std::lock_guard<std::mutex> lock(list_mutex);
+				std::list<std::list<RelayNetworkClient*>::iterator> rmList;
+				for (auto it = clientList.begin(); it != clientList.end(); it++)
+					if (((*it)->disconnectFlags & 2) == 2)
+						rmList.push_back(it);
+				for (auto it : rmList) {
+					hostsConnected.erase((*it)->host);
+					delete *it;
+					clientList.erase(it);
+					fprintf(stderr, "Have %lu relay clients\n", clientList.size());
+				}
+			}
+		}
+		}).detach();
 
 	std::string droppostfix(".uptimerobot.com");
 	socklen_t addr_size = sizeof(addr);
