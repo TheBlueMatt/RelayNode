@@ -24,11 +24,14 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
 LDFLAGS += -pthread
 
 # list of all targets
-targets = $(addprefix relaynetwork,client terminator proxy outbound server) relaynetworkclient.exe
+NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server)
+WINDOWS_TARGETS = relaynetworkclient.exe
 
 all: relaynetworkclient
 
-all-targets: $(targets)
+all-targets: $(NATIVE_TARGETS) $(WINDOWS_TARGETS)
+
+server-targets: $(NATIVE_TARGETS)
 
 relaynetworkclient: $(common_objs) client.o
 
