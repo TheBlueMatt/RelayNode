@@ -27,26 +27,26 @@ char* location;
 /************************
  **** P2P Connection ****
  ************************/
-class P2PRelayer {
+class P2PConnection {
 private:
-	const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> provide_block;
-	const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
+	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> provide_block;
+	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
 	SERVER_DECLARE_CLASS_VARS
 
 public:
-	P2PRelayer(int sockIn, std::string hostIn,
-				const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)>& provide_block_in,
-				const std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
+	P2PConnection(int sockIn, std::string hostIn,
+				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)>& provide_block_in,
+				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
 			: provide_block(provide_block_in), provide_transaction(provide_transaction_in),
 		SERVER_DECLARE_CONSTRUCTOR_EXTENDS_AND_BODY
 	}
 
-	~P2PRelayer() {
+	~P2PConnection() {
 		SERVER_DECLARE_DESTRUCTOR
 	}
 
-	SERVER_DECLARE_FUNCTIONS(P2PRelayer)
+	SERVER_DECLARE_FUNCTIONS(P2PConnection)
 
 private:
 	void net_process() {
@@ -294,12 +294,12 @@ int main(int argc, char** argv) {
 	}
 
 	std::mutex list_mutex;
-	std::set<P2PRelayer*> blockSet;
-	std::set<P2PRelayer*> txesSet;
-	std::set<P2PRelayer*> localSet;
+	std::set<P2PConnection*> blockSet;
+	std::set<P2PConnection*> txesSet;
+	std::set<P2PConnection*> localSet;
 
-	std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> relayBlock =
-		[&](P2PRelayer* from, std::shared_ptr<std::vector<unsigned char>> & bytes, struct timeval start_recv) {
+	std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> relayBlock =
+		[&](P2PConnection* from, std::shared_ptr<std::vector<unsigned char>> & bytes, struct timeval start_recv) {
 			struct timeval start_send, finish_send;
 			gettimeofday(&start_send, NULL);
 
@@ -312,7 +312,7 @@ int main(int argc, char** argv) {
 
 			{
 				std::lock_guard<std::mutex> lock(list_mutex);
-				std::set<P2PRelayer*> *set;
+				std::set<P2PConnection*> *set;
 				if (localSet.count(from))
 					set = &blockSet;
 				else
@@ -331,15 +331,15 @@ int main(int argc, char** argv) {
 					int64_t(start_send.tv_sec - start_recv.tv_sec)*1000 + (int64_t(start_send.tv_usec) - start_recv.tv_usec)/1000,
 					int64_t(finish_send.tv_sec - start_send.tv_sec)*1000 + (int64_t(finish_send.tv_usec) - start_send.tv_usec)/1000);
 		};
-	std::function<void (P2PRelayer*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
-		[&](P2PRelayer* from, std::shared_ptr<std::vector<unsigned char> >& bytes) {
+	std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
+		[&](P2PConnection* from, std::shared_ptr<std::vector<unsigned char> >& bytes) {
 			std::vector<unsigned char> fullhash(32);
 			CSHA256 hash; // Probably not BE-safe
 			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], bytes->size() - sizeof(struct bitcoin_msg_header)).Finalize(&fullhash[0]);
 			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
 
 			std::lock_guard<std::mutex> lock(list_mutex);
-			std::set<P2PRelayer*> *set;
+			std::set<P2PConnection*> *set;
 			if (localSet.count(from))
 				set = &txesSet;
 			else
@@ -378,7 +378,7 @@ int main(int argc, char** argv) {
 				close(new_fd);
 			else {
 				std::lock_guard<std::mutex> lock(list_mutex);
-				P2PRelayer *relay = new P2PRelayer(new_fd, host, relayBlock, relayTx);
+				P2PConnection *relay = new P2PConnection(new_fd, host, relayBlock, relayTx);
 				if (!host.compare(0, localhost.size(), localhost))
 					localSet.insert(relay);
 				else
@@ -396,7 +396,7 @@ int main(int argc, char** argv) {
 				close(new_fd);
 			else {
 				std::lock_guard<std::mutex> lock(list_mutex);
-				P2PRelayer *relay = new P2PRelayer(new_fd, host, relayBlock, relayTx);
+				P2PConnection *relay = new P2PConnection(new_fd, host, relayBlock, relayTx);
 				if (!host.compare(0, localhost.size(), localhost))
 					localSet.insert(relay);
 				else {
