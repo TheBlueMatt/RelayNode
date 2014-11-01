@@ -284,8 +284,8 @@ private:
 
 
 int main(int argc, char** argv) {
-	if (argc != 3) {
-		printf("USAGE: %s trusted_host trusted_port\n", argv[0]);
+	if (argc != 3 && argc != 4) {
+		printf("USAGE: %s trusted_host trusted_port [::ffff:whitelisted prefix string]\n", argv[0]);
 		return -1;
 	}
 
@@ -481,6 +481,9 @@ int main(int argc, char** argv) {
 		}).detach();
 
 	std::string droppostfix(".uptimerobot.com");
+	std::string whitelistprefix("NOT AN ADDRESS");
+	if (argc == 4)
+		whitelistprefix = argv[3];
 	socklen_t addr_size = sizeof(addr);
 	while (true) {
 		int new_fd;
@@ -491,7 +494,8 @@ int main(int argc, char** argv) {
 
 		std::string host = gethostname(&addr);
 		std::lock_guard<std::mutex> lock(list_mutex);
-		if (hostsConnected.count(host) || (host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix)))
+		if ((hostsConnected.count(host) && host.compare(0, whitelistprefix.length(), whitelistprefix) != 0) ||
+				(host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix)))
 			close(new_fd);
 		else {
 			hostsConnected.insert(host);
