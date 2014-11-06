@@ -360,7 +360,7 @@ int main(int argc, char** argv) {
 		timeout.tv_usec = 0;
 
 		if (select(FD_SETSIZE, &twofds, NULL, NULL, &timeout) < 0) {
-			printf("Failed to select\n");
+			printf("Failed to select (%s)\n", strerror(errno));
 			return -1;
 		}
 

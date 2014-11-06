@@ -488,7 +488,7 @@ int main(int argc, char** argv) {
 	while (true) {
 		int new_fd;
 		if ((new_fd = accept(listen_fd, (struct sockaddr *) &addr, &addr_size)) < 0) {
-			printf("Failed to select\n");
+			printf("Failed to select (%d: %s)\n", new_fd, strerror(errno));
 			return -1;
 		}
 
