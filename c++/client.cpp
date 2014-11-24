@@ -187,7 +187,7 @@ private:
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
 				if (message_size > MAX_RELAY_TRANSACTION_BYTES && (recv_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || message_size > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)) {
-					printf("Freely relayed tx of size %u, with %u oversize txn already present\n", message_size, recv_tx_cache.flagCount());
+					printf("Freely relayed tx of size %u, with %lu oversize txn already present\n", message_size, recv_tx_cache.flagCount());
 					return reconnect("got freely relayed transaction too large");
 				}
 
