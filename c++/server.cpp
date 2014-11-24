@@ -234,7 +234,7 @@ public:
 				(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
 					(send_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)))
 			return std::shared_ptr<std::vector<unsigned char> >();
-		send_tx_cache.add(tx, tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES);
+		send_tx_cache.add(tx, tx->size() > MAX_RELAY_TRANSACTION_BYTES);
 		return tx_to_msg(tx);
 	}
 
