@@ -471,10 +471,10 @@ int main(int argc, char** argv) {
 					if (((*it)->disconnectFlags & 2) == 2)
 						rmList.push_back(it);
 				for (auto it : rmList) {
+					fprintf(stderr, "Culled %s, have %lu relay clients\n", (*it)->host.c_str(), clientList.size() - 1);
 					hostsConnected.erase((*it)->host);
 					delete *it;
 					clientList.erase(it);
-					fprintf(stderr, "Have %lu relay clients\n", clientList.size());
 				}
 			}
 		}
@@ -500,7 +500,7 @@ int main(int argc, char** argv) {
 		else {
 			hostsConnected.insert(host);
 			clientList.push_back(new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected));
-			fprintf(stderr, "Have %lu relay clients\n", clientList.size());
+			fprintf(stderr, "New connection from %s, have %lu relay clients\n", host.c_str(), clientList.size());
 		}
 	}
 }
