@@ -54,4 +54,4 @@ install: relaynetworkclient relaynetworkclient.exe
 	install -s --strip-program=$(MINGW_PREFIX)-strip relaynetworkclient.exe ../client/
 
 clean:
-	rm -f *.o crypto/*.o crypto/*~ *~ *.exe $(targets)
+	rm -f *.o crypto/*.o crypto/*~ *~ *.exe $(NATIVE_TARGETS) $(WINDOWS_TARGETS)
