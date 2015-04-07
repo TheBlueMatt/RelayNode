@@ -45,10 +45,9 @@ public: \
 #define SERVER_DECLARE_FUNCTIONS(CLASS) \
 private: \
 	void disconnect_from_outside(const char* reason) { \
-		if (disconnectFlags.fetch_or(1) & 1) \
+		if (disconnectFlags.fetch_or(8) & 8) \
 			return; \
  \
-		disconnectFlags.fetch_or(8); \
 		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno)); \
 		close(sock); \
 	} \
