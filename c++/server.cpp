@@ -42,6 +42,8 @@ private:
 	SERVER_DECLARE_CLASS_VARS
 
 public:
+	time_t lastDupConnect = 0;
+
 	RelayNetworkClient(int sockIn, std::string hostIn,
 						const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
@@ -310,9 +312,8 @@ int main(int argc, char** argv) {
 		return -1;
 	}
 
-	std::mutex list_mutex;
-	std::list<RelayNetworkClient*> clientList;
-	std::set<std::string> hostsConnected;
+	std::mutex map_mutex;
+	std::map<std::string, RelayNetworkClient*> clientMap;
 	P2PClient *trustedP2P, *localP2P;
 
 	// You'll notice in the below callbacks that we have to do some header adding/removing
@@ -338,10 +339,10 @@ int main(int argc, char** argv) {
 
 						auto block = compressor.compress_block(fullhash, bytes);
 						if (block.use_count()) {
-							std::lock_guard<std::mutex> lock(list_mutex);
-							for (RelayNetworkClient* client : clientList) {
-								if (!client->disconnectFlags)
-									client->receive_block(block);
+							std::lock_guard<std::mutex> lock(map_mutex);
+							for (const auto& client : clientMap) {
+								if (!client.second->disconnectFlags)
+									client.second->receive_block(block);
 							}
 						}
 						localP2P->receive_block(bytes);
@@ -359,10 +360,10 @@ int main(int argc, char** argv) {
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						auto tx = compressor.get_relay_transaction(bytes);
 						if (tx.use_count()) {
-							std::lock_guard<std::mutex> lock(list_mutex);
-							for (auto it = clientList.begin(); it != clientList.end(); it++) {
-								if (!(*it)->disconnectFlags)
-									(*it)->receive_transaction(tx);
+							std::lock_guard<std::mutex> lock(map_mutex);
+							for (const auto& client : clientMap) {
+								if (!client.second->disconnectFlags)
+									client.second->receive_transaction(tx);
 							}
 							localP2P->receive_transaction(bytes);
 						}
@@ -394,10 +395,10 @@ int main(int argc, char** argv) {
 
 						auto block = compressor.compress_block(fullhash, bytes);
 						if (block.use_count()) {
-							std::lock_guard<std::mutex> lock(list_mutex);
-							for (RelayNetworkClient* client : clientList) {
-								if (!client->disconnectFlags)
-									client->receive_block(block);
+							std::lock_guard<std::mutex> lock(map_mutex);
+							for (const auto& client : clientMap) {
+								if (!client.second->disconnectFlags)
+									client.second->receive_block(block);
 							}
 						}
 						localP2P->receive_block(bytes);
@@ -434,10 +435,10 @@ int main(int argc, char** argv) {
 
 			auto block = compressor.compress_block(fullhash, *bytes);
 			if (block.use_count()) {
-				std::lock_guard<std::mutex> lock(list_mutex);
-				for (RelayNetworkClient* client : clientList) {
-					if (!client->disconnectFlags)
-						client->receive_block(block);
+				std::lock_guard<std::mutex> lock(map_mutex);
+				for (const auto& client : clientMap) {
+					if (!client.second->disconnectFlags)
+						client.second->receive_block(block);
 				}
 			}
 
@@ -465,16 +466,14 @@ int main(int argc, char** argv) {
 		while (true) {
 			std::this_thread::sleep_for(std::chrono::seconds(10)); // Implicit new-connection rate-limit
 			{
-				std::lock_guard<std::mutex> lock(list_mutex);
-				std::list<std::list<RelayNetworkClient*>::iterator> rmList;
-				for (auto it = clientList.begin(); it != clientList.end(); it++)
-					if (((*it)->disconnectFlags & 2) == 2)
-						rmList.push_back(it);
-				for (auto it : rmList) {
-					fprintf(stderr, "%lld: Culled %s, have %lu relay clients\n", (long long) time(NULL), (*it)->host.c_str(), clientList.size() - 1);
-					hostsConnected.erase((*it)->host);
-					delete *it;
-					clientList.erase(it);
+				std::lock_guard<std::mutex> lock(map_mutex);
+				for (auto it = clientMap.begin(); it != clientMap.end();) {
+					if ((it->second->disconnectFlags & 2) == 2) {
+						fprintf(stderr, "%lld: Culled %s, have %lu relay clients\n", (long long) time(NULL), it->first.c_str(), clientMap.size() - 1);
+						delete it->second;
+						clientMap.erase(it++);
+					} else
+						it++;
 				}
 			}
 		}
@@ -493,14 +492,21 @@ int main(int argc, char** argv) {
 		}
 
 		std::string host = gethostname(&addr);
-		std::lock_guard<std::mutex> lock(list_mutex);
-		if ((hostsConnected.count(host) && host.compare(0, whitelistprefix.length(), whitelistprefix) != 0) ||
-				(host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix)))
+		std::lock_guard<std::mutex> lock(map_mutex);
+		if ((clientMap.count(host) && host.compare(0, whitelistprefix.length(), whitelistprefix) != 0) ||
+				(host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix))) {
+			if (clientMap.count(host)) {
+				const auto& client = clientMap[host];
+				if (client->lastDupConnect < (time(NULL) - 60)) {
+					client->lastDupConnect = time(NULL);
+					fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %d)\n", (long long) time(NULL), host.c_str(), client->disconnectFlags.load());
+				}
+			}
 			close(new_fd);
-		else {
-			hostsConnected.insert(host);
-			clientList.push_back(new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected));
-			fprintf(stderr, "%lld: New connection from %s, have %lu relay clients\n", (long long) time(NULL), host.c_str(), clientList.size());
+		} else {
+			assert(clientMap.count(host) == 0);
+			clientMap[host] = new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected);
+			fprintf(stderr, "%lld: New connection from %s, have %lu relay clients\n", (long long) time(NULL), host.c_str(), clientMap.size());
 		}
 	}
 }
