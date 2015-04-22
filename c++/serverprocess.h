@@ -10,7 +10,8 @@
 #define DISCONNECT_STARTED 1
 #define DISCONNECT_PRINT_AND_CLOSE 2
 #define DISCONNECT_FROM_WRITE_THREAD 4
-#define DISCONNECT_COMPLETE 8
+#define DISCONNECT_FROM_READ_THREAD 8
+#define DISCONNECT_COMPLETE 16
 
 #define SERVER_DECLARE_CLASS_VARS \
 private: \
@@ -40,10 +41,14 @@ public: \
 		write_thread = new std::thread(do_write, this); \
 
 #define SERVER_DECLARE_DESTRUCTOR \
+	assert(DISCONNECT_COMPLETE); \
 	if (disconnectFlags & DISCONNECT_FROM_WRITE_THREAD) \
 		write_thread->join(); \
-	else \
+	else if (disconnectFlags & DISCONNECT_FROM_READ_THREAD)\
 		read_thread->join(); \
+	else \
+		assert(!"DISCONNECT_COMPLETE set but not from either thread?"); \
+	close(sock); \
 	delete read_thread; \
 	delete write_thread;
 
@@ -54,7 +59,7 @@ private: \
 			return; \
  \
 		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno)); \
-		close(sock); \
+		shutdown(sock, SHUT_RDWR); \
 	} \
  \
 	void disconnect(const char* reason) { \
@@ -63,14 +68,16 @@ private: \
  \
 		if (!(disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)) { \
 			printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno)); \
-			close(sock); \
+			shutdown(sock, SHUT_RDWR); \
 		} \
  \
 		if (std::this_thread::get_id() != read_thread->get_id()) { \
-			read_thread->join(); \
 			disconnectFlags |= DISCONNECT_FROM_WRITE_THREAD; \
+			read_thread->join(); \
 		} else { \
+			disconnectFlags |= DISCONNECT_FROM_READ_THREAD; \
 			{ \
+				/* Wake up the write thread */ \
 				std::lock_guard<std::mutex> lock(send_mutex); \
 				outbound_secondary_queue.push_back(std::make_shared<std::vector<unsigned char> >(1)); \
 				cv.notify_all(); \
@@ -107,6 +114,9 @@ private: \
 				std::unique_lock<std::mutex> write_lock(send_mutex); \
 				while (!outbound_secondary_queue.size() && !outbound_primary_queue.size()) \
 					cv.wait(write_lock); \
+ \
+				if (disconnectFlags) \
+					return disconnect("disconnect started elsewhere"); \
  \
 				if (outbound_primary_queue.size()) { \
 					msg = outbound_primary_queue.front(); \
