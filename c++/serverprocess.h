@@ -7,6 +7,11 @@
 
 #include "mruset.h"
 
+#define DISCONNECT_STARTED 1
+#define DISCONNECT_PRINT_AND_CLOSE 2
+#define DISCONNECT_FROM_WRITE_THREAD 4
+#define DISCONNECT_COMPLETE 8
+
 #define SERVER_DECLARE_CLASS_VARS \
 private: \
 	const int sock; \
@@ -35,7 +40,7 @@ public: \
 		write_thread = new std::thread(do_write, this); \
 
 #define SERVER_DECLARE_DESTRUCTOR \
-	if (disconnectFlags & 4) \
+	if (disconnectFlags & DISCONNECT_FROM_WRITE_THREAD) \
 		write_thread->join(); \
 	else \
 		read_thread->join(); \
@@ -45,7 +50,7 @@ public: \
 #define SERVER_DECLARE_FUNCTIONS(CLASS) \
 private: \
 	void disconnect_from_outside(const char* reason) { \
-		if (disconnectFlags.fetch_or(8) & 8) \
+		if (disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE) \
 			return; \
  \
 		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno)); \
@@ -53,17 +58,17 @@ private: \
 	} \
  \
 	void disconnect(const char* reason) { \
-		if (disconnectFlags.fetch_or(1) & 1) \
+		if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED) \
 			return; \
  \
-		if (!(disconnectFlags.fetch_or(8) & 8)) { \
+		if (!(disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)) { \
 			printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno)); \
 			close(sock); \
 		} \
  \
 		if (std::this_thread::get_id() != read_thread->get_id()) { \
 			read_thread->join(); \
-			disconnectFlags |= 4; \
+			disconnectFlags |= DISCONNECT_FROM_WRITE_THREAD; \
 		} else { \
 			{ \
 				std::lock_guard<std::mutex> lock(send_mutex); \
@@ -76,7 +81,7 @@ private: \
 		outbound_secondary_queue.clear(); \
 		outbound_primary_queue.clear(); \
  \
-		disconnectFlags |= 2; \
+		disconnectFlags |= DISCONNECT_COMPLETE; \
 	} \
  \
 	static void do_setup_and_read(CLASS* me) { \

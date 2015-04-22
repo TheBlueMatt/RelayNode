@@ -408,7 +408,7 @@ int main(int argc, char** argv) {
 
 		std::lock_guard<std::mutex> lock(list_mutex);
 		for (auto it = blockSet.begin(); it != blockSet.end();) {
-			if ((*it)->disconnectFlags & 2) {
+			if ((*it)->disconnectFlags & DISCONNECT_COMPLETE) {
 				auto rm = it++; auto item = *rm;
 				txesSet.erase(item);
 				blockSet.erase(rm);
@@ -417,7 +417,7 @@ int main(int argc, char** argv) {
 				it++;
 		}
 		for (auto it = localSet.begin(); it != localSet.end();) {
-			if ((*it)->disconnectFlags & 2) {
+			if ((*it)->disconnectFlags & DISCONNECT_COMPLETE) {
 				auto rm = it++; auto item = *rm;
 				localSet.erase(rm);
 				delete item;

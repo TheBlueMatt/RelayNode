@@ -468,7 +468,7 @@ int main(int argc, char** argv) {
 			{
 				std::lock_guard<std::mutex> lock(map_mutex);
 				for (auto it = clientMap.begin(); it != clientMap.end();) {
-					if ((it->second->disconnectFlags & 2) == 2) {
+					if (it->second->disconnectFlags & DISCONNECT_COMPLETE) {
 						fprintf(stderr, "%lld: Culled %s, have %lu relay clients\n", (long long) time(NULL), it->first.c_str(), clientMap.size() - 1);
 						delete it->second;
 						clientMap.erase(it++);
