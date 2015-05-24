@@ -114,4 +114,9 @@ std::string gethostname(struct sockaddr_in6 *addr);
 bool lookup_address(const char* addr, struct sockaddr_in6* res);
 void prepare_message(const char* command, unsigned char* headerAndData, size_t datalen);
 
+/********************
+ *** Random stuff ***
+ ********************/
+void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
+
 #endif

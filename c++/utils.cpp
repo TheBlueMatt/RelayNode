@@ -154,3 +154,13 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
 	hash.Reset().Write(fullhash, sizeof(fullhash)).Finalize(fullhash);
 	memcpy(header->checksum, fullhash, sizeof(header->checksum));
 }
+
+/********************
+ *** Random stuff ***
+ ********************/
+void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset) {
+	assert(hashRes.size() == 32);
+	CSHA256 hash; // Probably not BE-safe
+	hash.Write(&block[offset], 80).Finalize(&hashRes[0]);
+	hash.Reset().Write(&hashRes[0], hashRes.size()).Finalize(&hashRes[0]);
+}

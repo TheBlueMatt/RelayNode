@@ -41,6 +41,8 @@ private:
 
 	SERVER_DECLARE_CLASS_VARS
 
+	RelayNodeCompressor compressor;
+
 public:
 	time_t lastDupConnect = 0;
 
@@ -57,14 +59,11 @@ public:
 		SERVER_DECLARE_DESTRUCTOR
 	}
 
-	RELAY_DECLARE_FUNCTIONS
-
 	SERVER_DECLARE_FUNCTIONS(RelayNetworkClient)
 
 private:
 	void net_process() {
-		recv_tx_cache.clear();
-		send_tx_cache.clear();
+		compressor.reset();
 
 		while (true) {
 			relay_msg_header header;
@@ -118,20 +117,15 @@ private:
 				struct timeval start, finish_read;
 
 				gettimeofday(&start, NULL);
-				auto res = decompressRelayBlock(sock, message_size);
+				auto res = compressor.decompress_relay_block(sock, message_size);
 				if (std::get<2>(res))
 					return disconnect(std::get<2>(res));
 				gettimeofday(&finish_read, NULL);
 
-				std::vector<unsigned char> fullhash(32);
-				CSHA256 hash; // Probably not BE-safe
-				hash.Write(&(*std::get<1>(res))[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
-				hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
-				blocksAlreadySeen.insert(fullhash);
-
 				struct timeval *finish_send = provide_block(this, std::get<1>(res));
 
 				if (finish_send) {
+					std::vector<unsigned char>& fullhash = *std::get<3>(res).get();
 					for (unsigned int i = 0; i < fullhash.size(); i++)
 						printf("%02x", fullhash[fullhash.size() - i - 1]);
 
@@ -143,14 +137,14 @@ private:
 				}
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
-				if (message_size > MAX_RELAY_TRANSACTION_BYTES && (recv_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || message_size > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES))
+				if (!compressor.maybe_recv_tx_of_size(message_size, false))
 					return disconnect("got freely relayed transaction too large");
 
 				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
 				if (read_all(sock, (char*)&(*tx)[0], message_size) < (int64_t)(message_size))
 					return disconnect("failed to read loose transaction data");
 
-				recv_tx_cache.add(tx, message_size > MAX_RELAY_TRANSACTION_BYTES);
+				compressor.recv_tx(tx);
 				provide_transaction(this, tx);
 			} else
 				return disconnect("got unknown message type");
@@ -209,56 +203,11 @@ public:
 	}
 };
 
-class RelayNetworkCompressor {
-	//TODO: Handle old versions too?
-	RELAY_DECLARE_CLASS_VARS
-	RELAY_DECLARE_FUNCTIONS
-
-private:
-	mruset<std::vector<unsigned char> > blocksAlreadySeen;
-	std::mutex mutex;
-
-	inline std::shared_ptr<std::vector<unsigned char> > tx_to_msg(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		auto msg = std::make_shared<std::vector<unsigned char> > (sizeof(struct relay_msg_header));
-		struct relay_msg_header *header = (struct relay_msg_header*)&(*msg)[0];
-		header->magic = RELAY_MAGIC_BYTES;
-		header->type = TRANSACTION_TYPE;
-		header->length = htonl(tx->size());
-		msg->insert(msg->end(), tx->begin(), tx->end());
-		return msg;
-	}
+class RelayNetworkCompressor : public RelayNodeCompressor {
 public:
-	RelayNetworkCompressor() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, blocksAlreadySeen(10) {}
-	std::shared_ptr<std::vector<unsigned char> > get_relay_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		std::lock_guard<std::mutex> lock(mutex);
-
-		if (send_tx_cache.contains(tx) ||
-				(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
-					(send_tx_cache.flagCount() >= MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)))
-			return std::shared_ptr<std::vector<unsigned char> >();
-		send_tx_cache.add(tx, tx->size() > MAX_RELAY_TRANSACTION_BYTES);
-		return tx_to_msg(tx);
-	}
-
-	std::shared_ptr<std::vector<unsigned char> > compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block) {
-		std::lock_guard<std::mutex> lock(mutex);
-
-		if (!blocksAlreadySeen.insert(hash).second)
-			return std::shared_ptr<std::vector<unsigned char> >();
-
-		auto compressed_block = compressRelayBlock(block);
-		if (!compressed_block->size()) {
-			printf("Failed to process block from bitcoind\n");
-			return std::shared_ptr<std::vector<unsigned char> >();
-		}
-
-		return compressed_block;
-	}
-
 	void relay_node_connected(RelayNetworkClient* client) {
-		std::lock_guard<std::mutex> lock(mutex);
 		client->initial_txn_start();
-		send_tx_cache.for_all_txn([&] (std::shared_ptr<std::vector<unsigned char> > tx) {
+		for_each_sent_tx([&] (std::shared_ptr<std::vector<unsigned char> > tx) {
 			client->receive_transaction(tx_to_msg(tx));
 		});
 		client->initial_txn_done();
@@ -330,14 +279,12 @@ int main(int argc, char** argv) {
 						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
 							return;
 						std::vector<unsigned char> fullhash(32);
-						CSHA256 hash; // Probably not BE-safe
-						hash.Write(&bytes[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
-						hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
 						if (got_block_has_been_relayed(fullhash))
 							return;
 
-						auto block = compressor.compress_block(fullhash, bytes);
+						auto block = compressor.maybe_compress_block(fullhash, bytes);
 						if (block.use_count()) {
 							std::lock_guard<std::mutex> lock(map_mutex);
 							for (const auto& client : clientMap) {
@@ -393,7 +340,7 @@ int main(int argc, char** argv) {
 							return;
 						}
 
-						auto block = compressor.compress_block(fullhash, bytes);
+						auto block = compressor.maybe_compress_block(fullhash, bytes);
 						if (block.use_count()) {
 							std::lock_guard<std::mutex> lock(map_mutex);
 							for (const auto& client : clientMap) {
@@ -433,7 +380,7 @@ int main(int argc, char** argv) {
 				return (struct timeval*)NULL;
 			}
 
-			auto block = compressor.compress_block(fullhash, *bytes);
+			auto block = compressor.maybe_compress_block(fullhash, *bytes);
 			if (block.use_count()) {
 				std::lock_guard<std::mutex> lock(map_mutex);
 				for (const auto& client : clientMap) {
