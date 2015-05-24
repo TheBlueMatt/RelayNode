@@ -24,7 +24,7 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(UNIX_CXXFLAGS)
 LDFLAGS += -pthread -Wl,--no-as-needed
 
 # list of all targets
-NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server)
+NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server test)
 WINDOWS_TARGETS = relaynetworkclient.exe
 
 all: relaynetworkclient
@@ -45,6 +45,8 @@ relaynetworkterminator: $(common_objs) bitcoindterminator.o
 relaynetworkproxy: $(common_objs) relayproxy.o
 
 relaynetworkoutbound: $(common_objs) p2poutbound.o
+
+relaynetworktest: $(common_objs) blocks.o test.o
 
 relaynetwork%:
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
