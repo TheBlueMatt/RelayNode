@@ -328,9 +328,7 @@ int main(int argc, char** argv) {
 						gettimeofday(&send_start, NULL);
 
 						std::vector<unsigned char> fullhash(32);
-						CSHA256 hash; // Probably not BE-safe
-						hash.Write(&bytes[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
-						hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
 						const char* insane = is_block_sane(fullhash, bytes.begin() + sizeof(struct bitcoin_msg_header), bytes.end());
 						if (insane) {
@@ -368,9 +366,7 @@ int main(int argc, char** argv) {
 			if (bytes->size() < sizeof(struct bitcoin_msg_header) + 80)
 				return (struct timeval*)NULL;
 			std::vector<unsigned char> fullhash(32);
-			CSHA256 hash; // Probably not BE-safe
-			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
-			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+			getblockhash(fullhash, *bytes, sizeof(struct bitcoin_msg_header));
 
 			const char* insane = is_block_sane(fullhash, bytes->begin() + sizeof(struct bitcoin_msg_header), bytes->end());
 			if (insane) {
