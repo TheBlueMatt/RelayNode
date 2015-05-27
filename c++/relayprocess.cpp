@@ -65,6 +65,8 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	std::lock_guard<std::mutex> lock(mutex);
 
 	auto res = decompressRelayBlock(sock, message_size);
+	if (std::get<2>(res))
+		return std::make_tuple(std::get<0>(res), std::get<1>(res), std::get<2>(res), std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
 	getblockhash(*fullhashptr.get(), *std::get<1>(res), sizeof(struct bitcoin_msg_header));
