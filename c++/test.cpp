@@ -10,13 +10,15 @@
 #include <string.h>
 #include <unistd.h>
 
+std::linear_congruential_engine<std::uint_fast32_t, 48271, 0, 2147483647> engine(42);
+
 void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std::vector<unsigned char> > >& txVectors, float includeP) {
 	std::vector<unsigned char>::const_iterator readit = block.begin();
 	move_forward(readit, sizeof(struct bitcoin_msg_header), block.end());
 	move_forward(readit, 80, block.end());
 	uint32_t txcount = read_varint(readit, block.end());
 
-	std::default_random_engine engine; std::uniform_real_distribution<double> distribution(0.0, 1.0);
+	std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
 	for (uint32_t i = 0; i < txcount; i++) {
 		std::vector<unsigned char>::const_iterator txstart = readit;
@@ -43,7 +45,7 @@ void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std
 			txVectors.push_back(std::make_shared<std::vector<unsigned char> >(txstart, readit));
 	}
 
-	std::shuffle(txVectors.begin(), txVectors.end(), std::default_random_engine());
+	std::shuffle(txVectors.begin(), txVectors.end(), engine);
 }
 
 int pipefd[2];
