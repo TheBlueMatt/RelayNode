@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include <atomic>
 #include <assert.h>
 
 /**********************************
@@ -118,5 +119,16 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
  *** Random stuff ***
  ********************/
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
+
+class SpinLock {
+    std::atomic_flag locked = ATOMIC_FLAG_INIT;
+public:
+    void lock() {
+        while (locked.test_and_set(std::memory_order_acquire)) { ; }
+    }
+    void unlock() {
+        locked.clear(std::memory_order_release);
+    }
+};
 
 #endif

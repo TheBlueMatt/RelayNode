@@ -4,7 +4,6 @@
 #include <vector>
 #include <tuple>
 #include <thread>
-#include <mutex>
 
 #include "mruset.h"
 #include "flaggedarrayset.h"
@@ -29,7 +28,7 @@ class RelayNodeCompressor {
 private:
 	FlaggedArraySet send_tx_cache, recv_tx_cache;
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
-	std::mutex mutex;
+	SpinLock mutex;
 
 public:
 	RelayNodeCompressor() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(1525), recv_tx_cache(1525), blocksAlreadySeen(1000000) {}

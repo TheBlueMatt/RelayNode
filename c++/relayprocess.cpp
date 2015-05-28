@@ -3,9 +3,10 @@
 #include "crypto/sha2.h"
 
 #include <string.h>
+#include <mutex>
 
 std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::get_relay_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 
 	if (send_tx_cache.contains(tx) ||
 			(tx->size() > MAX_RELAY_TRANSACTION_BYTES &&
@@ -16,7 +17,7 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::get_relay_tran
 }
 
 void RelayNodeCompressor::reset() {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 
 	recv_tx_cache.clear();
 	send_tx_cache.clear();
@@ -27,7 +28,7 @@ bool RelayNodeCompressor::check_recv_tx(uint32_t tx_size) {
 }
 
 bool RelayNodeCompressor::maybe_recv_tx_of_size(uint32_t tx_size, bool debug_print) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 
 	if (!check_recv_tx(tx_size)) {
 		if (debug_print)
@@ -38,7 +39,7 @@ bool RelayNodeCompressor::maybe_recv_tx_of_size(uint32_t tx_size, bool debug_pri
 }
 
 void RelayNodeCompressor::recv_tx(std::shared_ptr<std::vector<unsigned char > > tx) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 
 	uint32_t tx_size = tx.get()->size();
 	assert(check_recv_tx(tx_size));
@@ -46,22 +47,22 @@ void RelayNodeCompressor::recv_tx(std::shared_ptr<std::vector<unsigned char > > 
 }
 
 void RelayNodeCompressor::for_each_sent_tx(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 	send_tx_cache.for_all_txn(callback);
 }
 
 bool RelayNodeCompressor::block_sent(std::vector<unsigned char>& hash) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 	return blocksAlreadySeen.insert(hash).second;
 }
 
 uint32_t RelayNodeCompressor::blocks_sent() {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 	return blocksAlreadySeen.size();
 }
 
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 
 	auto res = decompressRelayBlock(sock, message_size);
 	if (std::get<2>(res))
@@ -75,7 +76,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 }
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<SpinLock> lock(mutex);
 
 	if (check_merkle && (hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0))
 		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "BAD_WORK");
