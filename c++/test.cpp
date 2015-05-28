@@ -10,6 +10,14 @@
 #include <string.h>
 #include <unistd.h>
 
+void do_nothing(...) {}
+
+#ifdef BENCH
+#define PRINT_TIME do_nothing
+#else
+#define PRINT_TIME printf
+#endif
+
 std::linear_congruential_engine<std::uint_fast32_t, 48271, 0, 2147483647> engine(42);
 
 void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std::vector<unsigned char> > >& txVectors, float includeP) {
@@ -63,7 +71,7 @@ void recv_block() {
 		printf("ERROR Decompressing block %s\n", std::get<2>(res));
 		exit(2);
 	} else
-		printf("Decompressed block in %lu ms\n", int64_t(decompressed.tv_sec - start.tv_sec)*1000 + (int64_t(decompressed.tv_usec) - start.tv_usec)/1000);
+		PRINT_TIME("Decompressed block in %lu ms\n", int64_t(decompressed.tv_sec - start.tv_sec)*1000 + (int64_t(decompressed.tv_usec) - start.tv_usec)/1000);
 	decompressed_block = std::get<1>(res);
 }
 
@@ -101,7 +109,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	gettimeofday(&start, NULL);
 	auto res = sender.maybe_compress_block(fullhash, data, true);
 	gettimeofday(&compressed, NULL);
-	printf("Compressed from %lu to %lu in %ld ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), int64_t(compressed.tv_sec - start.tv_sec)*1000 + (int64_t(compressed.tv_usec) - start.tv_usec)/1000, txVectors.size());
+	PRINT_TIME("Compressed from %lu to %lu in %ld ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), int64_t(compressed.tv_sec - start.tv_sec)*1000 + (int64_t(compressed.tv_usec) - start.tv_usec)/1000, txVectors.size());
 
 	struct relay_msg_header header;
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
@@ -151,7 +159,10 @@ int main() {
 			break;
 		else if (hex[0] == '\n') {
 			if (data.size()) {
-				run_test(data);
+#ifdef BENCH
+				for (int i = 0; i < 1000; i++)
+#endif
+					run_test(data);
 				fill_txv(data, allTxn, 0.9);
 				lastBlock = data;
 			}
@@ -167,6 +178,9 @@ int main() {
 		}
 	}
 
-	test_compress_block(lastBlock, allTxn);
+#ifdef BENCH
+	for (int i = 0; i < 1000; i++)
+#endif
+		test_compress_block(lastBlock, allTxn);
 	return 0;
 }
