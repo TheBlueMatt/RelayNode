@@ -128,6 +128,9 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		printf("Re-constructed block did not match!\n");
 		exit(4);
 	}
+
+	close(pipefd[0]);
+	close(pipefd[1]);
 }
 
 void run_test(std::vector<unsigned char>& data) {
