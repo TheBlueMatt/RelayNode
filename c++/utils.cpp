@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string.h>
+#include <unistd.h>
 
 #ifdef WIN32
 	// MinGW doesnt have this line (copied from Wine) for licensing reasons
@@ -83,7 +84,7 @@ ssize_t read_all(int filedes, char *buf, size_t nbyte) {
 
 	ssize_t count = 0;
 	size_t total = 0;
-	while (total < nbyte && (count = recv(filedes, buf + total, nbyte-total, 0)) > 0)
+	while (total < nbyte && (count = read(filedes, buf + total, nbyte-total)) > 0)
 		total += count;
 	if (count <= 0)
 		return count;

@@ -1,4 +1,3 @@
-#include "blocks.h"
 #include "utils.h"
 #include "crypto/sha2.h"
 #include "flaggedarrayset.h"
@@ -8,14 +7,16 @@
 #include <sys/time.h>
 #include <algorithm>
 #include <random>
+#include <string.h>
+#include <unistd.h>
 
-void fill_txn(std::vector<unsigned char>& block, RelayNodeCompressor& compressor, float includeP) {
+void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std::vector<unsigned char> > >& txVectors, float includeP) {
 	std::vector<unsigned char>::const_iterator readit = block.begin();
 	move_forward(readit, sizeof(struct bitcoin_msg_header), block.end());
 	move_forward(readit, 80, block.end());
 	uint32_t txcount = read_varint(readit, block.end());
 
-	std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors;
+	std::default_random_engine engine; std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
 	for (uint32_t i = 0; i < txcount; i++) {
 		std::vector<unsigned char>::const_iterator txstart = readit;
@@ -38,66 +39,84 @@ void fill_txn(std::vector<unsigned char>& block, RelayNodeCompressor& compressor
 
 		move_forward(readit, 4, block.end());
 
-		txVectors.push_back(std::make_shared<std::vector<unsigned char> >(txstart, readit));
+		if (distribution(engine) < includeP)
+			txVectors.push_back(std::make_shared<std::vector<unsigned char> >(txstart, readit));
 	}
 
 	std::shuffle(txVectors.begin(), txVectors.end(), std::default_random_engine());
-	std::default_random_engine engine; std::uniform_real_distribution<double> distribution(0.0, 1.0);
-	for (auto& v : txVectors) {
-		if (distribution(engine) < includeP)
-			compressor.get_relay_transaction(v);
+}
+
+int pipefd[2];
+uint32_t block_tx_count;
+std::shared_ptr<std::vector<unsigned char> > decompressed_block;
+RelayNodeCompressor receiver;
+
+void recv_block() {
+	auto res = receiver.decompress_relay_block(pipefd[0], block_tx_count);
+	if (std::get<2>(res)) {
+		printf("ERROR Decompressing block %s\n", std::get<2>(res));
+		exit(2);
+	}
+	decompressed_block = std::get<1>(res);
+}
+
+void compress_block(std::vector<unsigned char>& data, std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors) {
+	std::vector<unsigned char> fullhash(32);
+	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
+
+	RelayNodeCompressor sender;
+	receiver.reset();
+
+	for (auto& v : txVectors)
+		if (sender.get_relay_transaction(v).use_count())
+			receiver.recv_tx(v);
+
+	struct timeval start, compressed;
+	gettimeofday(&start, NULL);
+	auto res = sender.maybe_compress_block(fullhash, data, true);
+	gettimeofday(&compressed, NULL);
+	printf("Compressed from %lu to %lu in %ld ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), int64_t(compressed.tv_sec - start.tv_sec)*1000 + (int64_t(compressed.tv_usec) - start.tv_usec)/1000, txVectors.size());
+
+	struct relay_msg_header header;
+	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
+	block_tx_count = ntohl(header.length);
+
+	if (pipe(pipefd)) {
+		printf("Failed to create pipe?\n");
+		exit(3);
+	}
+
+	std::thread recv(recv_block);
+	write(pipefd[1], &(*std::get<0>(res))[sizeof(header)], std::get<0>(res)->size() - sizeof(header));
+	recv.join();
+
+	if (*decompressed_block != data) {
+		printf("Re-constructed block did not match!\n");
+		exit(4);
 	}
 }
 
 void run_test(std::vector<unsigned char>& data) {
-	RelayNodeCompressor compressor1, compressor2, compressor3, compressor4;
+	std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors;
+	compress_block(data, txVectors);
 
-	struct timeval start, hash, sane, compress1, compress2start, compress2, compress3start, compress3, compress4start, compress4;
-	gettimeofday(&start, NULL);
+	fill_txv(data, txVectors, 1.0);
+	compress_block(data, txVectors);
 
-	std::vector<unsigned char> fullhash(32);
-	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
-	gettimeofday(&hash, NULL);
+	txVectors.clear();
+	fill_txv(data, txVectors, 0.5);
+	compress_block(data, txVectors);
 
-	const char* saneerr = is_block_sane(fullhash, data.begin() + sizeof(struct bitcoin_msg_header), data.end());
-	if (saneerr) {
-		fprintf(stderr, "ERROR: %s\n", saneerr);
-		exit(-1);
-	}
-	gettimeofday(&sane, NULL);
-
-	auto res = compressor1.maybe_compress_block(fullhash, data);
-	gettimeofday(&compress1, NULL);
-	printf("Compressed from %lu to %lu\n", data.size(), res->size());
-
-	fill_txn(data, compressor2, 1.0);
-	gettimeofday(&compress2start, NULL);
-	auto res2 = compressor2.maybe_compress_block(fullhash, data);
-	gettimeofday(&compress2, NULL);
-	printf("Compressed from %lu to %lu\n", data.size(), res2->size());
-
-	fill_txn(data, compressor3, 0.5);
-	gettimeofday(&compress3start, NULL);
-	auto res3 = compressor3.maybe_compress_block(fullhash, data);
-	gettimeofday(&compress3, NULL);
-	printf("Compressed from %lu to %lu\n", data.size(), res3->size());
-
-	fill_txn(data, compressor4, 0.9);
-	gettimeofday(&compress4start, NULL);
-	auto res4 = compressor4.maybe_compress_block(fullhash, data);
-	gettimeofday(&compress4, NULL);
-	printf("Compressed from %lu to %lu\n", data.size(), res4->size());
-
-	printf("Hash: %ld ms\n", int64_t(hash.tv_sec - start.tv_sec)*1000 + (int64_t(hash.tv_usec) - start.tv_usec)/1000);
-	printf("Sane: %ld ms\n", int64_t(sane.tv_sec - hash.tv_sec)*1000 + (int64_t(sane.tv_usec) - hash.tv_usec)/1000);
-	printf("Compress (no tx compressed): %ld ms\n", int64_t(compress1.tv_sec - sane.tv_sec)*1000 + (int64_t(compress1.tv_usec) - sane.tv_usec)/1000);
-	printf("Compress (all tx compressed): %ld ms\n", int64_t(compress2.tv_sec - compress2start.tv_sec)*1000 + (int64_t(compress2.tv_usec) - compress2start.tv_usec)/1000);
-	printf("Compress (0.5 tx compressed): %ld ms\n", int64_t(compress3.tv_sec - compress3start.tv_sec)*1000 + (int64_t(compress3.tv_usec) - compress3start.tv_usec)/1000);
-	printf("Compress (0.9 tx compressed): %ld ms\n", int64_t(compress4.tv_sec - compress4start.tv_sec)*1000 + (int64_t(compress4.tv_usec) - compress4start.tv_usec)/1000);
+	txVectors.clear();
+	fill_txv(data, txVectors, 0.9);
+	compress_block(data, txVectors);
 }
 
 int main() {
 	std::vector<unsigned char> data(sizeof(struct bitcoin_msg_header));
+	std::vector<unsigned char> lastBlock;
+
+	std::vector<std::shared_ptr<std::vector<unsigned char> > > allTxn;
 
 	FILE* f = fopen("block.txt", "r");
 	while (true) {
@@ -105,8 +124,11 @@ int main() {
 		if (fread(hex, 1, 1, f) != 1)
 			break;
 		else if (hex[0] == '\n') {
-			if (data.size())
+			if (data.size()) {
 				run_test(data);
+				fill_txv(data, allTxn, 0.9);
+				lastBlock = data;
+			}
 			data = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
 		} else if (fread(hex + 1, 1, 1, f) != 1)
 			break;
@@ -118,4 +140,7 @@ int main() {
 			data.push_back((hex[0] - '0') << 4 | (hex[1] - '0'));
 		}
 	}
+
+	compress_block(lastBlock, allTxn);
+	return 0;
 }
