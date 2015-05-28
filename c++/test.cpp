@@ -163,7 +163,7 @@ int main() {
 		else if (hex[0] == '\n') {
 			if (data.size()) {
 #ifdef BENCH
-				for (int i = 0; i < 1000; i++)
+				for (int i = 0; i < 300; i++)
 #endif
 					run_test(data);
 				fill_txv(data, allTxn, 0.9);
@@ -182,7 +182,7 @@ int main() {
 	}
 
 #ifdef BENCH
-	for (int i = 0; i < 1000; i++)
+	for (int i = 0; i < 300; i++)
 #endif
 		test_compress_block(lastBlock, allTxn);
 	return 0;
