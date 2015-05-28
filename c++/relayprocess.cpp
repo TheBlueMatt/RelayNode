@@ -1,5 +1,9 @@
 #include "relayprocess.h"
 
+#include "crypto/sha2.h"
+
+#include <string.h>
+
 std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::get_relay_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
 	std::lock_guard<std::mutex> lock(mutex);
 
@@ -46,19 +50,14 @@ void RelayNodeCompressor::for_each_sent_tx(const std::function<void (std::shared
 	send_tx_cache.for_all_txn(callback);
 }
 
-std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block) {
+bool RelayNodeCompressor::block_sent(std::vector<unsigned char>& hash) {
 	std::lock_guard<std::mutex> lock(mutex);
+	return blocksAlreadySeen.insert(hash).second;
+}
 
-	if (!blocksAlreadySeen.insert(hash).second)
-		return std::shared_ptr<std::vector<unsigned char> >();
-
-	auto compressed_block = compressRelayBlock(block);
-	if (!compressed_block->size()) {
-		printf("Failed to process block from bitcoind\n");
-		return std::shared_ptr<std::vector<unsigned char> >();
-	}
-
-	return compressed_block;
+uint32_t RelayNodeCompressor::blocks_sent() {
+	std::lock_guard<std::mutex> lock(mutex);
+	return blocksAlreadySeen.size();
 }
 
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size) {
@@ -75,7 +74,15 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	return std::make_tuple(std::get<0>(res), std::get<1>(res), std::get<2>(res), fullhashptr);
 }
 
-std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::compressRelayBlock(const std::vector<unsigned char>& block) {
+std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
+	std::lock_guard<std::mutex> lock(mutex);
+
+	if (check_merkle && (hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0))
+		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "BAD_WORK");
+
+	if (!blocksAlreadySeen.insert(hash).second)
+		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "SEEN");
+
 	auto compressed_block = std::make_shared<std::vector<unsigned char> >();
 	compressed_block->reserve(1100000);
 	struct relay_msg_header header;
@@ -83,14 +90,22 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::compressRelayB
 	try {
 		std::vector<unsigned char>::const_iterator readit = block.begin();
 		move_forward(readit, sizeof(struct bitcoin_msg_header), block.end());
-		move_forward(readit, 80, block.end());
-		uint32_t txcount = read_varint(readit, block.end());
+		move_forward(readit, 4 + 32, block.end());
+		auto merkle_hash_it = readit;
+		move_forward(readit, 80 - (4 + 32), block.end());
+		uint64_t txcount = read_varint(readit, block.end());
+		if (txcount < 1 || txcount > 100000)
+			return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "TXCOUNT_RANGE");
 
 		header.magic = RELAY_MAGIC_BYTES;
 		header.type = BLOCK_TYPE;
 		header.length = htonl(txcount);
 		compressed_block->insert(compressed_block->end(), (unsigned char*)&header, ((unsigned char*)&header) + sizeof(header));
 		compressed_block->insert(compressed_block->end(), block.begin() + sizeof(struct bitcoin_msg_header), block.begin() + 80 + sizeof(struct bitcoin_msg_header));
+
+		std::vector<unsigned char> hashlist;
+		if (check_merkle)
+			hashlist.resize(32 * txcount);
 
 		for (uint32_t i = 0; i < txcount; i++) {
 			std::vector<unsigned char>::const_iterator txstart = readit;
@@ -113,6 +128,12 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::compressRelayB
 
 			move_forward(readit, 4, block.end());
 
+			if (check_merkle) {
+				CSHA256 hash; // Probably not BE-safe
+				hash.Write(&(*txstart), readit - txstart).Finalize(&hashlist[i * 32]);
+				hash.Reset().Write(&hashlist[i * 32], 32).Finalize(&hashlist[i * 32]);
+			}
+
 			auto lookupVector = std::make_shared<std::vector<unsigned char> >(txstart, readit);
 			int index = send_tx_cache.remove(lookupVector);
 			if (index < 0) {
@@ -130,10 +151,31 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::compressRelayB
 				compressed_block->push_back((index     ) & 0xff);
 			}
 		}
+
+		if (check_merkle) {
+			uint32_t stepCount = 1, lastMax = txcount - 1;
+			for (uint32_t rowSize = txcount; rowSize > 1; rowSize = (rowSize + 1) / 2) {
+				if (!memcmp(&hashlist[32 * (lastMax - stepCount)], &hashlist[32 * lastMax], 32))
+					return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "DUPLICATE_TX");
+
+				for (uint32_t i = 0; i < rowSize; i += 2) {
+					assert(i*stepCount < txcount && lastMax < txcount);
+					CSHA256 hash; // Probably not BE-safe
+					hash.Write(&hashlist[32 * i*stepCount], 32).Write(&hashlist[32 * std::min((i + 1)*stepCount, lastMax)], 32).Finalize(&hashlist[32 * i*stepCount]);
+					hash.Reset().Write(&hashlist[32 * i*stepCount], 32).Finalize(&hashlist[32 * i*stepCount]);
+				}
+				lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
+				stepCount *= 2;
+			}
+
+			if (memcmp(&(*merkle_hash_it), &hashlist[0], 32))
+				return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_MERKLE");
+		}
+
 	} catch(read_exception) {
-		return std::make_shared<std::vector<unsigned char> >();
+		return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_SIZE");
 	}
-	return compressed_block;
+	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::decompressRelayBlock(int sock, uint32_t message_size) {

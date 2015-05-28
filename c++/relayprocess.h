@@ -32,7 +32,7 @@ private:
 	std::mutex mutex;
 
 public:
-	RelayNodeCompressor() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(1525), recv_tx_cache(1525), blocksAlreadySeen(10) {}
+	RelayNodeCompressor() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(1525), recv_tx_cache(1525), blocksAlreadySeen(1000000) {}
 	void reset();
 
 	inline std::shared_ptr<std::vector<unsigned char> > tx_to_msg(const std::shared_ptr<std::vector<unsigned char> >& tx) {
@@ -51,12 +51,14 @@ public:
 
 	void for_each_sent_tx(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback);
 
-	std::shared_ptr<std::vector<unsigned char> > maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block);
+	std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle);
 	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > decompress_relay_block(int sock, uint32_t message_size);
+
+	bool block_sent(std::vector<unsigned char>& hash);
+	uint32_t blocks_sent();
 
 private:
 	bool check_recv_tx(uint32_t tx_size);
-	std::shared_ptr<std::vector<unsigned char> > compressRelayBlock(const std::vector<unsigned char>& block);
 	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*> decompressRelayBlock(int sock, uint32_t message_size);
 };
 

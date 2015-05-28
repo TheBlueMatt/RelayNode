@@ -21,7 +21,6 @@
 #include "utils.h"
 #include "p2pclient.h"
 #include "serverprocess.h"
-#include "blocks.h"
 
 
 
@@ -234,6 +233,8 @@ private:
 
 
 
+RelayNetworkCompressor compressor;
+
 int main(int argc, char** argv) {
 	if (argc != 3 && argc != 4) {
 		printf("USAGE: %s trusted_host trusted_port [::ffff:whitelisted prefix string]\n", argv[0]);
@@ -269,8 +270,6 @@ int main(int argc, char** argv) {
 	// This is because the things are setup for the relay <-> p2p case (both to optimize
 	// the client and because that is the case we want to optimize for)
 
-	RelayNetworkCompressor compressor;
-
 	trustedP2P = new P2PClient(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes, struct timeval read_start) {
 						struct timeval send_start, send_end;
@@ -281,12 +280,10 @@ int main(int argc, char** argv) {
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
-						if (got_block_has_been_relayed(fullhash))
-							return;
-
-						auto block = compressor.maybe_compress_block(fullhash, bytes);
-						if (block.use_count()) {
+						auto tuple = compressor.maybe_compress_block(fullhash, bytes, false);
+						if (!std::get<1>(tuple)) {
 							std::lock_guard<std::mutex> lock(map_mutex);
+							auto block = std::get<0>(tuple);
 							for (const auto& client : clientMap) {
 								if (!client.second->disconnectFlags)
 									client.second->receive_block(block);
@@ -315,8 +312,26 @@ int main(int argc, char** argv) {
 							localP2P->receive_transaction(bytes);
 						}
 					},
-					[&](std::vector<unsigned char>& bytes) {
-						return recv_headers_msg_from_trusted(bytes);
+					[&](std::vector<unsigned char>& headers) {
+						bool wasUseful = false;
+						try {
+							std::vector<unsigned char>::const_iterator it = headers.begin();
+							uint64_t count = read_varint(it, headers.end());
+
+							for (uint64_t i = 0; i < count; i++) {
+								move_forward(it, 81, headers.end());
+
+								if (*(it - 1) != 0)
+									return wasUseful;
+
+								std::vector<unsigned char> fullhash(32);
+								getblockhash(fullhash, headers, it - 81 - headers.begin());
+								wasUseful |= compressor.block_sent(fullhash);
+							}
+
+							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
+						} catch (read_exception) { }
+						return wasUseful;
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
@@ -330,16 +345,14 @@ int main(int argc, char** argv) {
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
-						const char* insane = is_block_sane(fullhash, bytes.begin() + sizeof(struct bitcoin_msg_header), bytes.end());
-						if (insane) {
+						auto tuple = compressor.maybe_compress_block(fullhash, bytes, true);
+						if (std::get<1>(tuple)) {
 							for (unsigned int i = 0; i < fullhash.size(); i++)
 								printf("%02x", fullhash[fullhash.size() - i - 1]);
-							printf(" INSANE %s LOCALP2P\n", insane);
+							printf(" INSANE %s LOCALP2P\n", std::get<1>(tuple));
 							return;
-						}
-
-						auto block = compressor.maybe_compress_block(fullhash, bytes);
-						if (block.use_count()) {
+						} else {
+							auto block = std::get<0>(tuple);
 							std::lock_guard<std::mutex> lock(map_mutex);
 							for (const auto& client : clientMap) {
 								if (!client.second->disconnectFlags)
@@ -368,17 +381,15 @@ int main(int argc, char** argv) {
 			std::vector<unsigned char> fullhash(32);
 			getblockhash(fullhash, *bytes, sizeof(struct bitcoin_msg_header));
 
-			const char* insane = is_block_sane(fullhash, bytes->begin() + sizeof(struct bitcoin_msg_header), bytes->end());
-			if (insane) {
+			auto tuple = compressor.maybe_compress_block(fullhash, *bytes, true);
+			if (std::get<1>(tuple)) {
 				for (unsigned int i = 0; i < fullhash.size(); i++)
 					printf("%02x", fullhash[fullhash.size() - i - 1]);
-				printf(" INSANE %s UNTRUSTEDRELAY %s\n", insane, from->host.c_str());
+				printf(" INSANE %s UNTRUSTEDRELAY %s\n", std::get<1>(tuple), from->host.c_str());
 				return (struct timeval*)NULL;
-			}
-
-			auto block = compressor.maybe_compress_block(fullhash, *bytes);
-			if (block.use_count()) {
+			} else {
 				std::lock_guard<std::mutex> lock(map_mutex);
+				auto block = std::get<0>(tuple);
 				for (const auto& client : clientMap) {
 					if (!client.second->disconnectFlags)
 						client.second->receive_block(block);

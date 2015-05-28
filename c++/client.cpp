@@ -234,12 +234,13 @@ public:
 		std::vector<unsigned char> fullhash(32);
 		getblockhash(fullhash, block, sizeof(struct bitcoin_msg_header));
 
-		auto compressed_block = compressor.maybe_compress_block(fullhash, block);
-		if (!compressed_block.use_count()) {
-			printf("Failed to process block from bitcoind (probably already received block)\n");
+		auto tuple = compressor.maybe_compress_block(fullhash, block, false);
+		if (std::get<1>(tuple)) {
+			printf("Failed to process block from bitcoind (%s)\n", std::get<1>(tuple));
 			send_mutex.unlock();
 			return;
 		}
+		auto compressed_block = std::get<0>(tuple);
 
 		if (send_all(sock, (char*)&(*compressed_block)[0], compressed_block->size()) != int(compressed_block->size()))
 			printf("Error sending block to relay server\n");

@@ -38,7 +38,7 @@ relaynetworkclient: $(common_objs) client.o
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
-relaynetworkserver: $(common_objs) blocks.o server.o
+relaynetworkserver: $(common_objs) server.o
 
 relaynetworkterminator: $(common_objs) bitcoindterminator.o
 
@@ -46,7 +46,7 @@ relaynetworkproxy: $(common_objs) relayproxy.o
 
 relaynetworkoutbound: $(common_objs) p2poutbound.o
 
-relaynetworktest: $(common_objs) blocks.o test.o
+relaynetworktest: $(common_objs) test.o
 
 relaynetwork%:
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
