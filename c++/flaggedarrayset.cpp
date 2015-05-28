@@ -10,7 +10,7 @@
  ******************************/
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) { return backingMap.count(ElemAndFlag(e, false)); }
 
-void FlaggedArraySet::remove(std::map<uint64_t, std::map<ElemAndFlag, uint64_t>::iterator>::iterator rm) {
+void FlaggedArraySet::remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator rm) {
 	uint64_t index = rm->first;
 	if (rm->second->first.flag)
 		flag_count--;
@@ -101,6 +101,6 @@ void FlaggedArraySet::clear() {
 }
 
 void FlaggedArraySet::for_all_txn(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback) {
-	for (std::pair<const uint64_t, std::map<ElemAndFlag, uint64_t>::iterator>& e : backingReverseMap)
+	for (std::pair<const uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>& e : backingReverseMap)
 		callback(e.second->first.elem);
 }
