@@ -16,13 +16,16 @@ struct ElemAndFlag {
 	ElemAndFlag() {}
 	bool operator == (const ElemAndFlag& o) const { return o.elem == elem; }
 };
+
 namespace std {
 	template <> struct hash<ElemAndFlag> {
 		size_t operator()(const ElemAndFlag& e) const {
-			//Stolen from boost::hash_range
+			std::vector<unsigned char>& v = *e.elem;
+			if (v.size() < 5 + 32 + 4)
+				return 42; // WAT?
 			size_t res = 0;
-			for (const auto& v : *e.elem)
-				res ^= v + 0x9e3779b9 + (res << 6) + (res >> 2);
+			for (unsigned int i = (5 + 32 + 4) - 8; i < 5 + 32 + 4; i += 4)
+				res ^= v[i] | (v[i+1] << 8) | (v[i+2] << 16) | (v[i+3] << 24);
 			return res;
 		}
 	};
