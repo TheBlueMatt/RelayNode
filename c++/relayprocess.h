@@ -60,6 +60,8 @@ public:
 private:
 	bool check_recv_tx(uint32_t tx_size);
 	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*> decompressRelayBlock(int sock, uint32_t message_size);
+
+	friend void test_compress_block(std::vector<unsigned char>&, std::vector<std::shared_ptr<std::vector<unsigned char> > >);
 };
 
 #endif

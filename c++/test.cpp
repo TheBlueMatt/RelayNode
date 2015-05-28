@@ -65,16 +65,35 @@ void recv_block() {
 	decompressed_block = std::get<1>(res);
 }
 
-void compress_block(std::vector<unsigned char>& data, std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors) {
+void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors) {
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	RelayNodeCompressor sender;
+	RelayNodeCompressor sender, tester;
 	receiver.reset();
 
-	for (auto& v : txVectors)
-		if (sender.get_relay_transaction(v).use_count())
+	for (auto& v : txVectors) {
+		unsigned int made = sender.get_relay_transaction(v).use_count();
+		if (made)
 			receiver.recv_tx(v);
+		if (made != tester.get_relay_transaction(v).use_count()) {
+			printf("get_relay_transaction behavior not consistent???\n");
+			exit(5);
+		}
+	}
+
+	unsigned int i = 0;
+	sender.for_each_sent_tx([&](std::shared_ptr<std::vector<unsigned char> > tx) {
+		ssize_t index = std::max((ssize_t)0, (ssize_t)txVectors.size() - 1525) + i++;
+		if (tx != txVectors[index]) {
+			printf("for_each_sent_tx was not in order!\n");
+			exit(6);
+		}
+		if (tester.send_tx_cache.remove(0) != txVectors[index]) {
+			printf("for_each_sent_tx output did not match remove(0)\n");
+			exit(7);
+		}
+	});
 
 	struct timeval start, compressed;
 	gettimeofday(&start, NULL);
@@ -103,18 +122,18 @@ void compress_block(std::vector<unsigned char>& data, std::vector<std::shared_pt
 
 void run_test(std::vector<unsigned char>& data) {
 	std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors;
-	compress_block(data, txVectors);
+	test_compress_block(data, txVectors);
 
 	fill_txv(data, txVectors, 1.0);
-	compress_block(data, txVectors);
+	test_compress_block(data, txVectors);
 
 	txVectors.clear();
 	fill_txv(data, txVectors, 0.5);
-	compress_block(data, txVectors);
+	test_compress_block(data, txVectors);
 
 	txVectors.clear();
 	fill_txv(data, txVectors, 0.9);
-	compress_block(data, txVectors);
+	test_compress_block(data, txVectors);
 }
 
 int main() {
@@ -146,6 +165,6 @@ int main() {
 		}
 	}
 
-	compress_block(lastBlock, allTxn);
+	test_compress_block(lastBlock, allTxn);
 	return 0;
 }
