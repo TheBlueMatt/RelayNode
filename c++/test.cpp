@@ -52,11 +52,16 @@ std::shared_ptr<std::vector<unsigned char> > decompressed_block;
 RelayNodeCompressor receiver;
 
 void recv_block() {
+	struct timeval start, decompressed;
+	gettimeofday(&start, NULL);
 	auto res = receiver.decompress_relay_block(pipefd[0], block_tx_count);
+	gettimeofday(&decompressed, NULL);
+
 	if (std::get<2>(res)) {
 		printf("ERROR Decompressing block %s\n", std::get<2>(res));
 		exit(2);
-	}
+	} else
+		printf("Decompressed block in %lu ms\n", int64_t(decompressed.tv_sec - start.tv_sec)*1000 + (int64_t(decompressed.tv_usec) - start.tv_usec)/1000);
 	decompressed_block = std::get<1>(res);
 }
 
