@@ -26,12 +26,12 @@ void FlaggedArraySet::remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, 
 			bool foundRmTarget = false;
 		#endif
 		for (uint64_t i = offset; i < total; i++) {
-			std::map<uint64_t, std::map<ElemAndFlag, uint64_t>::iterator>::iterator it;
+			std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator it;
 			assert((it = backingReverseMap.find(i)) != backingReverseMap.end());
 			assert(it->second->second == i);
 			assert(backingMap.find(it->second->first) == it->second);
 			assert((it == rm && !foundRmTarget && (foundRmTarget = true)) || (it != rm));
-			assert((it != rm && (it->second->first < e || e < it->second->first)) || (it == rm && !(it->second->first < e || e < it->second->first)));
+			assert((it != rm && !(it->second->first == e)) || (it == rm && (it->second->first == e)));
 		}
 		assert(foundRmTarget);
 
@@ -48,11 +48,11 @@ void FlaggedArraySet::remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, 
 		}
 
 		for (uint64_t i = offset + 1; i < total; i++) {
-			std::map<uint64_t, std::map<ElemAndFlag, uint64_t>::iterator>::iterator it;
+			std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator it;
 			assert((it = backingReverseMap.find(i)) != backingReverseMap.end());
 			assert(it->second->second == i);
 			assert(backingMap.find(it->second->first) == it->second);
-			assert(it->second->first < e || e < it->second->first);
+			assert(!(it->second->first == e));
 		}
 	} else {
 		backingMap.erase(rm->second);
