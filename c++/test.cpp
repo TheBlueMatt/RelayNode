@@ -109,6 +109,10 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	gettimeofday(&start, NULL);
 	auto res = sender.maybe_compress_block(fullhash, data, true);
 	gettimeofday(&compressed, NULL);
+	if (std::get<1>(res)) {
+		printf("Failed to compress block %s\n", std::get<1>(res));
+		exit(8);
+	}
 	PRINT_TIME("Compressed from %lu to %lu in %ld ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), int64_t(compressed.tv_sec - start.tv_sec)*1000 + (int64_t(compressed.tv_usec) - start.tv_usec)/1000, txVectors.size());
 
 	struct relay_msg_header header;
