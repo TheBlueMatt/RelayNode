@@ -59,7 +59,7 @@ void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std
 int pipefd[2];
 uint32_t block_tx_count;
 std::shared_ptr<std::vector<unsigned char> > decompressed_block;
-RelayNodeCompressor receiver;
+RelayNodeCompressor receiver(false);
 
 void recv_block() {
 	struct timeval start, decompressed;
@@ -79,7 +79,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	RelayNodeCompressor sender, tester;
+	RelayNodeCompressor sender(false), tester(false);
 	receiver.reset();
 
 	for (auto& v : txVectors) {

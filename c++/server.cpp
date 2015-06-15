@@ -38,9 +38,9 @@ private:
 
 	RELAY_DECLARE_CLASS_VARS
 
-	SERVER_DECLARE_CLASS_VARS
-
 	RelayNodeCompressor compressor;
+
+	SERVER_DECLARE_CLASS_VARS
 
 public:
 	time_t lastDupConnect = 0;
@@ -50,7 +50,7 @@ public:
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*)>& connected_callback_in)
 			: provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
-			RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
+			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), // compressor may be exchanged if "toucan twink"
 		SERVER_DECLARE_CONSTRUCTOR_EXTENDS_AND_BODY
 	}
 
@@ -89,16 +89,19 @@ private:
 					if (send_all(sock, VERSION_STRING, strlen(VERSION_STRING)) != strlen(VERSION_STRING))
 						return disconnect("failed to write max version string");
 
-					return disconnect("unknown version string");
+					if (strncmp("toucan twink", data, std::min(sizeof("toucan twink"), size_t(message_size))))
+						compressor = RelayNodeCompressor(true);
+					else
+						return disconnect("unknown version string");
 				}
 
-				relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
+				relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(message_size) };
 				if (send_all(sock, (char*)&version_header, sizeof(version_header)) != sizeof(version_header))
 					return disconnect("failed to write version header");
-				if (send_all(sock, VERSION_STRING, strlen(VERSION_STRING)) != strlen(VERSION_STRING))
+				if (send_all(sock, data, message_size) != message_size)
 					return disconnect("failed to write version string");
 
-				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), VERSION_STRING);
+				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), data);
 				connected = 2;
 				connected_callback(this); // Called unlocked
 			} else if (connected != 2) {
@@ -204,6 +207,8 @@ public:
 
 class RelayNetworkCompressor : public RelayNodeCompressor {
 public:
+	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
+
 	void relay_node_connected(RelayNetworkClient* client) {
 		client->initial_txn_start();
 		for_each_sent_tx([&] (std::shared_ptr<std::vector<unsigned char> > tx) {

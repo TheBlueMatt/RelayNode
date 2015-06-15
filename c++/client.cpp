@@ -58,13 +58,11 @@ public:
 						const std::function<void (void)>& on_connected_in)
 			: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, server_host(serverHostIn),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), on_connected(on_connected_in),
-			sock(0), net_thread(NULL), new_thread(NULL) {
+			sock(0), net_thread(NULL), new_thread(NULL), compressor(false) {
 		send_mutex.lock();
 		new_thread = new std::thread(do_connect, this);
 		send_mutex.unlock();
 	}
-
-	RelayNetworkClient() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS {} // Fake...
 
 private:
 	void reconnect(std::string disconnectReason, bool alreadyLocked=false) {

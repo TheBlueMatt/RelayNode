@@ -32,7 +32,13 @@ private:
 	std::mutex mutex;
 
 public:
-	RelayNodeCompressor() : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(1525), recv_tx_cache(1525), blocksAlreadySeen(1000000) {}
+	RelayNodeCompressor(bool tucanTwink) : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(1525, tucanTwink), recv_tx_cache(1525, tucanTwink), blocksAlreadySeen(1000000) {}
+	RelayNodeCompressor& operator=(const RelayNodeCompressor& c) {
+		send_tx_cache = c.send_tx_cache;
+		recv_tx_cache = c.recv_tx_cache;
+		blocksAlreadySeen = c.blocksAlreadySeen;
+		return *this;
+	}
 	void reset();
 
 	inline std::shared_ptr<std::vector<unsigned char> > tx_to_msg(const std::shared_ptr<std::vector<unsigned char> >& tx) {

@@ -8,14 +8,14 @@
 /******************************
  **** FlaggedArraySet util ****
  ******************************/
-bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) { return backingMap.count(ElemAndFlag(e, false)); }
+bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) { return backingMap.count(ElemAndFlag(e, false, allowDups)); }
 
 void FlaggedArraySet::remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator rm) {
 	uint64_t index = rm->first;
 	if (rm->second->first.flag)
 		flag_count--;
 
-	ElemAndFlag e;
+	ElemAndFlag e(rm->second->first);
 	assert((e = rm->second->first).elem);
 	assert(index == rm->second->second);
 	assert(size() == total - offset);
@@ -62,7 +62,7 @@ void FlaggedArraySet::remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, 
 }
 
 void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag) {
-	auto res = backingMap.insert(std::make_pair(ElemAndFlag(e, flag), total));
+	auto res = backingMap.insert(std::make_pair(ElemAndFlag(e, flag, allowDups), total));
 	if (!res.second)
 		return;
 
@@ -76,7 +76,7 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 }
 
 int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& e) {
-	auto it = backingMap.find(ElemAndFlag(e, false));
+	auto it = backingMap.find(ElemAndFlag(e, false, allowDups));
 	if (it == backingMap.end())
 		return -1;
 

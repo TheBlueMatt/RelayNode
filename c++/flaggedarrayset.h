@@ -12,9 +12,10 @@
 struct ElemAndFlag {
 	bool flag;
 	std::shared_ptr<std::vector<unsigned char> > elem;
-	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char>>& elemIn, bool flagIn) : flag(flagIn), elem(elemIn) {}
-	ElemAndFlag() {}
-	bool operator == (const ElemAndFlag& o) const { return *o.elem == *elem; }
+	bool allowDups;
+	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char>>& elemIn, bool flagIn, bool allowDupsIn) : flag(flagIn), elem(elemIn), allowDups(allowDupsIn) {}
+	ElemAndFlag(bool allowDupsIn) : allowDups(allowDupsIn) {}
+	bool operator == (const ElemAndFlag& o) const { if (allowDups) return false; return *o.elem == *elem; }
 };
 
 namespace std {
@@ -41,10 +42,11 @@ private:
 	uint64_t total, offset;
 	std::unordered_map<ElemAndFlag, uint64_t> backingMap;
 	std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator> backingReverseMap;
+	bool allowDups;
 
 public:
 	void clear();
-	FlaggedArraySet(unsigned int maxSizeIn) : maxSize(maxSizeIn), backingMap(maxSize) { clear(); }
+	FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn) : maxSize(maxSizeIn), backingMap(maxSize), allowDups(allowDupsIn) { clear(); }
 
 	size_t size() { return backingMap.size(); }
 	size_t flagCount() { return flag_count; }
