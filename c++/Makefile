@@ -18,7 +18,7 @@ ifeq ($(UNAME_M),x86)
   LE := Y
 endif
 
-ifeq($(LE),Y)
+ifeq ($(LE),Y)
   COMMON_CXXFLAGS += -DFORCE_LE
 endif
 
