@@ -313,7 +313,6 @@ int main(int argc, char** argv) {
 						}
 					},
 					[&](std::vector<unsigned char>& headers) {
-						bool wasUseful = false;
 						try {
 							std::vector<unsigned char>::const_iterator it = headers.begin();
 							uint64_t count = read_varint(it, headers.end());
@@ -322,16 +321,15 @@ int main(int argc, char** argv) {
 								move_forward(it, 81, headers.end());
 
 								if (*(it - 1) != 0)
-									return wasUseful;
+									return;
 
 								std::vector<unsigned char> fullhash(32);
 								getblockhash(fullhash, headers, it - 81 - headers.begin());
-								wasUseful |= compressor.block_sent(fullhash);
+								compressor.block_sent(fullhash);
 							}
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
-						return wasUseful;
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
