@@ -3,6 +3,8 @@ common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o ./crypto/sha
 
 MINGW_PREFIX := i686-w64-mingw32
 
+CXX ?= c++
+
 COMMON_CXXFLAGS := -I.
 
 variant ?= production
