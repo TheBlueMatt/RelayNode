@@ -14,7 +14,7 @@ struct ElemAndFlag {
 	std::shared_ptr<std::vector<unsigned char> > elem;
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char>>& elemIn, bool flagIn) : flag(flagIn), elem(elemIn) {}
 	ElemAndFlag() {}
-	bool operator == (const ElemAndFlag& o) const { return o.elem == elem; }
+	bool operator == (const ElemAndFlag& o) const { return *o.elem == *elem; }
 };
 
 namespace std {
