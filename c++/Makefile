@@ -29,7 +29,6 @@ else
   COMMON_CXXFLAGS += -DNDEBUG -O2
 endif
 
-platform ?= linux
 ifeq ($(UNAME_S),Linux)
   COMMON_CXXFLAGS += -flto
 endif
