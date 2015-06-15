@@ -8,6 +8,7 @@ CXX ?= c++
 COMMON_CXXFLAGS := -I.
 
 UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
 
 variant ?= production
 ifeq ($(variant),test)
@@ -21,7 +22,13 @@ ifeq ($(UNAME_S),Linux)
   COMMON_CXXFLAGS += -flto
 endif
 ifeq ($(UNAME_S),FreeBSD)
+# Maybe these conditions can be rewritten :p
+ifeq ($(UNAME_M),x86_64)
   COMMON_CXXFLAGS += -DX86_BSD
+endif
+ifeq ($(UNAME_M),x86)
+  COMMON_CXXFLAGS += -DX86_BSD
+endif
 endif
 
 COMMON_CXXFLAGS += -std=c++11 -Wall
