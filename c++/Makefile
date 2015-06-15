@@ -10,6 +10,18 @@ COMMON_CXXFLAGS := -I.
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
+LE := N
+ifeq ($(UNAME_M),x86_64)
+  LE := Y
+endif
+ifeq ($(UNAME_M),x86)
+  LE := Y
+endif
+
+ifeq($(LE),Y)
+  COMMON_CXXFLAGS += -DFORCE_LE
+endif
+
 variant ?= production
 ifeq ($(variant),test)
   COMMON_CXXFLAGS += -DFOR_VALGRIND -g
@@ -23,10 +35,7 @@ ifeq ($(UNAME_S),Linux)
 endif
 ifeq ($(UNAME_S),FreeBSD)
 # Maybe these conditions can be rewritten :p
-ifeq ($(UNAME_M),x86_64)
-  COMMON_CXXFLAGS += -DX86_BSD
-endif
-ifeq ($(UNAME_M),x86)
+ifeq ($(LE),Y)
   COMMON_CXXFLAGS += -DX86_BSD
 endif
 endif
