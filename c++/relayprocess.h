@@ -26,13 +26,13 @@ private: \
 class RelayNodeCompressor {
 	RELAY_DECLARE_CLASS_VARS
 
-private:
+public:
 	FlaggedArraySet send_tx_cache, recv_tx_cache;
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	std::mutex mutex;
 
 public:
-	RelayNodeCompressor(bool tucanTwink) : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(1525, tucanTwink), recv_tx_cache(1525, tucanTwink), blocksAlreadySeen(1000000) {}
+	RelayNodeCompressor(bool tucanTwink) : RELAY_DECLARE_CONSTRUCTOR_EXTENDS, send_tx_cache(tucanTwink ? 1525 : 5025, tucanTwink), recv_tx_cache(tucanTwink ? 1525 : 5025, tucanTwink), blocksAlreadySeen(1000000) {}
 	RelayNodeCompressor& operator=(const RelayNodeCompressor& c) {
 		send_tx_cache = c.send_tx_cache;
 		recv_tx_cache = c.recv_tx_cache;
