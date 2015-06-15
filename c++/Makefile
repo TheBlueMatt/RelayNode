@@ -29,7 +29,8 @@ else
   ifeq ($(variant),bench)
     COMMON_CXXFLAGS += -DBENCH
   endif
-  COMMON_CXXFLAGS += -DNDEBUG -O2
+  # In my tests -march made quite a big difference
+  COMMON_CXXFLAGS += -DNDEBUG -O2 -march=native -mtune=native
 endif
 
 ifeq ($(UNAME_S),Linux)
