@@ -36,6 +36,7 @@
 	#define MSG_NOSIGNAL 0
 #elif defined(__FreeBSD__)
 	#include <sys/endian.h>
+	#define MSG_NOSIGNAL 0
 #else
 	#include <endian.h>
 #endif
