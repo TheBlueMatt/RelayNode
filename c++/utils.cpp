@@ -173,7 +173,9 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
 
 	unsigned char fullhash[32];
 	CSHA256 hash; // Probably not BE-safe
-	hash.Write(headerAndData + sizeof(struct bitcoin_msg_header), datalen).Finalize(fullhash);
+	if (datalen)
+		hash.Write(headerAndData + sizeof(struct bitcoin_msg_header), datalen);
+	hash.Finalize(fullhash);
 	hash.Reset().Write(fullhash, sizeof(fullhash)).Finalize(fullhash);
 	memcpy(header->checksum, fullhash, sizeof(header->checksum));
 }

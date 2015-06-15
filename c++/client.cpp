@@ -43,6 +43,7 @@ private:
 
 	const std::function<void (std::vector<unsigned char>&)> provide_block;
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
+	const std::function<void (void)> on_connected;
 
 	int sock;
 	std::mutex send_mutex;
@@ -53,9 +54,10 @@ private:
 public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
-						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
-			server_host(serverHostIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
+						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
+						const std::function<void (void)>& on_connected_in)
+			: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, server_host(serverHostIn),
+			provide_block(provide_block_in), provide_transaction(provide_transaction_in), on_connected(on_connected_in),
 			sock(0), net_thread(NULL), new_thread(NULL) {
 		send_mutex.lock();
 		new_thread = new std::thread(do_connect, this);
@@ -157,8 +159,10 @@ private:
 
 				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
 					return reconnect("unknown version string");
-				else
+				else {
 					printf("Connected to relay node with protocol version %s\n", VERSION_STRING);
+					on_connected();
+				}
 			} else if (header.type == MAX_VERSION_TYPE) {
 				char data[message_size];
 				if (read_all(sock, data, message_size) < (int64_t)(message_size))
@@ -299,7 +303,8 @@ int main(int argc, char** argv) {
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { relayClient->receive_transaction(bytes); });
 	relayClient = new RelayNetworkClient(argv[1],
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
-										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { p2p.receive_transaction(bytes); });
+										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { p2p.receive_transaction(bytes); },
+										[&]() { p2p.request_mempool(); });
 
 	while (true) { sleep(1000); }
 }

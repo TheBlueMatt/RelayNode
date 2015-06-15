@@ -211,3 +211,11 @@ void P2PRelayer::receive_block(std::vector<unsigned char>& block) {
 	std::lock_guard<std::mutex> lock(send_mutex);
 	send_message("block", &block[0], block.size() - sizeof(bitcoin_msg_header));
 }
+
+void P2PRelayer::request_mempool() {
+	if (!connected)
+		return;
+	std::lock_guard<std::mutex> lock(send_mutex);
+	std::vector<unsigned char> msg(sizeof(bitcoin_msg_header));
+	send_message("mempool", &msg[0], 0);
+}
