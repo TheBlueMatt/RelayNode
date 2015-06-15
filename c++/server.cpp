@@ -89,7 +89,7 @@ private:
 					if (send_all(sock, VERSION_STRING, strlen(VERSION_STRING)) != strlen(VERSION_STRING))
 						return disconnect("failed to write max version string");
 
-					if (strncmp("toucan twink", data, std::min(sizeof("toucan twink"), size_t(message_size))))
+					if (!strncmp("toucan twink", data, std::min(sizeof("toucan twink"), size_t(message_size))))
 						compressor = RelayNodeCompressor(true);
 					else
 						return disconnect("unknown version string");
