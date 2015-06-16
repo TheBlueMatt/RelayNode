@@ -6,6 +6,8 @@
 #include <map>
 #include <unordered_map>
 
+#include "utils.h"
+
 /******************************
  **** FlaggedArraySet util ****
  ******************************/
@@ -36,6 +38,8 @@ namespace std {
 }
 
 
+class Deduper;
+
 class FlaggedArraySet {
 private:
 	unsigned int maxSize, flag_count;
@@ -44,13 +48,30 @@ private:
 	std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator> backingReverseMap;
 	bool allowDups;
 
+	// The mutex is only used by memory deduper, FlaggedArraySet is not thread-safe
+	// It is taken by changes to backingMap, any touches to backingMap in the deduper thread, or any touches to elem
+	friend class Deduper;
+	WaitCountMutex mutex;
+
 public:
 	void clear();
-	FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn) : maxSize(maxSizeIn), backingMap(maxSize), allowDups(allowDupsIn) { clear(); }
+	FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn);
+	~FlaggedArraySet();
 
 	size_t size() { return backingMap.size(); }
 	size_t flagCount() { return flag_count; }
 	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e);
+
+	FlaggedArraySet& operator=(const FlaggedArraySet& o) {
+		maxSize = o.maxSize;
+		flag_count = o.flag_count;
+		total = o.total;
+		offset = o.offset;
+		backingMap = o.backingMap;
+		backingReverseMap = o.backingReverseMap;
+		allowDups = o.allowDups;
+		return *this;
+	}
 
 private:
 	void remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator rm);

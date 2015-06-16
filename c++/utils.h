@@ -5,6 +5,8 @@
 #include <string>
 #include <assert.h>
 #include <unistd.h>
+#include <mutex>
+#include <atomic>
 
 /**********************************
  **** Things missing on !Linux ****
@@ -122,5 +124,26 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
  *** Random stuff ***
  ********************/
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
+
+/****************************************************************
+ *** A mutex that gives acess to the count of waiting threads ***
+ ****************************************************************/
+class WaitCountMutex {
+private:
+	std::mutex mutex;
+	std::atomic_int waitCount;
+public:
+	WaitCountMutex() { atomic_init(&waitCount, 0); }
+	void lock() {
+		if (!mutex.try_lock()) {
+			waitCount++;
+			mutex.lock();
+			waitCount--;
+		}
+	}
+	bool try_lock() { return mutex.try_lock(); }
+	void unlock() { return mutex.unlock(); }
+	int wait_count() { return waitCount; }
+};
 
 #endif
