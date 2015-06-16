@@ -285,18 +285,19 @@ int main(int argc, char** argv) {
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
-						auto tuple = compressor.maybe_compress_block(fullhash, bytes, false);
-						if (!std::get<1>(tuple)) {
+						{
 							std::lock_guard<std::mutex> lock(map_mutex);
-							auto block = std::get<0>(tuple);
-							for (const auto& client : clientMap) {
-								if (!client.second->disconnectFlags)
-									client.second->receive_block(block);
+							auto tuple = compressor.maybe_compress_block(fullhash, bytes, false);
+							if (!std::get<1>(tuple)) {
+								auto block = std::get<0>(tuple);
+								for (const auto& client : clientMap) {
+									if (!client.second->disconnectFlags)
+										client.second->receive_block(block);
+								}
 							}
+							localP2P->receive_block(bytes);
+							gettimeofday(&send_end, NULL);
 						}
-						localP2P->receive_block(bytes);
-
-						gettimeofday(&send_end, NULL);
 
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
@@ -307,9 +308,9 @@ int main(int argc, char** argv) {
 														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+						std::lock_guard<std::mutex> lock(map_mutex);
 						auto tx = compressor.get_relay_transaction(bytes);
 						if (tx.use_count()) {
-							std::lock_guard<std::mutex> lock(map_mutex);
 							for (const auto& client : clientMap) {
 								if (!client.second->disconnectFlags)
 									client.second->receive_transaction(tx);
@@ -348,22 +349,28 @@ int main(int argc, char** argv) {
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
-						auto tuple = compressor.maybe_compress_block(fullhash, bytes, true);
-						if (std::get<1>(tuple)) {
-							for (unsigned int i = 0; i < fullhash.size(); i++)
-								printf("%02x", fullhash[fullhash.size() - i - 1]);
-							printf(" INSANE %s LOCALP2P\n", std::get<1>(tuple));
-							return;
-						} else {
-							auto block = std::get<0>(tuple);
+						const char* insane;
+						{
 							std::lock_guard<std::mutex> lock(map_mutex);
-							for (const auto& client : clientMap) {
-								if (!client.second->disconnectFlags)
-									client.second->receive_block(block);
+							auto tuple = compressor.maybe_compress_block(fullhash, bytes, true);
+							insane = std::get<1>(tuple);
+							if (!insane) {
+								auto block = std::get<0>(tuple);
+								for (const auto& client : clientMap) {
+									if (!client.second->disconnectFlags)
+										client.second->receive_block(block);
+								}
+								localP2P->receive_block(bytes);
+								gettimeofday(&send_end, NULL);
 							}
 						}
-						localP2P->receive_block(bytes);
-						gettimeofday(&send_end, NULL);
+						if (insane) {
+							for (unsigned int i = 0; i < fullhash.size(); i++)
+								printf("%02x", fullhash[fullhash.size() - i - 1]);
+							printf(" INSANE %s LOCALP2P\n", insane);
+							return;
+						}
+
 						trustedP2P->receive_block(bytes);
 
 						for (unsigned int i = 0; i < fullhash.size(); i++)
@@ -384,25 +391,28 @@ int main(int argc, char** argv) {
 			std::vector<unsigned char> fullhash(32);
 			getblockhash(fullhash, *bytes, sizeof(struct bitcoin_msg_header));
 
-			auto tuple = compressor.maybe_compress_block(fullhash, *bytes, true);
-			if (std::get<1>(tuple)) {
-				for (unsigned int i = 0; i < fullhash.size(); i++)
-					printf("%02x", fullhash[fullhash.size() - i - 1]);
-				printf(" INSANE %s UNTRUSTEDRELAY %s\n", std::get<1>(tuple), from->host.c_str());
-				return (struct timeval*)NULL;
-			} else {
+			struct timeval *tv = new struct timeval;
+			const char* insane;
+			{
 				std::lock_guard<std::mutex> lock(map_mutex);
-				auto block = std::get<0>(tuple);
-				for (const auto& client : clientMap) {
-					if (!client.second->disconnectFlags)
-						client.second->receive_block(block);
+				auto tuple = compressor.maybe_compress_block(fullhash, *bytes, true);
+				insane = std::get<1>(tuple);
+				if (!insane) {
+					auto block = std::get<0>(tuple);
+					for (const auto& client : clientMap) {
+						if (!client.second->disconnectFlags)
+							client.second->receive_block(block);
+					}
+					localP2P->receive_block(*bytes);
+					gettimeofday(tv, NULL);
 				}
 			}
-
-			localP2P->receive_block(*bytes);
-
-			struct timeval *tv = new struct timeval;
-			gettimeofday(tv, NULL);
+			if (insane) {
+				for (unsigned int i = 0; i < fullhash.size(); i++)
+					printf("%02x", fullhash[fullhash.size() - i - 1]);
+				printf(" INSANE %s UNTRUSTEDRELAY %s\n", insane, from->host.c_str());
+				return (struct timeval*)NULL;
+			}
 
 			trustedP2P->receive_block(*bytes);
 
