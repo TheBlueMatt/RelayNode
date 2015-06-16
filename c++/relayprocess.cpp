@@ -45,7 +45,7 @@ void RelayNodeCompressor::recv_tx(std::shared_ptr<std::vector<unsigned char > > 
 	recv_tx_cache.add(tx, tx_size > MAX_RELAY_TRANSACTION_BYTES);
 }
 
-void RelayNodeCompressor::for_each_sent_tx(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback) {
+void RelayNodeCompressor::for_each_sent_tx(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) {
 	std::lock_guard<std::mutex> lock(mutex);
 	send_tx_cache.for_all_txn(callback);
 }

@@ -211,7 +211,7 @@ public:
 
 	void relay_node_connected(RelayNetworkClient* client) {
 		client->initial_txn_start();
-		for_each_sent_tx([&] (std::shared_ptr<std::vector<unsigned char> > tx) {
+		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
 			client->receive_transaction(tx_to_msg(tx));
 		});
 		client->initial_txn_done();

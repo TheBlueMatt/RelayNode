@@ -60,7 +60,7 @@ public:
 	int remove(const std::shared_ptr<std::vector<unsigned char> >& e);
 	std::shared_ptr<std::vector<unsigned char> > remove(int index);
 
-	void for_all_txn(const std::function<void (std::shared_ptr<std::vector<unsigned char> >)> callback);
+	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback);
 };
 
 #endif
