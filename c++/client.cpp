@@ -204,7 +204,7 @@ private:
 
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		#ifndef FOR_VALGRIND
+		#ifndef FOR_TEST
 			if (!send_mutex.try_lock())
 				return;
 		#else
@@ -229,7 +229,7 @@ public:
 	}
 
 	void receive_block(const std::vector<unsigned char>& block) {
-		#ifndef FOR_VALGRIND
+		#ifndef FOR_TEST
 			if (!send_mutex.try_lock())
 				return;
 		#else

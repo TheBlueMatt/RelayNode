@@ -174,7 +174,7 @@ void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned 
 	if (!connected)
 		return;
 
-	#ifndef FOR_VALGRIND
+	#ifndef FOR_TEST
 		if (!send_mutex.try_lock())
 			return;
 	#else

@@ -217,7 +217,7 @@ public:
 		if (connected != 2)
 			return;
 
-		#ifndef FOR_VALGRIND
+		#ifndef FOR_TEST
 			if (!send_mutex.try_lock())
 				return;
 		#else

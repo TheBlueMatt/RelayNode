@@ -24,7 +24,7 @@ endif
 
 variant ?= production
 ifeq ($(variant),test)
-  COMMON_CXXFLAGS += -DFOR_VALGRIND -g
+  COMMON_CXXFLAGS += -DFOR_TEST -g
 else
   ifeq ($(variant),bench)
     COMMON_CXXFLAGS += -DBENCH
