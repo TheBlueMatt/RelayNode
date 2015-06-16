@@ -217,12 +217,8 @@ public:
 		if (connected != 2)
 			return;
 
-		#ifndef FOR_TEST
-			if (!send_mutex.try_lock())
-				return;
-		#else
-			send_mutex.lock();
-		#endif
+		if (!send_mutex.try_lock())
+			return;
 
 		if (total_waiting_size >= 1500000 || !txnAlreadySeen.insert(hash).second) {
 			send_mutex.unlock();

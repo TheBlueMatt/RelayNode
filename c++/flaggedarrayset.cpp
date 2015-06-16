@@ -40,12 +40,8 @@ public:
 						for (FlaggedArraySet* fas : allArraySets) {
 							if (fas->allowDups)
 								continue;
-#ifdef FOR_TEST
-							fas->mutex.lock();
-#else
 							if (!fas->mutex.try_lock())
 								continue;
-#endif
 							std::lock_guard<WaitCountMutex> lock(fas->mutex, std::adopt_lock);
 							for (const auto& e : fas->backingMap) {
 								if (fas->mutex.wait_count())
@@ -70,12 +66,8 @@ public:
 						for (FlaggedArraySet* fas : allArraySets) {
 							if (fas->allowDups)
 								continue;
-#ifdef FOR_TEST
-							fas->mutex.lock();
-#else
 							if (!fas->mutex.try_lock())
 								continue;
-#endif
 							std::lock_guard<WaitCountMutex> lock(fas->mutex, std::adopt_lock);
 							for (auto& e : fas->backingMap) {
 								if (fas->mutex.wait_count())

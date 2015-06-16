@@ -204,12 +204,8 @@ private:
 
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		#ifndef FOR_TEST
-			if (!send_mutex.try_lock())
-				return;
-		#else
-			send_mutex.lock();
-		#endif
+		if (!send_mutex.try_lock())
+			return;
 
 		auto msgptr = compressor.get_relay_transaction(tx);
 
@@ -229,12 +225,8 @@ public:
 	}
 
 	void receive_block(const std::vector<unsigned char>& block) {
-		#ifndef FOR_TEST
-			if (!send_mutex.try_lock())
-				return;
-		#else
-			send_mutex.lock();
-		#endif
+		if (!send_mutex.try_lock())
+			return;
 
 		std::vector<unsigned char> fullhash(32);
 		getblockhash(fullhash, block, sizeof(struct bitcoin_msg_header));
