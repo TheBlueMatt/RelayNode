@@ -79,14 +79,16 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	RelayNodeCompressor sender(false), tester(false);
+	RelayNodeCompressor sender(false), tester(false), tester2(false);
 	receiver.reset();
 
-	for (auto& v : txVectors) {
+	for (auto v : txVectors) {
 		unsigned int made = sender.get_relay_transaction(v).use_count();
+		v = std::make_shared<std::vector<unsigned char> >(*v); // Copy the vector to give the deduper something to do
 		if (made)
 			receiver.recv_tx(v);
-		if (made != tester.get_relay_transaction(v).use_count()) {
+		v = std::make_shared<std::vector<unsigned char> >(*v);
+		if (made != tester.get_relay_transaction(v).use_count() || made != tester2.get_relay_transaction(v).use_count()) {
 			printf("get_relay_transaction behavior not consistent???\n");
 			exit(5);
 		}
@@ -98,11 +100,11 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		ssize_t index = std::max((ssize_t)0, (ssize_t)txVectors.size() - 5025) + i++;
 		if (txVectors[index]->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES || (txVectors[index]->size() > MAX_RELAY_TRANSACTION_BYTES && oversize_txn++ >= MAX_EXTRA_OVERSIZE_TRANSACTIONS))
 			index = std::max((ssize_t)0, (ssize_t)txVectors.size() - 5025) + i++;
-		if (tx != txVectors[index]) {
+		if (*tx != *txVectors[index]) {
 			printf("for_each_sent_tx was not in order!\n");
 			exit(6);
 		}
-		if (tester.send_tx_cache.remove(0) != txVectors[index]) {
+		if (*tester.send_tx_cache.remove(0) != *txVectors[index]) {
 			printf("for_each_sent_tx output did not match remove(0)\n");
 			exit(7);
 		}
@@ -115,6 +117,11 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	if (std::get<1>(res)) {
 		printf("Failed to compress block %s\n", std::get<1>(res));
 		exit(8);
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Let the deduper thread run...
+	if (*std::get<0>(tester2.maybe_compress_block(fullhash, data, true)) != *std::get<0>(res)) {
+		printf("maybe_compress_block not consistent???\n");
+		exit(9);
 	}
 	PRINT_TIME("Compressed from %lu to %lu in %ld ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), int64_t(compressed.tv_sec - start.tv_sec)*1000 + (int64_t(compressed.tv_usec) - start.tv_usec)/1000, txVectors.size());
 

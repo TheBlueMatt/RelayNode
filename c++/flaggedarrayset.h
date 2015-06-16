@@ -16,8 +16,7 @@ struct ElemAndFlag {
 	std::shared_ptr<std::vector<unsigned char> > elem;
 	bool allowDups;
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char>>& elemIn, bool flagIn, bool allowDupsIn) : flag(flagIn), elem(elemIn), allowDups(allowDupsIn) {}
-	ElemAndFlag(bool allowDupsIn) : allowDups(allowDupsIn) {}
-	bool operator == (const ElemAndFlag& o) const { if (allowDups) return o.elem == elem; return *o.elem == *elem; }
+	bool operator == (const ElemAndFlag& o) const { if (allowDups) return o.elem == elem; return o.elem == elem || *o.elem == *elem; }
 };
 
 namespace std {
