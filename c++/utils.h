@@ -133,7 +133,7 @@ private:
 	std::mutex mutex;
 	std::atomic_int waitCount;
 public:
-	WaitCountMutex() { atomic_init(&waitCount, 0); }
+	WaitCountMutex() { waitCount = 0; }
 	void lock() {
 		if (!mutex.try_lock()) {
 			waitCount++;
