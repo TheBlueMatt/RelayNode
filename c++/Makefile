@@ -5,7 +5,7 @@ MINGW_PREFIX := i686-w64-mingw32
 
 CXX ?= c++
 
-COMMON_CXXFLAGS := -I.
+COMMON_CXXFLAGS := -I. -g
 
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
@@ -24,7 +24,7 @@ endif
 
 variant ?= production
 ifeq ($(variant),test)
-  COMMON_CXXFLAGS += -DFOR_TEST -g
+  COMMON_CXXFLAGS += -DFOR_TEST
 else
   ifeq ($(variant),bench)
     COMMON_CXXFLAGS += -DBENCH
