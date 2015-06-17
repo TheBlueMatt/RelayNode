@@ -30,8 +30,9 @@
  **** Relay network client processing class ****
  ***********************************************/
 class RelayNetworkClient : public Connection {
-	//TODO: Accept old versions too
 private:
+	std::atomic_int connected;
+
 	const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<void (RelayNetworkClient*)> connected_callback;
@@ -47,10 +48,10 @@ public:
 						const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*)>& connected_callback_in)
-			: Connection(sockIn, hostIn), 
+			: Connection(sockIn, hostIn, NULL), connected(0),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false) // compressor may be exchanged if "toucan twink"
-	{}
+	{ construction_done(); }
 
 private:
 	void net_process(const std::function<void(const char*)>& disconnect) {

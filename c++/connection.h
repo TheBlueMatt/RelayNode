@@ -21,9 +21,8 @@ public: // TODO: make private
 private:
 	std::mutex send_mutex;
 	bool outside_send_mutex_held;
-public: // TODO: make private?
-	std::atomic<int> connected;
-private:
+
+	std::function<void(void)> on_disconnect;
 
 	std::condition_variable cv;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_secondary_queue;
@@ -37,13 +36,18 @@ private:
 public:
 	const std::string host;
 
-	Connection(int sockIn, std::string hostIn) : sock(sockIn), outside_send_mutex_held(false),
-			connected(0), initial_outbound_throttle(true), total_waiting_size(0), disconnectFlags(0), host(hostIn) {
-		std::lock_guard<std::mutex> lock(send_mutex);
+	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
+			sock(sockIn), outside_send_mutex_held(false), on_disconnect(on_disconnect_in),
+			initial_outbound_throttle(true), total_waiting_size(0), disconnectFlags(0), host(hostIn)
+		{}
+
+protected:
+	void construction_done() {
 		read_thread = new std::thread(do_setup_and_read, this);
 		write_thread = new std::thread(do_write, this);
 	}
 
+public:
 	virtual ~Connection();
 
 	int getDisconnectFlags() { return disconnectFlags; }

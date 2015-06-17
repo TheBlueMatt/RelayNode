@@ -21,7 +21,7 @@ Connection::~Connection() {
 	assert(disconnectFlags & DISCONNECT_COMPLETE);
 	if (disconnectFlags & DISCONNECT_FROM_WRITE_THREAD)
 		write_thread->join();
-	else if (disconnectFlags & DISCONNECT_FROM_READ_THREAD)\
+	else if (disconnectFlags & DISCONNECT_FROM_READ_THREAD)
 		read_thread->join();
 	else
 		assert(!"DISCONNECT_COMPLETE set but not from either thread?");
@@ -106,6 +106,11 @@ void Connection::disconnect(const char* reason) {
 	outbound_primary_queue.clear();
 
 	disconnectFlags |= DISCONNECT_COMPLETE;
+
+	if (on_disconnect) {
+		std::thread t(on_disconnect);
+		t.detach();
+	}
 }
 
 void Connection::do_setup_and_read(Connection* me) {

@@ -29,6 +29,8 @@ char* location;
  ************************/
 class P2PConnection : public Connection {
 private:
+	std::atomic_int connected;
+
 	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> provide_block;
 	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
@@ -40,8 +42,8 @@ public:
 	P2PConnection(int sockIn, std::string hostIn,
 				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)>& provide_block_in,
 				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: Connection(sockIn, hostIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in)
-	{}
+			: Connection(sockIn, hostIn, NULL), connected(0), provide_block(provide_block_in), provide_transaction(provide_transaction_in)
+		{ construction_done(); }
 
 private:
 	void net_process(const std::function<void(const char*)>& disconnect) {
