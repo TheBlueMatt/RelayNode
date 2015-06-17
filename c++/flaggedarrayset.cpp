@@ -127,68 +127,63 @@ FlaggedArraySet::~FlaggedArraySet() {
 
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) { return backingMap.count(ElemAndFlag(e, false, allowDups)); }
 
-void FlaggedArraySet::remove(std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator rm) {
-	uint64_t index = rm->first;
-	if (rm->second->first.flag)
+void FlaggedArraySet::remove_(size_t index) {
+	auto& rm = indexMap[index];
+	if (rm->first.flag)
 		flag_count--;
 
-	ElemAndFlag e(rm->second->first);
-	assert((e = rm->second->first).elem);
-	assert(index == rm->second->second);
-	assert(size() == total - offset);
+#ifndef NDEBUG
+	assert(indexMap.size() == size() && size() == backingMap.size());
+	assert(index < indexMap.size());
+	ElemAndFlag e(rm->first);
+	assert((e = rm->first).elem);
+	assert(index + offset == rm->second);
+#endif
 
-	if (index != offset) {
-		assert(offset < total && offset < index);
-		#ifndef NDEBUG
-			bool foundRmTarget = false;
-		#endif
-		for (uint64_t i = offset; i < total; i++) {
-			std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator it;
-			assert((it = backingReverseMap.find(i)) != backingReverseMap.end());
-			assert(it->second->second == i);
-			assert(backingMap.find(it->second->first) == it->second);
-			assert((it == rm && !foundRmTarget && (foundRmTarget = true)) || (it != rm));
-			assert((it != rm && !(it->second->first == e)) || (it == rm && (it->second->first == e)));
-		}
-		assert(foundRmTarget);
-
-		auto last = rm; last++;
-		auto it = backingReverseMap.find(offset);
-		auto elem = it->second;
-		it = backingReverseMap.erase(it);
-		backingMap.erase(rm->second);
-		for (; it != last; it++) {
-			auto new_elem = it->second;
-			elem->second++;
-			it->second = elem;
-			elem = new_elem;
-		}
-
-		for (uint64_t i = offset + 1; i < total; i++) {
-			std::map<uint64_t, std::unordered_map<ElemAndFlag, uint64_t>::iterator>::iterator it;
-			assert((it = backingReverseMap.find(i)) != backingReverseMap.end());
-			assert(it->second->second == i);
-			assert(backingMap.find(it->second->first) == it->second);
-			assert(!(it->second->first == e));
-		}
-	} else {
-		backingMap.erase(rm->second);
-		backingReverseMap.erase(rm);
+#ifndef NDEBUG
+	bool foundRmTarget = false;
+	for (uint64_t i = 0; i < size(); i++) {
+		std::unordered_map<ElemAndFlag, uint64_t>::iterator it;
+		assert((it = indexMap.at(i)) != backingMap.end());
+		assert(it->second == i + offset);
+		assert((i == index && !foundRmTarget && (foundRmTarget = true)) || (i != index));
+		assert((i != index && !(it->first == e)) || (i == index && (it->first == e)));
 	}
-	offset++;
+	assert(foundRmTarget);
+#endif
+
+	if (index < size()/2) {
+		for (uint64_t i = 0; i < index; i++)
+			indexMap[i]->second++;
+		offset++;
+	} else
+		for (uint64_t i = index + 1; i < size(); i++)
+			indexMap[i]->second--;
+	backingMap.erase(rm);
+	indexMap.erase(indexMap.begin() + index);
+
+#ifndef NDEBUG
+	for (uint64_t i = 0; i < size(); i++) {
+		std::unordered_map<ElemAndFlag, uint64_t>::iterator it;
+		assert((it = indexMap.at(i)) != backingMap.end());
+		assert(it->second == i + offset);
+		assert(!(it->first == e));
+	}
+#endif
 }
 
 void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 
-	auto res = backingMap.insert(std::make_pair(ElemAndFlag(e, flag, allowDups), total));
+	auto res = backingMap.insert(std::make_pair(ElemAndFlag(e, flag, allowDups), size() + offset));
 	if (!res.second)
 		return;
 
-	backingReverseMap[total++] = res.first;
+	indexMap.push_back(res.first);
 
+	assert(size() <= maxSize + 1);
 	while (size() > maxSize)
-		remove(backingReverseMap.begin());
+		remove_(0);
 
 	if (flag)
 		flag_count++;
@@ -201,29 +196,28 @@ int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& 
 
 	int res = it->second - offset;
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	remove(backingReverseMap.find(it->second));
+	remove_(res);
 	return res;
 }
 
 std::shared_ptr<std::vector<unsigned char> > FlaggedArraySet::remove(int index) {
-	auto it = backingReverseMap.find(index + offset);
-	if (it == backingReverseMap.end())
+	if ((unsigned int)index >= indexMap.size())
 		return std::make_shared<std::vector<unsigned char> >();
 
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	std::shared_ptr<std::vector<unsigned char> > e = it->second->first.elem;
-	remove(it);
+	std::shared_ptr<std::vector<unsigned char> > e = indexMap[index]->first.elem;
+	remove_(index);
 	return e;
 }
 
 void FlaggedArraySet::clear() {
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	flag_count = 0; total = 0; offset = 0;
-	backingMap.clear(); backingReverseMap.clear();
+	flag_count = 0; offset = 0;
+	backingMap.clear(); indexMap.clear();
 }
 
 void FlaggedArraySet::for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	for (const auto& e : backingReverseMap)
-		callback(e.second->first.elem);
+	for (const auto& e : indexMap)
+		callback(e->first.elem);
 }
