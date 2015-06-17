@@ -20,6 +20,8 @@ void do_nothing(...) {}
 
 std::linear_congruential_engine<std::uint_fast32_t, 48271, 0, 2147483647> engine(42);
 
+#define to_millis(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
+
 void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std::vector<unsigned char> > >& txVectors, float includeP) {
 	std::vector<unsigned char>::const_iterator readit = block.begin();
 	move_forward(readit, sizeof(struct bitcoin_msg_header), block.end());
@@ -61,17 +63,24 @@ uint32_t block_tx_count;
 std::shared_ptr<std::vector<unsigned char> > decompressed_block;
 RelayNodeCompressor receiver(false);
 
+static unsigned int compress_runs = 0, decompress_runs = 0;
+static std::chrono::nanoseconds total_compress_time, total_decompress_time;
+static std::chrono::nanoseconds max_compress_time, max_decompress_time;
+static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1);
+
 void recv_block() {
-	struct timeval start, decompressed;
-	gettimeofday(&start, NULL);
+	auto start = std::chrono::steady_clock::now();
 	auto res = receiver.decompress_relay_block(pipefd[0], block_tx_count);
-	gettimeofday(&decompressed, NULL);
+	auto decompressed = std::chrono::steady_clock::now();
+	total_decompress_time += decompressed - start; decompress_runs++;
+	if ((decompressed - start) > max_decompress_time) max_decompress_time = decompressed - start;
+	if ((decompressed - start) < min_decompress_time) min_decompress_time = decompressed - start;
 
 	if (std::get<2>(res)) {
 		printf("ERROR Decompressing block %s\n", std::get<2>(res));
 		exit(2);
 	} else
-		PRINT_TIME("Decompressed block in %lu ms\n", int64_t(decompressed.tv_sec - start.tv_sec)*1000 + (int64_t(decompressed.tv_usec) - start.tv_usec)/1000);
+		PRINT_TIME("Decompressed block in %lf ms\n", to_millis(decompressed - start));
 	decompressed_block = std::get<1>(res);
 }
 
@@ -110,10 +119,13 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		}
 	});
 
-	struct timeval start, compressed;
-	gettimeofday(&start, NULL);
+	auto start = std::chrono::steady_clock::now();
 	auto res = sender.maybe_compress_block(fullhash, data, true);
-	gettimeofday(&compressed, NULL);
+	auto compressed = std::chrono::steady_clock::now();
+	total_compress_time += compressed - start; compress_runs++;
+	if ((compressed - start) > max_compress_time) max_compress_time = compressed - start;
+	if ((compressed - start) < min_compress_time) min_compress_time = compressed - start;
+
 	if (std::get<1>(res)) {
 		printf("Failed to compress block %s\n", std::get<1>(res));
 		exit(8);
@@ -123,7 +135,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		printf("maybe_compress_block not consistent???\n");
 		exit(9);
 	}
-	PRINT_TIME("Compressed from %lu to %lu in %ld ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), int64_t(compressed.tv_sec - start.tv_sec)*1000 + (int64_t(compressed.tv_usec) - start.tv_usec)/1000, txVectors.size());
+	PRINT_TIME("Compressed from %lu to %lu in %lf ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis(compressed - start), txVectors.size());
 
 	struct relay_msg_header header;
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
@@ -177,7 +189,7 @@ int main() {
 		else if (hex[0] == '\n') {
 			if (data.size()) {
 #ifdef BENCH
-				for (int i = 0; i < 300; i++)
+				for (int i = 0; i < 50; i++)
 #endif
 					run_test(data);
 				fill_txv(data, allTxn, 0.9);
@@ -196,8 +208,11 @@ int main() {
 	}
 
 #ifdef BENCH
-	for (int i = 0; i < 300; i++)
+	for (int i = 0; i < 50; i++)
 #endif
 		test_compress_block(lastBlock, allTxn);
+
+	printf("Total time spent compressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", compress_runs, to_millis(total_compress_time), to_millis(total_compress_time / compress_runs), to_millis(min_compress_time), to_millis(max_compress_time));
+	printf("Total time spent decompressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis(total_decompress_time), to_millis(total_decompress_time / decompress_runs), to_millis(min_decompress_time), to_millis(max_decompress_time));
 	return 0;
 }
