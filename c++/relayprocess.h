@@ -26,7 +26,7 @@ private: \
 class RelayNodeCompressor {
 	RELAY_DECLARE_CLASS_VARS
 
-public:
+private:
 	FlaggedArraySet send_tx_cache, recv_tx_cache;
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	std::mutex mutex;
