@@ -19,84 +19,34 @@
 	#include <fcntl.h>
 #endif // !WIN32
 
-void P2PRelayer::reconnect(std::string disconnectReason) {
-	connected = false;
-	if (sock) {
-		printf("Closing bitcoind socket with %s, %s (%i: %s)\n", server_host, disconnectReason.c_str(), errno, errno ? strerror(errno) : "");
-		#ifndef WIN32
-			errno = 0;
-		#endif
-		close(sock);
-	}
-
-	sleep(1);
-
-	new_thread = new std::thread(do_connect, this);
-}
-
-void P2PRelayer::do_connect(P2PRelayer* me) {
-	if (me->net_thread)
-		me->net_thread->join();
-	me->net_thread = me->new_thread;
-
-	me->sock = socket(AF_INET6, SOCK_STREAM, 0);
-	if (me->sock <= 0)
-		return me->reconnect("unable to create socket");
-
-	sockaddr_in6 addr;
-	if (!lookup_address(me->server_host, &addr))
-		return me->reconnect("unable to lookup host");
-
-	int v6only = 0;
-	setsockopt(me->sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
-
-	addr.sin6_port = htons(me->server_port);
-	if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
-		return me->reconnect("failed to connect()");
-
-	#ifdef WIN32
-		unsigned long nonblocking = 0;
-		ioctlsocket(me->sock, FIONBIO, &nonblocking);
-	#else
-		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
-	#endif
-
-	#ifdef X86_BSD
-		int nosigpipe = 1;
-		setsockopt(me->sock, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
-	#endif
-
-	me->net_process();
-}
-
-bool P2PRelayer::send_message(const char* command, unsigned char* headerAndData, size_t datalen) {
+void P2PRelayer::send_message(const char* command, unsigned char* headerAndData, size_t datalen) {
 	prepare_message(command, headerAndData, datalen);
-	return send_all(sock, (char*)headerAndData, sizeof(struct bitcoin_msg_header) + datalen) == int(sizeof(struct bitcoin_msg_header) + datalen);
+	maybe_do_send_bytes((char*)headerAndData, sizeof(struct bitcoin_msg_header) + datalen);
 }
 
-void P2PRelayer::net_process() {
-	if (!send_version()) {
-		reconnect("failed to send version message");
-		return;
+void P2PRelayer::on_disconnect() {
+	connected = 0;
+}
+
+void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect) {
+	connected = 0;
+
+	{
+		std::vector<unsigned char> version_msg(generate_version());
+		send_message("version", &version_msg[0], version_msg.size() - sizeof(struct bitcoin_msg_header));
 	}
-
-	int nodelay = 1;
-	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
-
-	if (errno)
-		return reconnect("error during connect");
 
 	while (true) {
 		struct bitcoin_msg_header header;
-		if (read_all(sock, (char*)&header, sizeof(header)) != sizeof(header))
-			return reconnect("failed to read message header");
+		if (read_all((char*)&header, sizeof(header)) != sizeof(header))
+			return disconnect("failed to read message header");
 
 		if (header.magic != BITCOIN_MAGIC)
-			return reconnect("invalid magic bytes");
+			return disconnect("invalid magic bytes");
 
 		header.length = le32toh(header.length);
 		if (header.length > 5000000)
-			return reconnect("got message too large");
+			return disconnect("got message too large");
 
 		uint32_t prependedHeaderSize = (!strncmp(header.command, "block", strlen("block"))) ? sizeof(struct bitcoin_msg_header) : 0;
 
@@ -104,23 +54,35 @@ void P2PRelayer::net_process() {
 		gettimeofday(&read_start, NULL);
 
 		auto msg = std::make_shared<std::vector<unsigned char> > (prependedHeaderSize + uint32_t(header.length));
-		if (read_all(sock, (char*)&(*msg)[prependedHeaderSize], header.length) != int(header.length))
-			return reconnect("failed to read message");
+		if (read_all((char*)&(*msg)[prependedHeaderSize], header.length) != int(header.length))
+			return disconnect("failed to read message");
 
 		unsigned char fullhash[32];
 		CSHA256 hash;
 		hash.Write(&(*msg)[prependedHeaderSize], header.length).Finalize(fullhash);
 		hash.Reset().Write(fullhash, sizeof(fullhash)).Finalize(fullhash);
 		if (memcmp((char*)fullhash, header.checksum, sizeof(header.checksum)))
-			return reconnect("got invalid message checksum");
+			return disconnect("got invalid message checksum");
 
 		if (!strncmp(header.command, "version", strlen("version"))) {
+			if (connected != 0)
+				return disconnect("got invalid version");
+			connected = 1;
+
 			if (header.length < sizeof(struct bitcoin_version_start))
-				return reconnect("got short version");
+				return disconnect("got short version");
 			struct bitcoin_version_start *their_version = (struct bitcoin_version_start*) &(*msg)[0];
 
 			struct bitcoin_msg_header new_header;
 			send_message("verack", (unsigned char*)&new_header, 0);
+
+			printf("Connected to bitcoind with version %u\n", le32toh(their_version->protocol_version));
+			continue;
+		} else if (!strncmp(header.command, "verack", strlen("verack"))) {
+			if (connected != 1)
+				return disconnect("got invalid verack");
+			printf("Finished connect handshake with bitcoind\n");
+			connected = 2;
 
 			if (provide_headers) {
 				std::vector<unsigned char> msg(sizeof(struct bitcoin_msg_header));
@@ -130,12 +92,13 @@ void P2PRelayer::net_process() {
 				msg.insert(msg.end(), 64, 0);
 				send_message("getheaders", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
 			}
+			continue;
+		}
 
-			printf("Connected to bitcoind with version %u\n", le32toh(their_version->protocol_version));
-		} else if (!strncmp(header.command, "verack", strlen("verack"))) {
-			printf("Finished connect handshake with bitcoind\n");
-			connected = true;
-		} else if (!strncmp(header.command, "ping", strlen("ping"))) {
+		if (connected != 2)
+			return disconnect("got non-version, non-verack before version+verack");
+
+		if (!strncmp(header.command, "ping", strlen("ping"))) {
 			std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header) + header.length);
 			resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), msg->begin(), msg->end());
 			send_message("pong", &resp[0], header.length);
@@ -164,17 +127,13 @@ void P2PRelayer::net_process() {
 			req.insert(req.end(), fullhash.begin(), fullhash.end());
 			req.insert(req.end(), 32, 0);
 
-			std::lock_guard<std::mutex> lock(send_mutex);
 			send_message("getheaders", &req[0], req.size() - sizeof(struct bitcoin_msg_header));
 		}
 	}
 }
 
 void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-	if (!connected)
-		return;
-
-	if (!send_mutex.try_lock())
+	if (connected != 2)
 		return;
 
 	auto msg = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
@@ -195,21 +154,17 @@ void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned 
 
 		send_message("getdata", &req[0], 37);
 	}
-
-	send_mutex.unlock();
 }
 
 void P2PRelayer::receive_block(std::vector<unsigned char>& block) {
-	if (!connected)
+	if (connected != 2)
 		return;
-	std::lock_guard<std::mutex> lock(send_mutex);
 	send_message("block", &block[0], block.size() - sizeof(bitcoin_msg_header));
 }
 
 void P2PRelayer::request_mempool() {
-	if (!connected)
+	if (connected != 2)
 		return;
-	std::lock_guard<std::mutex> lock(send_mutex);
 	std::vector<unsigned char> msg(sizeof(bitcoin_msg_header));
 	send_message("mempool", &msg[0], 0);
 }
