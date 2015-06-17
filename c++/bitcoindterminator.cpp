@@ -19,7 +19,7 @@
 #include "crypto/sha2.h"
 #include "mruset.h"
 #include "utils.h"
-#include "serverprocess.h"
+#include "connection.h"
 
 
 
@@ -27,32 +27,27 @@ char* location;
 /************************
  **** P2P Connection ****
  ************************/
-class P2PConnection {
+class P2PConnection : public Connection {
 private:
 	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> provide_block;
 	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
-	SERVER_DECLARE_CLASS_VARS
+	std::mutex seen_mutex;
+	mruset<std::vector<unsigned char> > txnAlreadySeen;
+	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 
 public:
 	P2PConnection(int sockIn, std::string hostIn,
 				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)>& provide_block_in,
 				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: provide_block(provide_block_in), provide_transaction(provide_transaction_in),
-		SERVER_DECLARE_CONSTRUCTOR_EXTENDS_AND_BODY
-	}
-
-	~P2PConnection() {
-		SERVER_DECLARE_DESTRUCTOR
-	}
-
-	SERVER_DECLARE_FUNCTIONS(P2PConnection)
+			: Connection(sockIn, hostIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in)
+	{}
 
 private:
-	void net_process() {
+	void net_process(const std::function<void(const char*)>& disconnect) {
 		while (true) {
 			struct bitcoin_msg_header header;
-			if (read_all(sock, (char*)&header, sizeof(header)) != sizeof(header))
+			if (read_all((char*)&header, sizeof(header)) != sizeof(header))
 				return disconnect("failed to read message header");
 
 			if (header.magic != BITCOIN_MAGIC)
@@ -66,7 +61,7 @@ private:
 				return disconnect("got message too large");
 
 			auto msg = std::make_shared<std::vector<unsigned char> > (sizeof(struct bitcoin_msg_header) + uint32_t(header.length));
-			if (read_all(sock, (char*)&(*msg)[sizeof(struct bitcoin_msg_header)], header.length) != int(header.length))
+			if (read_all((char*)&(*msg)[sizeof(struct bitcoin_msg_header)], header.length) != int(header.length))
 				return disconnect("failed to read message");
 
 			unsigned char fullhash[32];
@@ -93,13 +88,11 @@ private:
 				static_assert(BITCOIN_UA_LENGTH == 27 + 7 + 2 /* 27 + 7 + '/' + '\0' */, "BITCOIN_UA changed in header but file not updated");
 
 				prepare_message("version", (unsigned char*)&version_msg, sizeof(struct bitcoin_version));
-				if (send_all(sock, (char*)&version_msg, sizeof(struct bitcoin_version_with_header)) != sizeof(struct bitcoin_version_with_header))
-					return disconnect("failed to send version message");
+				do_send_bytes((char*)&version_msg, sizeof(struct bitcoin_version_with_header));
 
 				struct bitcoin_msg_header verack_header;
 				prepare_message("verack", (unsigned char*)&verack_header, 0);
-				if (send_all(sock, (char*)&verack_header, sizeof(struct bitcoin_msg_header)) != sizeof(struct bitcoin_msg_header))
-					return disconnect("failed to send verack");
+				do_send_bytes((char*)&verack_header, sizeof(struct bitcoin_msg_header));
 
 				continue;
 			} else if (!strncmp(header.command, "verack", strlen("verack"))) {
@@ -115,12 +108,10 @@ private:
 			if (!strncmp(header.command, "ping", strlen("ping"))) {
 				memcpy(&header.command, "pong", sizeof("pong"));
 				memcpy(&(*msg)[0], &header, sizeof(struct bitcoin_msg_header));
-				std::lock_guard<std::mutex> lock(send_mutex);
-				if (send_all(sock, (char*)&(*msg)[0], sizeof(struct bitcoin_msg_header) + header.length) != int64_t(sizeof(struct bitcoin_msg_header) + header.length))
-					return disconnect("failed to send pong");
+				do_send_bytes((char*)&(*msg)[0], sizeof(struct bitcoin_msg_header) + header.length);
 				continue;
 			} else if (!strncmp(header.command, "inv", strlen("inv"))) {
-				std::lock_guard<std::mutex> lock(send_mutex);
+				std::lock_guard<std::mutex> lock(seen_mutex);
 
 				try {
 					std::set<std::vector<unsigned char> > setRequestBlocks;
@@ -166,9 +157,7 @@ private:
 						}
 
 						prepare_message("getdata", (unsigned char*)&getdataMsg[0], invCount.size() + setRequestBlocks.size()*36);
-						if (send_all(sock, (char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36) !=
-								int(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36))
-							return disconnect("error sending getdata");
+						do_send_bytes((char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestBlocks.size()*36);
 
 						for (auto& hash : setRequestBlocks) {
 							struct timeval tv;
@@ -193,9 +182,7 @@ private:
 						}
 
 						prepare_message("getdata", (unsigned char*)&getdataMsg[0], invCount.size() + setRequestTxn.size()*36);
-						if (send_all(sock, (char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestTxn.size()*36) !=
-								int(sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestTxn.size()*36))
-							return disconnect("error sending getdata");
+						do_send_bytes((char*)&getdataMsg[0], sizeof(struct bitcoin_msg_header) + invCount.size() + setRequestTxn.size()*36);
 					}
 				} catch (read_exception) {
 					return disconnect("failed to process inv");
@@ -216,32 +203,19 @@ public:
 	void receive_transaction(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		if (connected != 2)
 			return;
-
-		if (!send_mutex.try_lock())
-			return;
-
-		if (total_waiting_size >= 1500000 || !txnAlreadySeen.insert(hash).second) {
-			send_mutex.unlock();
-			return;
-		}
-
-		outbound_secondary_queue.push_back(tx);
-		total_waiting_size += tx->size();
-		cv.notify_all();
-		send_mutex.unlock();
+		maybe_send_bytes(tx);
 	}
 
 	void receive_block(const std::vector<unsigned char> hash, const std::shared_ptr<std::vector<unsigned char> >& block) {
 		if (connected != 2)
 			return;
 
-		std::lock_guard<std::mutex> lock(send_mutex);
-		if (total_waiting_size >= 3000000 || !blocksAlreadySeen.insert(hash).second)
-			return;
-
-		outbound_primary_queue.push_back(block);
-		total_waiting_size += block->size();
-		cv.notify_all();
+		{
+			std::lock_guard<std::mutex> lock(seen_mutex);
+			if (!blocksAlreadySeen.insert(hash).second)
+				return;
+		}
+		do_send_bytes(block);
 	}
 };
 
@@ -314,7 +288,7 @@ int main(int argc, char** argv) {
 				else
 					set = &localSet;
 				for (auto it = set->begin(); it != set->end(); it++) {
-					if (!(*it)->disconnectFlags)
+					if (!(*it)->getDisconnectFlags())
 						(*it)->receive_block(fullhash, bytes);
 				}
 			}
@@ -341,7 +315,7 @@ int main(int argc, char** argv) {
 			else
 				set = &localSet;
 			for (auto it = set->begin(); it != set->end(); it++) {
-				if (!(*it)->disconnectFlags)
+				if (!(*it)->getDisconnectFlags())
 					(*it)->receive_transaction(fullhash, bytes);
 			}
 		};
@@ -404,7 +378,7 @@ int main(int argc, char** argv) {
 
 		std::lock_guard<std::mutex> lock(list_mutex);
 		for (auto it = blockSet.begin(); it != blockSet.end();) {
-			if ((*it)->disconnectFlags & DISCONNECT_COMPLETE) {
+			if ((*it)->getDisconnectFlags() & DISCONNECT_COMPLETE) {
 				auto rm = it++; auto item = *rm;
 				txesSet.erase(item);
 				blockSet.erase(rm);
@@ -413,7 +387,7 @@ int main(int argc, char** argv) {
 				it++;
 		}
 		for (auto it = localSet.begin(); it != localSet.end();) {
-			if ((*it)->disconnectFlags & DISCONNECT_COMPLETE) {
+			if ((*it)->getDisconnectFlags() & DISCONNECT_COMPLETE) {
 				auto rm = it++; auto item = *rm;
 				localSet.erase(rm);
 				delete item;

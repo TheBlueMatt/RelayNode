@@ -20,7 +20,7 @@
 #include "relayprocess.h"
 #include "utils.h"
 #include "p2pclient.h"
-#include "serverprocess.h"
+#include "connection.h"
 
 
 
@@ -29,7 +29,7 @@
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
-class RelayNetworkClient {
+class RelayNetworkClient : public Connection {
 	//TODO: Accept old versions too
 private:
 	const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
@@ -40,8 +40,6 @@ private:
 
 	RelayNodeCompressor compressor;
 
-	SERVER_DECLARE_CLASS_VARS
-
 public:
 	time_t lastDupConnect = 0;
 
@@ -49,24 +47,18 @@ public:
 						const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*)>& connected_callback_in)
-			: provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
-			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), // compressor may be exchanged if "toucan twink"
-		SERVER_DECLARE_CONSTRUCTOR_EXTENDS_AND_BODY
-	}
-
-	~RelayNetworkClient() {
-		SERVER_DECLARE_DESTRUCTOR
-	}
-
-	SERVER_DECLARE_FUNCTIONS(RelayNetworkClient)
+			: Connection(sockIn, hostIn), 
+			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
+			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false) // compressor may be exchanged if "toucan twink"
+	{}
 
 private:
-	void net_process() {
+	void net_process(const std::function<void(const char*)>& disconnect) {
 		compressor.reset();
 
 		while (true) {
 			relay_msg_header header;
-			if (read_all(sock, (char*)&header, 4*3) != 4*3)
+			if (read_all((char*)&header, 4*3) != 4*3)
 				return disconnect("failed to read message header");
 
 			if (header.magic != RELAY_MAGIC_BYTES)
@@ -79,15 +71,13 @@ private:
 
 			if (header.type == VERSION_TYPE) {
 				char data[message_size];
-				if (read_all(sock, data, message_size) < (int64_t)(message_size))
+				if (read_all(data, message_size) < (int64_t)(message_size))
 					return disconnect("failed to read version message");
 
 				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size)))) {
 					relay_msg_header version_header = { RELAY_MAGIC_BYTES, MAX_VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
-					if (send_all(sock, (char*)&version_header, sizeof(version_header)) != sizeof(version_header))
-						return disconnect("failed to write max version header");
-					if (send_all(sock, VERSION_STRING, strlen(VERSION_STRING)) != strlen(VERSION_STRING))
-						return disconnect("failed to write max version string");
+					do_send_bytes((char*)&version_header, sizeof(version_header));
+					do_send_bytes(VERSION_STRING, strlen(VERSION_STRING));
 
 					if (!strncmp("toucan twink", data, std::min(sizeof("toucan twink"), size_t(message_size))))
 						compressor = RelayNodeCompressor(true);
@@ -96,19 +86,19 @@ private:
 				}
 
 				relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(message_size) };
-				if (send_all(sock, (char*)&version_header, sizeof(version_header)) != sizeof(version_header))
-					return disconnect("failed to write version header");
-				if (send_all(sock, data, message_size) != message_size)
-					return disconnect("failed to write version string");
+				do_send_bytes((char*)&version_header, sizeof(version_header));
+				do_send_bytes(data, message_size);
 
 				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), data);
+				get_send_mutex();
 				connected = 2;
-				connected_callback(this); // Called unlocked
+				connected_callback(this); // Called with send_mutex!
+				release_send_mutex();
 			} else if (connected != 2) {
 				return disconnect("got non-version before version");
 			} else if (header.type == MAX_VERSION_TYPE) {
 				char data[message_size];
-				if (read_all(sock, data, message_size) < (int64_t)(message_size))
+				if (read_all(data, message_size) < (int64_t)(message_size))
 					return disconnect("failed to read max_version string");
 
 				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
@@ -143,7 +133,7 @@ private:
 					return disconnect("got freely relayed transaction too large");
 
 				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
-				if (read_all(sock, (char*)&(*tx)[0], message_size) < (int64_t)(message_size))
+				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
 					return disconnect("failed to read loose transaction data");
 
 				compressor.recv_tx(tx);
@@ -153,55 +143,23 @@ private:
 		}
 	}
 
-	bool in_initial_txn = false;
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
 		if (connected != 2)
 			return;
 
-		if (!in_initial_txn)
-			send_mutex.lock();
-
-		if (total_waiting_size > 4000000) {
-			if (!in_initial_txn)
-				send_mutex.unlock();
-			return disconnect_from_outside("total_waiting_size blew up :(");;
-		}
-
-		outbound_primary_queue.push_back(tx); // Have to strictly order all messages
-		total_waiting_size += tx->size();
-
-		if (!in_initial_txn) {
-			cv.notify_all();
-			send_mutex.unlock();
-		}
-	}
-
-	void initial_txn_start() {
-		send_mutex.lock();
-		in_initial_txn = true;
-	}
-
-	void initial_txn_done() {
-		initial_outbound_throttle = true;
-		in_initial_txn = false;
-		send_mutex.unlock();
+		do_send_bytes(tx);
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
 		if (connected != 2)
 			return;
 
-		std::lock_guard<std::mutex> lock(send_mutex);
-		if (total_waiting_size > 4000000)
-			return disconnect_from_outside("total_waiting_size blew up :(");;
-
-		outbound_primary_queue.push_back(block);
+		get_send_mutex();
+		do_send_bytes(block);
 		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-		outbound_primary_queue.push_back(std::make_shared<std::vector<unsigned char> >((unsigned char*)&header, ((unsigned char*)&header) + sizeof(header)));
-
-		total_waiting_size += block->size() + sizeof(header);
-		cv.notify_all();
+		do_send_bytes((char*)&header, sizeof(header));
+		release_send_mutex();
 	}
 };
 
@@ -210,11 +168,9 @@ public:
 	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
 
 	void relay_node_connected(RelayNetworkClient* client) {
-		client->initial_txn_start();
 		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
 			client->receive_transaction(tx_to_msg(tx));
 		});
-		client->initial_txn_done();
 	}
 };
 
@@ -291,7 +247,7 @@ int main(int argc, char** argv) {
 							if (!std::get<1>(tuple)) {
 								auto block = std::get<0>(tuple);
 								for (const auto& client : clientMap) {
-									if (!client.second->disconnectFlags)
+									if (!client.second->getDisconnectFlags())
 										client.second->receive_block(block);
 								}
 							}
@@ -312,7 +268,7 @@ int main(int argc, char** argv) {
 						auto tx = compressor.get_relay_transaction(bytes);
 						if (tx.use_count()) {
 							for (const auto& client : clientMap) {
-								if (!client.second->disconnectFlags)
+								if (!client.second->getDisconnectFlags())
 									client.second->receive_transaction(tx);
 							}
 							localP2P->receive_transaction(bytes);
@@ -357,7 +313,7 @@ int main(int argc, char** argv) {
 							if (!insane) {
 								auto block = std::get<0>(tuple);
 								for (const auto& client : clientMap) {
-									if (!client.second->disconnectFlags)
+									if (!client.second->getDisconnectFlags())
 										client.second->receive_block(block);
 								}
 								localP2P->receive_block(bytes);
@@ -400,7 +356,7 @@ int main(int argc, char** argv) {
 				if (!insane) {
 					auto block = std::get<0>(tuple);
 					for (const auto& client : clientMap) {
-						if (!client.second->disconnectFlags)
+						if (!client.second->getDisconnectFlags())
 							client.second->receive_block(block);
 					}
 					localP2P->receive_block(*bytes);
@@ -435,7 +391,7 @@ int main(int argc, char** argv) {
 			{
 				std::lock_guard<std::mutex> lock(map_mutex);
 				for (auto it = clientMap.begin(); it != clientMap.end();) {
-					if (it->second->disconnectFlags & DISCONNECT_COMPLETE) {
+					if (it->second->getDisconnectFlags() & DISCONNECT_COMPLETE) {
 						fprintf(stderr, "%lld: Culled %s, have %lu relay clients\n", (long long) time(NULL), it->first.c_str(), clientMap.size() - 1);
 						delete it->second;
 						clientMap.erase(it++);
@@ -466,7 +422,7 @@ int main(int argc, char** argv) {
 				const auto& client = clientMap[host];
 				if (client->lastDupConnect < (time(NULL) - 60)) {
 					client->lastDupConnect = time(NULL);
-					fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %d)\n", (long long) time(NULL), host.c_str(), client->disconnectFlags.load());
+					fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %d)\n", (long long) time(NULL), host.c_str(), client->getDisconnectFlags());
 				}
 			}
 			close(new_fd);
