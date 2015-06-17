@@ -169,3 +169,43 @@ void Connection::net_write() {
 			return disconnect("failed to send msg");
 	}
 }
+
+void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
+	OutboundConnection* old = (OutboundConnection*) connection.fetch_and(0);
+	if (old)
+		old->disconnect_from_outside(disconnectReason.c_str());
+
+	on_disconnect();
+
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	while (old && !(old->getDisconnectFlags() & DISCONNECT_COMPLETE)) {
+		printf("Disconnect of outbound connection still not complete (status is %d)\n", old->getDisconnectFlags());
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+
+	do_connect();
+	delete old;
+}
+
+void OutboundPersistentConnection::do_connect() {
+	int sock = socket(AF_INET6, SOCK_STREAM, 0);
+	if (sock <= 0)
+		return reconnect("unable to create socket");
+
+	sockaddr_in6 addr;
+	if (!lookup_address(serverHost.c_str(), &addr)) {
+		close(sock);
+		return reconnect("unable to lookup host");
+	}
+
+	int v6only = 0;
+	setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
+
+	addr.sin6_port = htons(serverPort);
+	if (connect(sock, (struct sockaddr*)&addr, sizeof(addr))) {
+		close(sock);
+		return reconnect("failed to connect()");
+	}
+
+	connection.exchange((unsigned long) new OutboundConnection(sock, this));
+}

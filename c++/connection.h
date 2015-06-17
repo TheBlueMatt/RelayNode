@@ -81,4 +81,56 @@ private:
 	void net_write();
 };
 
+class OutboundPersistentConnection {
+private:
+	class OutboundConnection : public Connection {
+	private:
+		OutboundPersistentConnection *parent;
+		void net_process(const std::function<void(const char*)>& disconnect) { parent->net_process(disconnect); }
+
+	public:
+		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
+				Connection(sockIn, parentIn->serverHost, [&](void) { parent->reconnect("THIS SHOULD NEVER PRINT"); }),
+				parent(parentIn)
+			{ construction_done(); }
+
+		ssize_t read_all(char *buf, size_t nbyte) { return Connection::read_all(buf, nbyte); }
+		void do_send_bytes(const char *buf, size_t nbyte) { return Connection::do_send_bytes(buf, nbyte); }
+		void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes) { return Connection::do_send_bytes(bytes); }
+	};
+
+	std::string serverHost;
+	uint16_t serverPort;
+
+	std::atomic<unsigned long> connection;
+	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
+
+public:
+	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn) :
+			serverHost(serverHostIn), serverPort(serverPortIn), connection(0)
+		{}
+
+protected:
+	void construction_done() { do_connect(); }
+
+	virtual void on_disconnect()=0;
+	virtual void net_process(const std::function<void(const char*)>& disconnect)=0;
+	ssize_t read_all(char *buf, size_t nbyte) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte); } // Only allowed from within net_process
+
+	void maybe_do_send_bytes(const char *buf, size_t nbyte) {
+		OutboundConnection* conn = (OutboundConnection*)connection.load();
+		if (conn)
+			conn->do_send_bytes(buf, nbyte);
+	}
+	void maybe_do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes) {
+		OutboundConnection* conn = (OutboundConnection*)connection.load();
+		if (conn)
+			conn->do_send_bytes(bytes);
+	}
+
+private:
+	void reconnect(std::string disconnectReason);
+	void do_connect();
+};
+
 #endif
