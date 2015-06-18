@@ -92,11 +92,12 @@ private:
 		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
 				Connection(sockIn, parentIn->serverHost, [&](void) { parent->reconnect("THIS SHOULD NEVER PRINT"); }),
 				parent(parentIn)
-			{ construction_done(); }
+			{ }
 
 		ssize_t read_all(char *buf, size_t nbyte) { return Connection::read_all(buf, nbyte); }
 		void do_send_bytes(const char *buf, size_t nbyte) { return Connection::do_send_bytes(buf, nbyte); }
 		void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes) { return Connection::do_send_bytes(bytes); }
+		void construction_done() { Connection::construction_done(); }
 	};
 
 	std::string serverHost;

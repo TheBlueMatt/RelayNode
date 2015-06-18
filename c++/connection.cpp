@@ -207,5 +207,7 @@ void OutboundPersistentConnection::do_connect() {
 		return reconnect("failed to connect()");
 	}
 
-	connection.exchange((unsigned long) new OutboundConnection(sock, this));
+	OutboundConnection* new_conn = new OutboundConnection(sock, this);
+	assert(!connection.exchange((unsigned long)new_conn));
+	new_conn->construction_done();
 }
