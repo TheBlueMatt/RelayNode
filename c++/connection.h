@@ -112,7 +112,7 @@ public:
 		{}
 
 protected:
-	void construction_done() { do_connect(); }
+	void construction_done() { std::thread(do_connect, this).detach(); }
 
 	virtual void on_disconnect()=0;
 	virtual void net_process(const std::function<void(const char*)>& disconnect)=0;
@@ -131,7 +131,7 @@ protected:
 
 private:
 	void reconnect(std::string disconnectReason);
-	void do_connect();
+	static void do_connect(OutboundPersistentConnection* me);
 };
 
 #endif
