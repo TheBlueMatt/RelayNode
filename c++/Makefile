@@ -29,7 +29,7 @@ else
   ifeq ($(variant),bench)
     COMMON_CXXFLAGS += -DBENCH
   endif
-  COMMON_CXXFLAGS += -DNDEBUG -O3
+  COMMON_CXXFLAGS += -DNDEBUG -O0
   ifneq ($(variant),generic)
     # In my tests O3/march made quite a big difference
     COMMON_CXXFLAGS += -march=native -mtune=native
