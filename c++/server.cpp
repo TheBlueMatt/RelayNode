@@ -181,7 +181,8 @@ public:
 				const std::function<void (std::vector<unsigned char>&, struct timeval)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const header_func_type *provide_header_in=NULL, bool requestAfterSend=false) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_header_in, requestAfterSend) {};
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_header_in, requestAfterSend)
+		{ construction_done(); }
 
 private:
 	std::vector<unsigned char> generate_version() {

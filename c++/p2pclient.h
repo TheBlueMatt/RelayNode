@@ -10,7 +10,7 @@
 #include "connection.h"
 
 
-class P2PRelayer : OutboundPersistentConnection {
+class P2PRelayer : public OutboundPersistentConnection {
 protected:
 	typedef void (header_func_type) (std::vector<unsigned char>&);
 
@@ -31,7 +31,7 @@ public:
 			: OutboundPersistentConnection(serverHostIn, serverPortIn),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in),
 			provide_headers(provide_headers_in), requestAfterSend(requestAfterSendIn), connected(0)
-	{ construction_done(); }
+	{}
 
 protected:
 	virtual std::vector<unsigned char> generate_version() =0;
