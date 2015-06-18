@@ -100,8 +100,8 @@ private:
 		void construction_done() { Connection::construction_done(); }
 	};
 
-	std::string serverHost;
-	uint16_t serverPort;
+	const std::string serverHost;
+	const uint16_t serverPort;
 
 	std::atomic<unsigned long> connection;
 	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
