@@ -121,7 +121,7 @@ private:
 					for (unsigned int i = 0; i < fullhash.size(); i++)
 						printf("%02x", fullhash[fullhash.size() - i - 1]);
 
-					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", epoch_secs_lu(read_finish), host.c_str(),
+					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", epoch_millis_lu(read_finish), host.c_str(),
 													(unsigned)std::get<0>(res), bytes_sent, (unsigned)std::get<1>(res)->size(),
 													to_millis_double(read_finish - read_start), to_millis_double(send_queued - read_finish));
 				}
@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
 
-						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_secs_lu(send_start), argv[1],
+						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_millis_lu(send_start), argv[1],
 														bytes.size(), bytes_sent, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
@@ -340,7 +340,7 @@ int main(int argc, char** argv) {
 						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
-						printf(" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_secs_lu(send_start), "127.0.0.1",
+						printf(" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_millis_lu(send_start), "127.0.0.1",
 														bytes.size(), bytes_sent, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
