@@ -259,7 +259,7 @@ public:
 class P2PClient : public P2PRelayer {
 public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
-				const std::function<void (std::vector<unsigned char>&, struct timeval)>& provide_block_in,
+				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in) :
 			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, true)
 		{ construction_done(); }
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
 
 	RelayNetworkClient* relayClient;
 	P2PClient p2p(argv[2], std::stoul(argv[3]),
-					[&](std::vector<unsigned char>& bytes, struct timeval) { relayClient->receive_block(bytes); },
+					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { relayClient->receive_transaction(bytes); });
 	relayClient = new RelayNetworkClient(argv[1],
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },

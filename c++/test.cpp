@@ -20,8 +20,6 @@ void do_nothing(...) {}
 
 std::linear_congruential_engine<std::uint_fast32_t, 48271, 0, 2147483647> engine(42);
 
-#define to_millis(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
-
 void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std::vector<unsigned char> > >& txVectors, float includeP) {
 	std::vector<unsigned char>::const_iterator readit = block.begin();
 	move_forward(readit, sizeof(struct bitcoin_msg_header), block.end());
@@ -80,7 +78,7 @@ void recv_block() {
 		printf("ERROR Decompressing block %s\n", std::get<2>(res));
 		exit(2);
 	} else
-		PRINT_TIME("Decompressed block in %lf ms\n", to_millis(decompressed - start));
+		PRINT_TIME("Decompressed block in %lf ms\n", to_millis_double(decompressed - start));
 	decompressed_block = std::get<1>(res);
 }
 
@@ -135,7 +133,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		printf("maybe_compress_block not consistent???\n");
 		exit(9);
 	}
-	PRINT_TIME("Compressed from %lu to %lu in %lf ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis(compressed - start), txVectors.size());
+	PRINT_TIME("Compressed from %lu to %lu in %lf ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis_double(compressed - start), txVectors.size());
 
 	struct relay_msg_header header;
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
@@ -212,7 +210,7 @@ int main() {
 #endif
 		test_compress_block(lastBlock, allTxn);
 
-	printf("Total time spent compressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", compress_runs, to_millis(total_compress_time), to_millis(total_compress_time / compress_runs), to_millis(min_compress_time), to_millis(max_compress_time));
-	printf("Total time spent decompressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis(total_decompress_time), to_millis(total_decompress_time / decompress_runs), to_millis(min_decompress_time), to_millis(max_decompress_time));
+	printf("Total time spent compressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", compress_runs, to_millis_double(total_compress_time), to_millis_double(total_compress_time / compress_runs), to_millis_double(min_compress_time), to_millis_double(max_compress_time));
+	printf("Total time spent decompressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis_double(total_decompress_time), to_millis_double(total_decompress_time / decompress_runs), to_millis_double(min_decompress_time), to_millis_double(max_decompress_time));
 	return 0;
 }

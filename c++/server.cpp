@@ -33,7 +33,7 @@ class RelayNetworkClient : public Connection {
 private:
 	std::atomic_int connected;
 
-	const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_block;
+	const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<void (RelayNetworkClient*)> connected_callback;
 
@@ -45,7 +45,7 @@ public:
 	time_t lastDupConnect = 0;
 
 	RelayNetworkClient(int sockIn, std::string hostIn,
-						const std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_block_in,
+						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*)>& connected_callback_in)
 			: Connection(sockIn, hostIn, NULL), connected(0),
@@ -107,26 +107,23 @@ private:
 				else
 					return disconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
-				struct timeval start, finish_read;
-
-				gettimeofday(&start, NULL);
+				std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
 				auto res = compressor.decompress_relay_block(sock, message_size);
 				if (std::get<2>(res))
 					return disconnect(std::get<2>(res));
-				gettimeofday(&finish_read, NULL);
+				std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
 
-				struct timeval *finish_send = provide_block(this, std::get<1>(res));
+				const std::vector<unsigned char>& fullhash = *std::get<3>(res).get();
+				size_t bytes_sent = provide_block(this, std::get<1>(res), fullhash);
+				std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
 
-				if (finish_send) {
-					std::vector<unsigned char>& fullhash = *std::get<3>(res).get();
+				if (bytes_sent) {
 					for (unsigned int i = 0; i < fullhash.size(); i++)
 						printf("%02x", fullhash[fullhash.size() - i - 1]);
 
-					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %u TIMES: %ld %ld\n", uint64_t(finish_read.tv_sec)*1000 + uint64_t(finish_read.tv_usec)/1000, host.c_str(),
-													(unsigned)std::get<0>(res), (unsigned)std::get<1>(res)->size(),
-													int64_t(finish_read.tv_sec - start.tv_sec)*1000 + (int64_t(finish_read.tv_usec) - start.tv_usec)/1000,
-													int64_t(finish_send->tv_sec - finish_read.tv_sec)*1000 + (int64_t(finish_send->tv_usec) - finish_read.tv_usec)/1000);
-					delete finish_send;
+					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", epoch_secs_lu(read_finish), host.c_str(),
+													(unsigned)std::get<0>(res), bytes_sent, (unsigned)std::get<1>(res)->size(),
+													to_millis_double(read_finish - read_start), to_millis_double(send_queued - read_finish));
 				}
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
@@ -178,7 +175,7 @@ public:
 class P2PClient : public P2PRelayer {
 public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
-				const std::function<void (std::vector<unsigned char>&, struct timeval)>& provide_block_in,
+				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const header_func_type *provide_header_in=NULL, bool requestAfterSend=false) :
 			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_header_in, requestAfterSend)
@@ -234,36 +231,45 @@ int main(int argc, char** argv) {
 	// the client and because that is the case we want to optimize for)
 
 	trustedP2P = new P2PClient(argv[1], std::stoul(argv[2]),
-					[&](std::vector<unsigned char>& bytes, struct timeval read_start) {
-						struct timeval send_start, send_end;
-						gettimeofday(&send_start, NULL);
-
+					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) {
 						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
 							return;
+
+						std::chrono::system_clock::time_point send_start(std::chrono::system_clock::now());
+
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
+						const char* insane;
+						size_t bytes_sent = 0;
 						{
 							std::lock_guard<std::mutex> lock(map_mutex);
 							auto tuple = compressor.maybe_compress_block(fullhash, bytes, false);
-							if (!std::get<1>(tuple)) {
+							insane = std::get<1>(tuple);
+							if (!insane) {
 								auto block = std::get<0>(tuple);
 								for (const auto& client : clientMap) {
 									if (!client.second->getDisconnectFlags())
 										client.second->receive_block(block);
 								}
+								bytes_sent = block->size();
 							}
-							localP2P->receive_block(bytes);
-							gettimeofday(&send_end, NULL);
 						}
+						if (insane) {
+							for (unsigned int i = 0; i < fullhash.size(); i++)
+								printf("%02x", fullhash[fullhash.size() - i - 1]);
+							printf(" INSANE %s TRUSTEDP2P\n", insane);
+							return;
+						} else
+							localP2P->receive_block(bytes);
 
+						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
 
-						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_end.tv_sec)*1000 + uint64_t(send_end.tv_usec)/1000, argv[1],
-														bytes.size(), bytes.size(),
-														int64_t(send_start.tv_sec - read_start.tv_sec)*1000 + (int64_t(send_start.tv_usec) - read_start.tv_usec)/1000,
-														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
+						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_secs_lu(send_start), argv[1],
+														bytes.size(), bytes_sent, bytes.size(),
+														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						std::lock_guard<std::mutex> lock(map_mutex);
@@ -297,17 +303,17 @@ int main(int argc, char** argv) {
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
-					[&](std::vector<unsigned char>& bytes, struct timeval read_start) {
+					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point& read_start) {
 						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
 							return;
 
-						struct timeval send_start, send_end;
-						gettimeofday(&send_start, NULL);
+						std::chrono::system_clock::time_point send_start(std::chrono::system_clock::now());
 
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
 						const char* insane;
+						size_t bytes_sent = 0;
 						{
 							std::lock_guard<std::mutex> lock(map_mutex);
 							auto tuple = compressor.maybe_compress_block(fullhash, bytes, true);
@@ -318,8 +324,7 @@ int main(int argc, char** argv) {
 									if (!client.second->getDisconnectFlags())
 										client.second->receive_block(block);
 								}
-								localP2P->receive_block(bytes);
-								gettimeofday(&send_end, NULL);
+								bytes_sent = block->size();
 							}
 						}
 						if (insane) {
@@ -327,30 +332,29 @@ int main(int argc, char** argv) {
 								printf("%02x", fullhash[fullhash.size() - i - 1]);
 							printf(" INSANE %s LOCALP2P\n", insane);
 							return;
-						}
+						} else
+							localP2P->receive_block(bytes);
 
 						trustedP2P->receive_block(bytes);
 
+						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
 						for (unsigned int i = 0; i < fullhash.size(); i++)
 							printf("%02x", fullhash[fullhash.size() - i - 1]);
-						printf(" BLOCK %lu %s LOCALP2P %lu / %lu TIMES: %ld %ld\n", uint64_t(send_start.tv_sec)*1000 + uint64_t(send_start.tv_usec)/1000, "127.0.0.1",
-														bytes.size(), bytes.size(),
-														int64_t(send_start.tv_sec - read_start.tv_sec)*1000 + (int64_t(send_start.tv_usec) - read_start.tv_usec)/1000,
-														int64_t(send_end.tv_sec - send_start.tv_sec)*1000 + (int64_t(send_end.tv_usec) - send_start.tv_usec)/1000);
+						printf(" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_secs_lu(send_start), "127.0.0.1",
+														bytes.size(), bytes_sent, bytes.size(),
+														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
 					});
 
-	std::function<struct timeval* (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayBlock =
-		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
+	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
+		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {
 			if (bytes->size() < sizeof(struct bitcoin_msg_header) + 80)
-				return (struct timeval*)NULL;
-			std::vector<unsigned char> fullhash(32);
-			getblockhash(fullhash, *bytes, sizeof(struct bitcoin_msg_header));
+				return (size_t)0;
 
-			struct timeval *tv = new struct timeval;
 			const char* insane;
+			size_t bytes_sent = 0;
 			{
 				std::lock_guard<std::mutex> lock(map_mutex);
 				auto tuple = compressor.maybe_compress_block(fullhash, *bytes, true);
@@ -361,20 +365,20 @@ int main(int argc, char** argv) {
 						if (!client.second->getDisconnectFlags())
 							client.second->receive_block(block);
 					}
-					localP2P->receive_block(*bytes);
-					gettimeofday(tv, NULL);
+					bytes_sent = block->size();
 				}
 			}
 			if (insane) {
 				for (unsigned int i = 0; i < fullhash.size(); i++)
 					printf("%02x", fullhash[fullhash.size() - i - 1]);
 				printf(" INSANE %s UNTRUSTEDRELAY %s\n", insane, from->host.c_str());
-				return (struct timeval*)NULL;
-			}
+				return bytes_sent;
+			} else
+				localP2P->receive_block(*bytes);
 
 			trustedP2P->receive_block(*bytes);
 
-			return tv;
+			return bytes_sent;
 		};
 
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =

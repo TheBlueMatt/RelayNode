@@ -3,6 +3,7 @@
 #include "crypto/sha2.h"
 
 #include <thread>
+#include <chrono>
 #include <string.h>
 #include <unistd.h>
 #include <sys/time.h>
@@ -50,8 +51,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 
 		uint32_t prependedHeaderSize = (!strncmp(header.command, "block", strlen("block"))) ? sizeof(struct bitcoin_msg_header) : 0;
 
-		struct timeval read_start;
-		gettimeofday(&read_start, NULL);
+		std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
 
 		auto msg = std::make_shared<std::vector<unsigned char> > (prependedHeaderSize + uint32_t(header.length));
 		if (read_all((char*)&(*msg)[prependedHeaderSize], header.length) != int(header.length))

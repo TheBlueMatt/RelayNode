@@ -15,7 +15,7 @@ protected:
 	typedef void (header_func_type) (std::vector<unsigned char>&);
 
 private:
-	const std::function<void (std::vector<unsigned char>&, struct timeval)> provide_block;
+	const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)> provide_block;
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 
 	header_func_type *provide_headers;
@@ -25,7 +25,7 @@ private:
 
 public:
 	P2PRelayer(const char* serverHostIn, uint16_t serverPortIn,
-				const std::function<void (std::vector<unsigned char>&, struct timeval)>& provide_block_in,
+				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				header_func_type *provide_headers_in=NULL, bool requestAfterSendIn=false)
 			: OutboundPersistentConnection(serverHostIn, serverPortIn),

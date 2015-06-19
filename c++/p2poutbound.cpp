@@ -30,7 +30,7 @@
 class P2PClient : public P2PRelayer {
 public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
-				const std::function<void (std::vector<unsigned char>&, struct timeval)>& provide_block_in,
+				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in) :
 			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in)
 		{ construction_done(); }
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
 
 	P2PClient* inbound;
 	P2PClient outbound(argv[1], std::stoul(argv[2]),
-					[&](std::vector<unsigned char>& bytes, struct timeval) {
+					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) {
 						struct timeval tv;
 						gettimeofday(&tv, NULL);
 						inbound->receive_block(bytes);
@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { inbound->receive_transaction(bytes); });
 	inbound = new P2PClient(argv[3], 8334,
-					[&](std::vector<unsigned char>& bytes, struct timeval) { outbound.receive_block(bytes); },
+					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { outbound.receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { });
 
 	while (true) { sleep(1000); }

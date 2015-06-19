@@ -124,6 +124,9 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
  *** Random stuff ***
  ********************/
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
+#define to_millis_double(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
+#define to_secs_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::seconds::period> >(t).count())
+#define epoch_secs_lu(t) to_secs_lu((t).time_since_epoch())
 
 /****************************************************************
  *** A mutex that gives acess to the count of waiting threads ***
