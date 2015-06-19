@@ -125,7 +125,7 @@ FlaggedArraySet::~FlaggedArraySet() {
 	deduper->removeFAS(this);
 }
 
-bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) { return backingMap.count(ElemAndFlag(e, false, allowDups)); }
+bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const { return backingMap.count(ElemAndFlag(e, false, allowDups)); }
 
 void FlaggedArraySet::remove_(size_t index) {
 	auto& rm = indexMap[index];
@@ -152,12 +152,13 @@ void FlaggedArraySet::remove_(size_t index) {
 	assert(foundRmTarget);
 #endif
 
-	if (index < size()/2) {
+	size_t size = this->size();
+	if (index < size/2) {
 		for (uint64_t i = 0; i < index; i++)
 			indexMap[i]->second++;
 		offset++;
 	} else
-		for (uint64_t i = index + 1; i < size(); i++)
+		for (uint64_t i = index + 1; i < size; i++)
 			indexMap[i]->second--;
 	backingMap.erase(rm);
 	indexMap.erase(indexMap.begin() + index);
@@ -216,7 +217,7 @@ void FlaggedArraySet::clear() {
 	backingMap.clear(); indexMap.clear();
 }
 
-void FlaggedArraySet::for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) {
+void FlaggedArraySet::for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	for (const auto& e : indexMap)
 		callback(e->first.elem);

@@ -50,16 +50,16 @@ private:
 	// The mutex is only used by memory deduper, FlaggedArraySet is not thread-safe
 	// It is taken by changes to backingMap, any touches to backingMap in the deduper thread, or any touches to elem
 	friend class Deduper;
-	WaitCountMutex mutex;
+	mutable WaitCountMutex mutex;
 
 public:
 	void clear();
 	FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn);
 	~FlaggedArraySet();
 
-	size_t size() { return backingMap.size(); }
-	size_t flagCount() { return flag_count; }
-	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e);
+	size_t size() const { return backingMap.size(); }
+	size_t flagCount() const { return flag_count; }
+	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e) const;
 
 	FlaggedArraySet& operator=(const FlaggedArraySet& o) {
 		maxSize = o.maxSize;
@@ -79,7 +79,7 @@ public:
 	int remove(const std::shared_ptr<std::vector<unsigned char> >& e);
 	std::shared_ptr<std::vector<unsigned char> > remove(int index);
 
-	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback);
+	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const;
 };
 
 #endif

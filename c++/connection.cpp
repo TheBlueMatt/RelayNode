@@ -206,7 +206,10 @@ void OutboundPersistentConnection::do_connect(OutboundPersistentConnection* me) 
 	}
 
 	OutboundConnection* new_conn = new OutboundConnection(sock, me);
-	unsigned long old_val = me->connection.exchange((unsigned long)new_conn);
+#ifndef NDEBUG
+	unsigned long old_val =
+#endif
+		me->connection.exchange((unsigned long)new_conn);
 	assert(old_val == 0);
 	new_conn->construction_done();
 }
