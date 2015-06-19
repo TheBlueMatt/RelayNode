@@ -172,20 +172,27 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
 	header->magic = BITCOIN_MAGIC;
 
 	unsigned char fullhash[32];
-	CSHA256 hash; // Probably not BE-safe
-	if (datalen)
-		hash.Write(headerAndData + sizeof(struct bitcoin_msg_header), datalen);
-	hash.Finalize(fullhash);
-	hash.Reset().Write(fullhash, sizeof(fullhash)).Finalize(fullhash);
+	double_sha256(headerAndData + sizeof(struct bitcoin_msg_header), fullhash, datalen);
 	memcpy(header->checksum, fullhash, sizeof(header->checksum));
 }
 
 /********************
  *** Random stuff ***
  ********************/
+void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte_count) {
+	CSHA256 hash;
+	if (byte_count)
+		hash.Write(input, byte_count).Finalize(res);
+	hash.Reset().Write(res, 32).Finalize(res);
+}
+
+void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char* input2, unsigned char* res) {
+	CSHA256 hash;
+	hash.Write(input, 32).Write(input2, 32).Finalize(res);
+	hash.Reset().Write(res, 32).Finalize(res);
+}
+
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset) {
 	assert(hashRes.size() == 32);
-	CSHA256 hash; // Probably not BE-safe
-	hash.Write(&block[offset], 80).Finalize(&hashRes[0]);
-	hash.Reset().Write(&hashRes[0], hashRes.size()).Finalize(&hashRes[0]);
+	return double_sha256(&block[offset], &hashRes[0], 80);
 }

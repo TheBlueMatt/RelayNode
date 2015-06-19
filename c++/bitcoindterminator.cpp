@@ -67,9 +67,7 @@ private:
 				return disconnect("failed to read message");
 
 			unsigned char fullhash[32];
-			CSHA256 hash;
-			hash.Write(&(*msg)[sizeof(struct bitcoin_msg_header)], header.length).Finalize(fullhash);
-			hash.Reset().Write(fullhash, sizeof(fullhash)).Finalize(fullhash);
+			double_sha256(&(*msg)[sizeof(struct bitcoin_msg_header)], fullhash, header.length);
 			if (memcmp((char*)fullhash, header.checksum, sizeof(header.checksum)))
 				return disconnect("got invalid message checksum");
 
@@ -278,9 +276,7 @@ int main(int argc, char** argv) {
 			if (bytes->size() < 80)
 				return;
 			std::vector<unsigned char> fullhash(32);
-			CSHA256 hash; // Probably not BE-safe
-			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], 80).Finalize(&fullhash[0]);
-			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+			getblockhash(fullhash, *bytes, sizeof(struct bitcoin_msg_header));
 
 			{
 				std::lock_guard<std::mutex> lock(list_mutex);
@@ -306,9 +302,7 @@ int main(int argc, char** argv) {
 	std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
 		[&](P2PConnection* from, std::shared_ptr<std::vector<unsigned char> >& bytes) {
 			std::vector<unsigned char> fullhash(32);
-			CSHA256 hash; // Probably not BE-safe
-			hash.Write(&(*bytes)[sizeof(struct bitcoin_msg_header)], bytes->size() - sizeof(struct bitcoin_msg_header)).Finalize(&fullhash[0]);
-			hash.Reset().Write(&fullhash[0], fullhash.size()).Finalize(&fullhash[0]);
+			double_sha256(&(*bytes)[sizeof(struct bitcoin_msg_header)], &fullhash[0], bytes->size() - sizeof(struct bitcoin_msg_header));
 
 			std::lock_guard<std::mutex> lock(list_mutex);
 			std::set<P2PConnection*> *set;

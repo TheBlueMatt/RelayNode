@@ -128,11 +128,8 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 			move_forward(readit, 4, block.end());
 
-			if (check_merkle) {
-				CSHA256 hash; // Probably not BE-safe
-				hash.Write(&(*txstart), readit - txstart).Finalize(&hashlist[i * 32]);
-				hash.Reset().Write(&hashlist[i * 32], 32).Finalize(&hashlist[i * 32]);
-			}
+			if (check_merkle)
+				double_sha256(&(*txstart), &hashlist[i * 32], readit - txstart);
 
 			auto lookupVector = std::make_shared<std::vector<unsigned char> >(txstart, readit);
 			int index = send_tx_cache.remove(lookupVector);
@@ -160,9 +157,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 				for (uint32_t i = 0; i < rowSize; i += 2) {
 					assert(i*stepCount < txcount && lastMax < txcount);
-					CSHA256 hash; // Probably not BE-safe
-					hash.Write(&hashlist[32 * i*stepCount], 32).Write(&hashlist[32 * std::min((i + 1)*stepCount, lastMax)], 32).Finalize(&hashlist[32 * i*stepCount]);
-					hash.Reset().Write(&hashlist[32 * i*stepCount], 32).Finalize(&hashlist[32 * i*stepCount]);
+					double_sha256_two_32_inputs(&hashlist[32 * i*stepCount], &hashlist[32 * std::min((i + 1)*stepCount, lastMax)], &hashlist[32 * i*stepCount]);
 				}
 				lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
 				stepCount *= 2;
