@@ -218,7 +218,8 @@ void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte
 #ifndef SHA256
 	CSHA256 hash;
 	if (byte_count)
-		hash.Write(input, byte_count).Finalize(res);
+		hash.Write(input, byte_count);
+	hash.Finalize(res);
 	hash.Reset().Write(res, 32).Finalize(res);
 #else
 	uint64_t pad_count = 1 + ((119 - (byte_count % 64)) % 64);
