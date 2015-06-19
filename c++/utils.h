@@ -126,9 +126,19 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
 void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte_count);
 void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char* input2, unsigned char* res);
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
+
+void print_hash(const unsigned char *input);
+
 #define to_millis_double(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
 #define to_millis_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::milliseconds::period> >(t).count())
 #define epoch_millis_lu(t) to_millis_lu((t).time_since_epoch())
+
+void do_assert(bool flag, const char* file, unsigned long line);
+#ifdef NDEBUG
+#define ALWAYS_ASSERT(cond) do_assert((cond), __FILE__, __LINE__)
+#else
+#define ALWAYS_ASSERT assert
+#endif
 
 /****************************************************************
  *** A mutex that gives acess to the count of waiting threads ***

@@ -20,7 +20,7 @@ public: // TODO: make private
 	const int sock;
 private:
 	std::mutex send_mutex;
-	bool outside_send_mutex_held;
+	int outside_send_mutex_token;
 
 	std::function<void(void)> on_disconnect;
 
@@ -37,7 +37,7 @@ public:
 	const std::string host;
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
-			sock(sockIn), outside_send_mutex_held(false), on_disconnect(on_disconnect_in),
+			sock(sockIn), outside_send_mutex_token(0xdeadbeef), on_disconnect(on_disconnect_in),
 			initial_outbound_throttle(true), total_waiting_size(0), disconnectFlags(0), host(hostIn)
 		{}
 
@@ -56,15 +56,15 @@ protected:
 	virtual void net_process(const std::function<void(const char*)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte);
 
-	void do_send_bytes(const char *buf, size_t nbyte) {
-		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte));
+	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
+		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
 	}
 
-	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes);
-	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes);
+	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
+	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
-	void get_send_mutex() { send_mutex.lock(); outside_send_mutex_held = true; }
-	void release_send_mutex() { outside_send_mutex_held = false; send_mutex.unlock(); }
+	int get_send_mutex() { send_mutex.lock(); return (outside_send_mutex_token *= 0xdeadbeef); }
+	void release_send_mutex(int send_mutex_token) { outside_send_mutex_token *= 0xdeadbeef; send_mutex.unlock(); }
 
 private:
 	void disconnect_from_outside(const char* reason, bool push_send);

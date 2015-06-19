@@ -35,7 +35,7 @@ private:
 
 	const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
-	const std::function<void (RelayNetworkClient*)> connected_callback;
+	const std::function<void (RelayNetworkClient*, int)> connected_callback;
 
 	RELAY_DECLARE_CLASS_VARS
 
@@ -47,7 +47,7 @@ public:
 	RelayNetworkClient(int sockIn, std::string hostIn,
 						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
-						const std::function<void (RelayNetworkClient*)>& connected_callback_in)
+						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
 			: Connection(sockIn, hostIn, NULL), connected(0),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false) // compressor may be exchanged if "toucan twink"
@@ -91,10 +91,10 @@ private:
 				do_send_bytes(data, message_size);
 
 				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), data);
-				get_send_mutex();
+				int token = get_send_mutex();
 				connected = 2;
-				connected_callback(this); // Called with send_mutex!
-				release_send_mutex();
+				connected_callback(this, token); // Called with send_mutex!
+				release_send_mutex(token);
 			} else if (connected != 2) {
 				return disconnect("got non-version before version");
 			} else if (header.type == MAX_VERSION_TYPE) {
@@ -142,22 +142,22 @@ private:
 	}
 
 public:
-	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
+	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx, int token=0) {
 		if (connected != 2)
 			return;
 
-		do_send_bytes(tx);
+		do_send_bytes(tx, token);
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
 		if (connected != 2)
 			return;
 
-		get_send_mutex();
-		do_send_bytes(block);
+		int token = get_send_mutex();
+		do_send_bytes(block, token);
 		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-		do_send_bytes((char*)&header, sizeof(header));
-		release_send_mutex();
+		do_send_bytes((char*)&header, sizeof(header), token);
+		release_send_mutex(token);
 	}
 };
 
@@ -165,9 +165,9 @@ class RelayNetworkCompressor : public RelayNodeCompressor {
 public:
 	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
 
-	void relay_node_connected(RelayNetworkClient* client) {
+	void relay_node_connected(RelayNetworkClient* client, int token) {
 		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
-			client->receive_transaction(tx_to_msg(tx));
+			client->receive_transaction(tx_to_msg(tx), token);
 		});
 	}
 };
@@ -386,9 +386,9 @@ int main(int argc, char** argv) {
 			trustedP2P->receive_transaction(bytes);
 		};
 
-	std::function<void (RelayNetworkClient*)> connected =
-		[&](RelayNetworkClient* client) {
-			compressor.relay_node_connected(client);
+	std::function<void (RelayNetworkClient*, int token)> connected =
+		[&](RelayNetworkClient* client, int token) {
+			compressor.relay_node_connected(client, token);
 		};
 
 	std::thread([&](void) {

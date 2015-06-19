@@ -282,3 +282,15 @@ void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigne
 	assert(hashRes.size() == 32);
 	return double_sha256(&block[offset], &hashRes[0], 80);
 }
+
+void print_hash(const unsigned char* hash) {
+	for (int i = 31; i >= 0; i--)
+		printf("%02x", hash[i]);
+}
+
+void do_assert(bool flag, const char* file, unsigned long line) {
+	if (!flag) {
+		printf("Assertion failed: %s:%lu\n", file, line);
+		exit(1);
+	}
+}

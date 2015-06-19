@@ -35,11 +35,14 @@ ssize_t Connection::read_all(char *buf, size_t nbyte) {
 	return ::read_all(sock, buf, nbyte);
 }
 
-void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes) {
-	if (!outside_send_mutex_held)
+void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) {
+	if (!send_mutex_token)
 		send_mutex.lock();
+	else
+		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
+
 	if (total_waiting_size > 4000000) {
-		if (!outside_send_mutex_held)
+		if (!send_mutex_token)
 			send_mutex.unlock();
 		return disconnect_from_outside("total_waiting_size blew up :(", false);
 	}
@@ -47,16 +50,19 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	outbound_primary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 	cv.notify_all();
-	if (!outside_send_mutex_held)
+	if (!send_mutex_token)
 		send_mutex.unlock();
 }
 
-void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes) {
-	if (!outside_send_mutex_held)
+void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) {
+	if (!send_mutex_token) {
 		if (!send_mutex.try_lock())
 			return;
+	} else
+		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
+
 	if (total_waiting_size > 4000000) {
-		if (!outside_send_mutex_held)
+		if (!send_mutex_token)
 			send_mutex.unlock();
 		return disconnect_from_outside("total_waiting_size blew up :(", false);
 	}
@@ -64,7 +70,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	outbound_secondary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 	cv.notify_all();
-	if (!outside_send_mutex_held)
+	if (!send_mutex_token)
 		send_mutex.unlock();
 }
 
