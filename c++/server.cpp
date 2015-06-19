@@ -175,8 +175,9 @@ public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
-				const header_func_type *provide_header_in=NULL, bool requestAfterSend=false) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_header_in, requestAfterSend)
+				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
+				bool requestAfterSend=false) :
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, requestAfterSend)
 		{ construction_done(); }
 
 private:

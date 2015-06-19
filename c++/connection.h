@@ -1,6 +1,7 @@
 #ifndef _RELAY_CONNECTION_H
 #define _RELAY_CONNECTION_H
 
+#include <string>
 #include <atomic>
 #include <condition_variable>
 #include <thread>
