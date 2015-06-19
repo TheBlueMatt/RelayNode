@@ -80,7 +80,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	if (check_merkle && (hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0))
 		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "BAD_WORK");
 
-	if (!blocksAlreadySeen.insert(hash).second)
+	if (blocksAlreadySeen.count(hash))
 		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "SEEN");
 
 	auto compressed_block = std::make_shared<std::vector<unsigned char> >();
@@ -170,6 +170,10 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	} catch(read_exception) {
 		return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_SIZE");
 	}
+
+	if (!blocksAlreadySeen.insert(hash).second)
+		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "SEEN");
+
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
