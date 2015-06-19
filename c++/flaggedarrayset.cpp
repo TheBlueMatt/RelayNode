@@ -140,9 +140,11 @@ void FlaggedArraySet::remove_(size_t index) {
 	assert(index + offset == rm->second);
 #endif
 
+	size_t size = this->size();
+
 #ifndef NDEBUG
 	bool foundRmTarget = false;
-	for (uint64_t i = 0; i < size(); i++) {
+	for (uint64_t i = 0; i < size; i++) {
 		std::unordered_map<ElemAndFlag, uint64_t>::iterator it;
 		assert((it = indexMap.at(i)) != backingMap.end());
 		assert(it->second == i + offset);
@@ -152,7 +154,6 @@ void FlaggedArraySet::remove_(size_t index) {
 	assert(foundRmTarget);
 #endif
 
-	size_t size = this->size();
 	if (index < size/2) {
 		for (uint64_t i = 0; i < index; i++)
 			indexMap[i]->second++;
@@ -162,9 +163,10 @@ void FlaggedArraySet::remove_(size_t index) {
 			indexMap[i]->second--;
 	backingMap.erase(rm);
 	indexMap.erase(indexMap.begin() + index);
+	size--;
 
 #ifndef NDEBUG
-	for (uint64_t i = 0; i < size(); i++) {
+	for (uint64_t i = 0; i < size; i++) {
 		std::unordered_map<ElemAndFlag, uint64_t>::iterator it;
 		assert((it = indexMap.at(i)) != backingMap.end());
 		assert(it->second == i + offset);
