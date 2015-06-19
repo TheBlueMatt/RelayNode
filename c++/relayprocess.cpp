@@ -172,7 +172,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	}
 
 	if (!blocksAlreadySeen.insert(hash).second)
-		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "SEEN");
+		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "MUTEX_BROKEN???");
 
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
