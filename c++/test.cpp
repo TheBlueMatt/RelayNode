@@ -59,25 +59,29 @@ void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std
 int pipefd[2];
 uint32_t block_tx_count;
 std::shared_ptr<std::vector<unsigned char> > decompressed_block;
-RelayNodeCompressor receiver(false);
+
+RelayNodeCompressor global_sender(false), global_receiver(false);
+std::set<std::vector<unsigned char> > globalSeenSet;
 
 static unsigned int compress_runs = 0, decompress_runs = 0;
 static std::chrono::nanoseconds total_compress_time, total_decompress_time;
 static std::chrono::nanoseconds max_compress_time, max_decompress_time;
 static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1);
 
-void recv_block() {
+void recv_block(RelayNodeCompressor* receiver, bool time) {
 	auto start = std::chrono::steady_clock::now();
-	auto res = receiver.decompress_relay_block(pipefd[0], block_tx_count);
+	auto res = receiver->decompress_relay_block(pipefd[0], block_tx_count);
 	auto decompressed = std::chrono::steady_clock::now();
-	total_decompress_time += decompressed - start; decompress_runs++;
-	if ((decompressed - start) > max_decompress_time) max_decompress_time = decompressed - start;
-	if ((decompressed - start) < min_decompress_time) min_decompress_time = decompressed - start;
+	if (time) {
+		total_decompress_time += decompressed - start; decompress_runs++;
+		if ((decompressed - start) > max_decompress_time) max_decompress_time = decompressed - start;
+		if ((decompressed - start) < min_decompress_time) min_decompress_time = decompressed - start;
+	}
 
 	if (std::get<2>(res)) {
 		printf("ERROR Decompressing block %s\n", std::get<2>(res));
 		exit(2);
-	} else
+	} else if (time)
 		PRINT_TIME("Decompressed block in %lf ms\n", to_millis_double(decompressed - start));
 	decompressed_block = std::get<1>(res);
 }
@@ -86,8 +90,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	RelayNodeCompressor sender(false), tester(false), tester2(false);
-	receiver.reset();
+	RelayNodeCompressor sender(false), tester(false), tester2(false), receiver(false);
 
 	for (auto v : txVectors) {
 		unsigned int made = sender.get_relay_transaction(v).use_count();
@@ -99,6 +102,11 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			printf("get_relay_transaction behavior not consistent???\n");
 			exit(5);
 		}
+		v = std::make_shared<std::vector<unsigned char> >(*v);
+		made = global_sender.get_relay_transaction(v).use_count();
+		v = std::make_shared<std::vector<unsigned char> >(*v);
+		if (made)
+			global_receiver.recv_tx(v);
 	}
 
 	unsigned int i = 0;
@@ -144,13 +152,29 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		exit(3);
 	}
 
-	std::thread recv(recv_block);
+	std::thread recv(recv_block, &receiver, true);
 	write(pipefd[1], &(*std::get<0>(res))[sizeof(header)], std::get<0>(res)->size() - sizeof(header));
 	recv.join();
 
 	if (*decompressed_block != data) {
 		printf("Re-constructed block did not match!\n");
 		exit(4);
+	}
+
+	if (globalSeenSet.insert(fullhash).second) {
+		res = global_sender.maybe_compress_block(fullhash, data, true);
+		if (std::get<1>(res)) {
+			printf("Failed to compress block globally %s\n", std::get<1>(res));
+			exit(8);
+		}
+		recv = std::thread(recv_block, &global_receiver, false);
+		write(pipefd[1], &(*std::get<0>(res))[sizeof(header)], std::get<0>(res)->size() - sizeof(header));
+		recv.join();
+
+		if (*decompressed_block != data) {
+			printf("Global re-constructed block did not match!\n");
+			exit(4);
+		}
 	}
 
 	close(pipefd[0]);
