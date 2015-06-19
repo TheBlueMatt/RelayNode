@@ -46,7 +46,7 @@ ifeq ($(UNAME_S),Linux)
     ifneq (,$(findstring avx,$(shell cat /proc/cpuinfo)))
       NATIVE_CXXFLAGS += -DSHA256=sha256_avx
     else
-      ifneq (,$(findstring sse4,$(shell cat /proc/cpuinfo)))
+      ifneq (,$(findstring sse4_1,$(shell cat /proc/cpuinfo)))
         NATIVE_CXXFLAGS += -DSHA256=sha256_sse4
       endif
     endif
