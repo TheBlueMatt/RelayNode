@@ -179,17 +179,102 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
 /********************
  *** Random stuff ***
  ********************/
+#ifdef SHA256
+extern "C" void SHA256(void *, uint32_t[8], uint64_t);
+#endif
+
+void static inline WriteBE64(unsigned char *ptr, uint64_t x) {
+	ptr[0] = x >> 56; ptr[1] = x >> 48; ptr[2] = x >> 40; ptr[3] = x >> 32;
+	ptr[4] = x >> 24; ptr[5] = x >> 16; ptr[6] = x >> 8; ptr[7] = x;
+}
+
+void static inline WriteBE32(unsigned char *ptr, uint32_t x) {
+	ptr[0] = x >> 24; ptr[1] = x >> 16; ptr[2] = x >> 8; ptr[3] = x;
+}
+
+void static inline sha256_init(uint32_t state[8]) {
+	state[0] = 0x6a09e667ul;
+	state[1] = 0xbb67ae85ul;
+	state[2] = 0x3c6ef372ul;
+	state[3] = 0xa54ff53aul;
+	state[4] = 0x510e527ful;
+	state[5] = 0x9b05688cul;
+	state[6] = 0x1f83d9abul;
+	state[7] = 0x5be0cd19ul;
+}
+
+void static inline sha256_done(unsigned char* res, uint32_t state[8]) {
+	WriteBE32(res     , state[0]);
+	WriteBE32(res +  4, state[1]);
+	WriteBE32(res +  8, state[2]);
+	WriteBE32(res + 12, state[3]);
+	WriteBE32(res + 16, state[4]);
+	WriteBE32(res + 20, state[5]);
+	WriteBE32(res + 24, state[6]);
+	WriteBE32(res + 28, state[7]);
+}
+
 void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte_count) {
+#ifndef SHA256
 	CSHA256 hash;
 	if (byte_count)
 		hash.Write(input, byte_count).Finalize(res);
 	hash.Reset().Write(res, 32).Finalize(res);
+#else
+	uint64_t pad_count = 1 + ((119 - (byte_count % 64)) % 64);
+	std::vector<unsigned char> data(byte_count + pad_count + 8);
+
+	memcpy(&data[0], input, byte_count);
+	data[byte_count] = 0x80;
+	memset(&data[byte_count+1], 0, pad_count-1);
+	WriteBE64(&data[byte_count + pad_count], byte_count << 3);
+
+	uint32_t state[8];
+	sha256_init(state);
+
+	assert((byte_count + pad_count + 8) % 64 == 0);
+	SHA256(&data[0], state, (byte_count + pad_count + 8) / 64);
+	sha256_done(&data[0], state);
+
+	data[32] = 0x80;
+	memset(&data[32 + 1], 0, 32 - 8 - 1);
+	WriteBE64(&data[64 - 8], 32 << 3);
+	sha256_init(state);
+
+	SHA256(&data[0], state, 1);
+	sha256_done(res, state);
+#endif
 }
 
 void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char* input2, unsigned char* res) {
+#ifndef SHA256
 	CSHA256 hash;
 	hash.Write(input, 32).Write(input2, 32).Finalize(res);
 	hash.Reset().Write(res, 32).Finalize(res);
+#else
+	unsigned char data[128];
+
+	memcpy(data,      input,  32);
+	memcpy(data + 32, input2, 32);
+	data[64] = 0x80;
+	memset(data + 64 + 1, 0, 64 - 8 - 1);
+	WriteBE64(data + 128 - 8, 64 << 3);
+
+	uint32_t state[8];
+	sha256_init(state);
+
+	SHA256(&data[0], state, 2);
+	sha256_done(data, state);
+
+	data[32] = 0x80;
+	memset(data + 32 + 1, 0, 32 - 8 - 1);
+	WriteBE64(data + 64 - 8, 32 << 3);
+	sha256_init(state);
+
+	SHA256(data, state, 1);
+	sha256_done(res, state);
+#endif
+
 }
 
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset) {
