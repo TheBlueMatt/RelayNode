@@ -40,6 +40,7 @@ endif
 
 ifeq ($(UNAME_S),Linux)
   COMMON_CXXFLAGS += -flto
+  LDFLAGS += -Wl,--no-as-needed
   ifneq (,$(findstring avx2,$(shell cat /proc/cpuinfo)))
     NATIVE_CXXFLAGS += -DSHA256=sha256_rorx
   else
@@ -56,16 +57,16 @@ ifeq ($(UNAME_S),Darwin)
   COMMON_CXXFLAGS += -flto -DX86_BSD
 endif
 ifeq ($(UNAME_S),FreeBSD)
-# Maybe these conditions can be rewritten :p
 ifeq ($(LE),Y)
   COMMON_CXXFLAGS += -DX86_BSD
+  LDFLAGS += -Wl,--no-as-needed
 endif
 endif
 
 COMMON_CXXFLAGS += -std=c++11 -Wall
 
 CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS)
-LDFLAGS += -pthread -Wl,--no-as-needed
+LDFLAGS += -pthread
 
 # list of all targets
 NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server test)
