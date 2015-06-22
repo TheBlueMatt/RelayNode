@@ -88,7 +88,13 @@ ssize_t read_all(int filedes, char *buf, size_t nbyte) {
 
 	ssize_t count = 0;
 	size_t total = 0;
+#ifndef WIN32
+	// We use read here so that tests can read from a pipe
 	while (total < nbyte && (count = read(filedes, buf + total, nbyte-total)) > 0)
+#else
+	// But mingw/win32 suck terribly, so we have to use recv here
+	while (total < nbyte && (count = recv(filedes, buf + total, nbyte-total, 0)) > 0)
+#endif
 		total += count;
 	if (count <= 0)
 		return count;
