@@ -60,20 +60,6 @@ uint32_t RelayNodeCompressor::blocks_sent() {
 	return blocksAlreadySeen.size();
 }
 
-std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size) {
-	std::lock_guard<std::mutex> lock(mutex);
-
-	auto res = decompressRelayBlock(sock, message_size);
-	if (std::get<2>(res))
-		return std::make_tuple(std::get<0>(res), std::get<1>(res), std::get<2>(res), std::shared_ptr<std::vector<unsigned char> >(NULL));
-
-	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
-	getblockhash(*fullhashptr.get(), *std::get<1>(res), sizeof(struct bitcoin_msg_header));
-	blocksAlreadySeen.insert(*fullhashptr.get());
-
-	return std::make_tuple(std::get<0>(res), std::get<1>(res), std::get<2>(res), fullhashptr);
-}
-
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
 
@@ -177,17 +163,19 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
-std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::decompressRelayBlock(int sock, uint32_t message_size) {
+std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size) {
+	std::lock_guard<std::mutex> lock(mutex);
+
 	if (message_size > 100000)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got a BLOCK message with far too many transactions");
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got a BLOCK message with far too many transactions", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	uint32_t wire_bytes = 4*3;
 
 	auto block = std::make_shared<std::vector<unsigned char> > (sizeof(bitcoin_msg_header) + 80);
-	block->reserve(1000000);
+	block->reserve(1000000 + sizeof(bitcoin_msg_header));
 
 	if (read_all(sock, (char*)&(*block)[sizeof(bitcoin_msg_header)], 80) != 80)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read block header");
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read block header", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	auto vartxcount = varint(message_size);
 	block->insert(block->end(), vartxcount.begin(), vartxcount.end());
@@ -195,7 +183,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*> 
 	for (uint32_t i = 0; i < message_size; i++) {
 		uint16_t index;
 		if (read_all(sock, (char*)&index, 2) != 2)
-			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx index");
+			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx index", std::shared_ptr<std::vector<unsigned char> >(NULL));
 		index = ntohs(index);
 		wire_bytes += 2;
 
@@ -206,23 +194,28 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*> 
 			} tx_size {0};
 
 			if (read_all(sock, tx_size.c + 1, 3) != 3)
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx length");
+				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx length", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			tx_size.i = ntohl(tx_size.i);
 
 			if (tx_size.i > 1000000)
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got unreasonably large tx ");
+				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got unreasonably large tx", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 			block->insert(block->end(), tx_size.i, 0);
 			if (read_all(sock, (char*)&(*block)[block->size() - tx_size.i], tx_size.i) != int64_t(tx_size.i))
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read transaction data");
+				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read transaction data", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			wire_bytes += 3 + tx_size.i;
 		} else {
 			std::shared_ptr<std::vector<unsigned char> > transaction_data = recv_tx_cache.remove(index);
 			if (!transaction_data->size())
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction");
+				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			block->insert(block->end(), transaction_data->begin(), transaction_data->end());
 		}
 	}
-	return std::make_tuple(wire_bytes, block, (const char*) NULL);
+
+	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
+	getblockhash(*fullhashptr.get(), *block, sizeof(struct bitcoin_msg_header));
+	blocksAlreadySeen.insert(*fullhashptr.get());
+
+	return std::make_tuple(wire_bytes, block, (const char*) NULL, fullhashptr);
 }
 
