@@ -108,7 +108,7 @@ private:
 					return disconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
 				std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
-				auto res = compressor.decompress_relay_block(sock, message_size);
+				auto res = compressor.decompress_relay_block(sock, message_size, true);
 				if (std::get<2>(res))
 					return disconnect(std::get<2>(res));
 				std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
@@ -352,7 +352,8 @@ int main(int argc, char** argv) {
 			size_t bytes_sent = 0;
 			{
 				std::lock_guard<std::mutex> lock(map_mutex);
-				auto tuple = compressor.maybe_compress_block(fullhash, *bytes, true);
+				// Merkle tree checking was already done in decompress_relay_block
+				auto tuple = compressor.maybe_compress_block(fullhash, *bytes, false);
 				insane = std::get<1>(tuple);
 				if (!insane) {
 					auto block = std::get<0>(tuple);

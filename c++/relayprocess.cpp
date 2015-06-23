@@ -60,6 +60,30 @@ uint32_t RelayNodeCompressor::blocks_sent() {
 	return blocksAlreadySeen.size();
 }
 
+class MerkleTreeBuilder {
+private:
+	std::vector<unsigned char> hashlist;
+public:
+	MerkleTreeBuilder(uint32_t tx_count) : hashlist(tx_count * 32) {}
+	inline unsigned char* getTxHashLoc(uint32_t tx) { return &hashlist[tx * 32]; }
+	bool merkleRootMatches(const unsigned char* match) {
+		uint32_t txcount = hashlist.size() / 32;
+		uint32_t stepCount = 1, lastMax = txcount - 1;
+		for (uint32_t rowSize = txcount; rowSize > 1; rowSize = (rowSize + 1) / 2) {
+			if (!memcmp(&hashlist[32 * (lastMax - stepCount)], &hashlist[32 * lastMax], 32))
+				return false;
+
+			for (uint32_t i = 0; i < rowSize; i += 2) {
+				assert(i*stepCount < txcount && lastMax < txcount);
+				double_sha256_two_32_inputs(&hashlist[32 * i*stepCount], &hashlist[32 * std::min((i + 1)*stepCount, lastMax)], &hashlist[32 * i*stepCount]);
+			}
+			lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
+			stepCount *= 2;
+		}
+		return !memcmp(match, &hashlist[0], 32);
+	}
+};
+
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
 
@@ -89,9 +113,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 		compressed_block->insert(compressed_block->end(), (unsigned char*)&header, ((unsigned char*)&header) + sizeof(header));
 		compressed_block->insert(compressed_block->end(), block.begin() + sizeof(struct bitcoin_msg_header), block.begin() + 80 + sizeof(struct bitcoin_msg_header));
 
-		std::vector<unsigned char> hashlist;
-		if (check_merkle)
-			hashlist.resize(32 * txcount);
+		MerkleTreeBuilder merkleTree(check_merkle ? txcount : 0);
 
 		for (uint32_t i = 0; i < txcount; i++) {
 			std::vector<unsigned char>::const_iterator txstart = readit;
@@ -115,7 +137,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 			move_forward(readit, 4, block.end());
 
 			if (check_merkle)
-				double_sha256(&(*txstart), &hashlist[i * 32], readit - txstart);
+				double_sha256(&(*txstart), merkleTree.getTxHashLoc(i), readit - txstart);
 
 			auto lookupVector = std::make_shared<std::vector<unsigned char> >(txstart, readit);
 			int index = send_tx_cache.remove(lookupVector);
@@ -135,24 +157,8 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 			}
 		}
 
-		if (check_merkle) {
-			uint32_t stepCount = 1, lastMax = txcount - 1;
-			for (uint32_t rowSize = txcount; rowSize > 1; rowSize = (rowSize + 1) / 2) {
-				if (!memcmp(&hashlist[32 * (lastMax - stepCount)], &hashlist[32 * lastMax], 32))
-					return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "DUPLICATE_TX");
-
-				for (uint32_t i = 0; i < rowSize; i += 2) {
-					assert(i*stepCount < txcount && lastMax < txcount);
-					double_sha256_two_32_inputs(&hashlist[32 * i*stepCount], &hashlist[32 * std::min((i + 1)*stepCount, lastMax)], &hashlist[32 * i*stepCount]);
-				}
-				lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
-				stepCount *= 2;
-			}
-
-			if (memcmp(&(*merkle_hash_it), &hashlist[0], 32))
-				return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_MERKLE");
-		}
-
+		if (check_merkle && !merkleTree.merkleRootMatches(&(*merkle_hash_it)))
+			return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_MERKLE");
 	} catch(read_exception) {
 		return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_SIZE");
 	}
@@ -163,7 +169,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
-std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size) {
+std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
 
 	if (message_size > 100000)
@@ -177,8 +183,17 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	if (read_all(sock, (char*)&(*block)[sizeof(bitcoin_msg_header)], 80) != 80)
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read block header", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
+	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
+	getblockhash(*fullhashptr.get(), *block, sizeof(struct bitcoin_msg_header));
+	blocksAlreadySeen.insert(*fullhashptr.get());
+
+	if (check_merkle && ((*fullhashptr)[31] != 0 || (*fullhashptr)[30] != 0 || (*fullhashptr)[29] != 0 || (*fullhashptr)[28] != 0 || (*fullhashptr)[27] != 0 || (*fullhashptr)[26] != 0 || (*fullhashptr)[25] != 0))
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block hash did not meet minimum difficulty target", std::shared_ptr<std::vector<unsigned char> >(NULL));
+
 	auto vartxcount = varint(message_size);
 	block->insert(block->end(), vartxcount.begin(), vartxcount.end());
+
+	MerkleTreeBuilder merkleTree(check_merkle ? message_size : 0);
 
 	for (uint32_t i = 0; i < message_size; i++) {
 		uint16_t index;
@@ -204,17 +219,25 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 			if (read_all(sock, (char*)&(*block)[block->size() - tx_size.i], tx_size.i) != int64_t(tx_size.i))
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read transaction data", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			wire_bytes += 3 + tx_size.i;
+
+			if (check_merkle)
+				double_sha256(&(*block)[block->size() - tx_size.i], merkleTree.getTxHashLoc(i), tx_size.i);
 		} else {
 			std::shared_ptr<std::vector<unsigned char> > transaction_data = recv_tx_cache.remove(index);
 			if (!transaction_data->size())
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			block->insert(block->end(), transaction_data->begin(), transaction_data->end());
+
+			if (check_merkle)
+				double_sha256(&(*transaction_data)[0], merkleTree.getTxHashLoc(i), transaction_data->size());
 		}
+
+		if (block->size() > 1000000 + sizeof(bitcoin_msg_header))
+			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block was larger than 1MB", std::shared_ptr<std::vector<unsigned char> >(NULL));
 	}
 
-	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
-	getblockhash(*fullhashptr.get(), *block, sizeof(struct bitcoin_msg_header));
-	blocksAlreadySeen.insert(*fullhashptr.get());
+	if (check_merkle && !merkleTree.merkleRootMatches(&(*block)[4 + 32 + sizeof(bitcoin_msg_header)]))
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "merkle tree root did not match", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	return std::make_tuple(wire_bytes, block, (const char*) NULL, fullhashptr);
 }

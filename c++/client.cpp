@@ -171,7 +171,7 @@ private:
 				else
 					return reconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
-				auto res = compressor.decompress_relay_block(sock, message_size);
+				auto res = compressor.decompress_relay_block(sock, message_size, false);
 				if (std::get<2>(res))
 					return reconnect(std::get<2>(res));
 
