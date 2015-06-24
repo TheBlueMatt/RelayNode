@@ -13,16 +13,24 @@
 /******************************
  **** FlaggedArraySet util ****
  ******************************/
-template<class E> struct SharedPtrElem {
-	std::shared_ptr<E> e;
-	bool operator==(const SharedPtrElem<E>& o) const { return *e == *o.e; }
-	bool operator!=(const SharedPtrElem<E>& o) const { return *e != *o.e; }
-	bool operator< (const SharedPtrElem<E>& o) const { return *e <  *o.e; }
-	bool operator<=(const SharedPtrElem<E>& o) const { return *e <= *o.e; }
-	bool operator> (const SharedPtrElem<E>& o) const { return *e >  *o.e; }
-	bool operator>=(const SharedPtrElem<E>& o) const { return *e >= *o.e; }
-	SharedPtrElem(const std::shared_ptr<E>& eIn) : e(eIn) {}
+struct PtrPair {
+	std::shared_ptr<std::vector<unsigned char> > elem;
+	std::shared_ptr<std::vector<unsigned char> > elemHash;
+	PtrPair(const std::shared_ptr<std::vector<unsigned char> >& elemIn, const std::shared_ptr<std::vector<unsigned char> >& elemHashIn) :
+		elem(elemIn), elemHash(elemHashIn) {}
 };
+
+struct SharedPtrElem {
+	PtrPair e;
+	bool operator==(const SharedPtrElem& o) const { return *e.elemHash == *o.e.elemHash; }
+	bool operator!=(const SharedPtrElem& o) const { return *e.elemHash != *o.e.elemHash; }
+	bool operator< (const SharedPtrElem& o) const { return *e.elemHash <  *o.e.elemHash; }
+	bool operator<=(const SharedPtrElem& o) const { return *e.elemHash <= *o.e.elemHash; }
+	bool operator> (const SharedPtrElem& o) const { return *e.elemHash >  *o.e.elemHash; }
+	bool operator>=(const SharedPtrElem& o) const { return *e.elemHash >= *o.e.elemHash; }
+	SharedPtrElem(const PtrPair& eIn) : e(eIn) {}
+};
+
 class Deduper {
 private:
 	std::mutex dedup_mutex;
@@ -33,7 +41,7 @@ public:
 		: dedup_thread([&]() {
 			while (true) {
 				if (allArraySets.size() > 1) {
-					std::list<std::shared_ptr<std::vector<unsigned char> > > ptrlist;
+					std::list<PtrPair> ptrlist;
 
 					{
 						std::lock_guard<std::mutex> lock(dedup_mutex);
@@ -46,18 +54,19 @@ public:
 							for (const auto& e : fas->backingMap) {
 								if (fas->mutex.wait_count())
 									break;
-								ptrlist.push_back(e.first.elem);
+								ptrlist.push_back(PtrPair(e.first.elem, e.first.elemHash));
 							}
 						}
 					}
 
-					std::set<SharedPtrElem<std::vector<unsigned char> > > txset;
-					std::map<std::vector<unsigned char>*, std::shared_ptr<std::vector<unsigned char> > > duplicateMap;
-					std::list<std::shared_ptr<std::vector<unsigned char> > > deallocList;
+					std::set<SharedPtrElem> txset;
+					std::map<std::vector<unsigned char>*, PtrPair> duplicateMap;
+					std::list<PtrPair> deallocList;
 					for (const auto& ptr : ptrlist) {
-						auto res = txset.insert(SharedPtrElem<std::vector<unsigned char> >(ptr));
-						if (!res.second && res.first->e != ptr)
-							duplicateMap[&(*ptr)] = res.first->e;
+						assert(ptr.elemHash);
+						auto res = txset.insert(SharedPtrElem(ptr));
+						if (!res.second && res.first->e.elem != ptr.elem)
+							duplicateMap.insert(std::make_pair(&(*ptr.elem), res.first->e));
 					}
 
 					int dedups = 0;
@@ -74,9 +83,11 @@ public:
 									break;
 								auto it = duplicateMap.find(&(*e.first.elem));
 								if (it != duplicateMap.end()) {
-									assert(*it->second == *e.first.elem);
+									assert(*it->second.elem == *e.first.elem);
+									assert(*it->second.elemHash == *e.first.elemHash);
 									deallocList.emplace_back(it->second);
-									const_cast<ElemAndFlag&>(e.first).elem.swap(deallocList.back());
+									const_cast<ElemAndFlag&>(e.first).elem.swap(deallocList.back().elem);
+									const_cast<ElemAndFlag&>(e.first).elemHash.swap(deallocList.back().elemHash);
 									dedups++;
 								}
 							}
