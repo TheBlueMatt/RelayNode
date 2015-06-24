@@ -14,9 +14,24 @@
 struct ElemAndFlag {
 	bool flag;
 	std::shared_ptr<std::vector<unsigned char> > elem;
+	std::shared_ptr<std::vector<unsigned char> > elemHash;
 	bool allowDups;
-	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char>>& elemIn, bool flagIn, bool allowDupsIn) : flag(flagIn), elem(elemIn), allowDups(allowDupsIn) {}
-	bool operator == (const ElemAndFlag& o) const { if (allowDups) return o.elem == elem; return o.elem == elem || *o.elem == *elem; }
+	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash) :
+		flag(flagIn), elem(elemIn), allowDups(allowDupsIn)
+	{
+		if (setHash) {
+			elemHash = std::make_shared<std::vector<unsigned char> >(32);
+			double_sha256(&(*elem)[0], &(*elemHash)[0], elem->size());
+		}
+	}
+	bool operator == (const ElemAndFlag& o) const {
+		if (allowDups)
+			return o.elem == elem;
+		bool hashSet = o.elemHash && elemHash;
+		return o.elem == elem ||
+			(hashSet && *o.elemHash == *elemHash) ||
+			(!hashSet && *o.elem == *elem);
+	}
 };
 
 namespace std {

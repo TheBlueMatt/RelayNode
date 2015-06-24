@@ -125,7 +125,7 @@ FlaggedArraySet::~FlaggedArraySet() {
 	deduper->removeFAS(this);
 }
 
-bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const { return backingMap.count(ElemAndFlag(e, false, allowDups)); }
+bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const { return backingMap.count(ElemAndFlag(e, false, allowDups, false)); }
 
 void FlaggedArraySet::remove_(size_t index) {
 	auto& rm = indexMap[index];
@@ -176,9 +176,10 @@ void FlaggedArraySet::remove_(size_t index) {
 }
 
 void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag) {
+	ElemAndFlag elem(e, flag, allowDups, true);
 	std::lock_guard<WaitCountMutex> lock(mutex);
 
-	auto res = backingMap.insert(std::make_pair(ElemAndFlag(e, flag, allowDups), size() + offset));
+	auto res = backingMap.insert(std::make_pair(elem, size() + offset));
 	if (!res.second)
 		return;
 
@@ -193,7 +194,7 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 }
 
 int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& e) {
-	auto it = backingMap.find(ElemAndFlag(e, false, allowDups));
+	auto it = backingMap.find(ElemAndFlag(e, false, allowDups, false));
 	if (it == backingMap.end())
 		return -1;
 
