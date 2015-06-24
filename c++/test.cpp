@@ -86,6 +86,18 @@ void recv_block(RelayNodeCompressor* receiver, bool time) {
 	decompressed_block = std::get<1>(res);
 }
 
+std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribute__((noinline)) do_compress_test(RelayNodeCompressor& sender, const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& data, uint32_t tx_count) {
+	auto start = std::chrono::steady_clock::now();
+	auto res = sender.maybe_compress_block(fullhash, data, true);
+	auto compressed = std::chrono::steady_clock::now();
+	total_compress_time += compressed - start; compress_runs++;
+	if ((compressed - start) > max_compress_time) max_compress_time = compressed - start;
+	if ((compressed - start) < min_compress_time) min_compress_time = compressed - start;
+	if(std::get<0>(res))
+		PRINT_TIME("Compressed from %lu to %lu in %lf ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis_double(compressed - start), tx_count);
+	return res;
+}
+
 void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors) {
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
@@ -134,12 +146,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		}
 	});
 
-	auto start = std::chrono::steady_clock::now();
-	auto res = sender.maybe_compress_block(fullhash, data, true);
-	auto compressed = std::chrono::steady_clock::now();
-	total_compress_time += compressed - start; compress_runs++;
-	if ((compressed - start) > max_compress_time) max_compress_time = compressed - start;
-	if ((compressed - start) < min_compress_time) min_compress_time = compressed - start;
+	auto res = do_compress_test(sender, fullhash, data, txVectors.size());
 
 	if (std::get<1>(res)) {
 		printf("Failed to compress block %s\n", std::get<1>(res));
@@ -150,7 +157,6 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		printf("maybe_compress_block not consistent???\n");
 		exit(9);
 	}
-	PRINT_TIME("Compressed from %lu to %lu in %lf ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis_double(compressed - start), txVectors.size());
 
 	struct relay_msg_header header;
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
