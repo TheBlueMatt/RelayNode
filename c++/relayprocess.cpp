@@ -223,13 +223,13 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 			if (check_merkle)
 				double_sha256(&(*block)[block->size() - tx_size.i], merkleTree.getTxHashLoc(i), tx_size.i);
 		} else {
-			std::shared_ptr<std::vector<unsigned char> > transaction_data = recv_tx_cache.remove(index);
-			if (!transaction_data->size())
+			std::shared_ptr<std::vector<unsigned char> > transaction_data, transaction_hash;
+			if (!recv_tx_cache.remove(index, transaction_data, transaction_hash))
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			block->insert(block->end(), transaction_data->begin(), transaction_data->end());
 
 			if (check_merkle)
-				double_sha256(&(*transaction_data)[0], merkleTree.getTxHashLoc(i), transaction_data->size());
+				memcpy(merkleTree.getTxHashLoc(i), &(*transaction_hash)[0], 32);
 		}
 
 		if (block->size() > 1000000 + sizeof(bitcoin_msg_header))

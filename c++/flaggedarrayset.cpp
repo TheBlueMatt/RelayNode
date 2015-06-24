@@ -215,14 +215,17 @@ int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& 
 	return res;
 }
 
-std::shared_ptr<std::vector<unsigned char> > FlaggedArraySet::remove(int index) {
+bool FlaggedArraySet::remove(int index, std::shared_ptr<std::vector<unsigned char> >& elem, std::shared_ptr<std::vector<unsigned char> >& elemHash) {
 	if ((unsigned int)index >= indexMap.size())
-		return std::make_shared<std::vector<unsigned char> >();
+		return false;
 
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	std::shared_ptr<std::vector<unsigned char> > e = indexMap[index]->first.elem;
+	const ElemAndFlag& e = indexMap[index]->first;
+	elem = e.elem;
+	elemHash = e.elemHash;
+
 	remove_(index);
-	return e;
+	return true;
 }
 
 void FlaggedArraySet::clear() {
