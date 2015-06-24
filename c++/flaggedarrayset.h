@@ -37,9 +37,7 @@ struct ElemAndFlag {
 namespace std {
 	template <> struct hash<ElemAndFlag> {
 		size_t operator()(const ElemAndFlag& e) const {
-			// We duplicate the shared_ptr because we may not actually be entirely thread-safe here, otherwise
-			const std::shared_ptr<std::vector<unsigned char> > ptr(e.elem);
-			const std::vector<unsigned char>& v = *ptr;
+			const std::vector<unsigned char>& v = *e.elem;
 
 			if (v.size() < 5 + 32 + 4)
 				return 42; // WAT?
