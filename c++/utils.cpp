@@ -23,12 +23,6 @@
 /***************************
  **** Varint processing ****
  ***************************/
-void move_forward(std::vector<unsigned char>::const_iterator& it, size_t i, const std::vector<unsigned char>::const_iterator& end) {
-	if (it > end-i)
-		throw read_exception();
-	std::advance(it, i);
-}
-
 uint64_t read_varint(std::vector<unsigned char>::const_iterator& it, const std::vector<unsigned char>::const_iterator& end) {
 	move_forward(it, 1, end);
 	uint8_t first = *(it-1);

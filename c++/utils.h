@@ -110,7 +110,11 @@ static_assert(sizeof(struct bitcoin_version_start) == 4 + 8 + 8 + 26 + 26 + 8 + 
  **** Varint processing ****
  ***************************/
 class read_exception : std::exception {};
-void move_forward(std::vector<unsigned char>::const_iterator& it, size_t i, const std::vector<unsigned char>::const_iterator& end);
+inline void move_forward(std::vector<unsigned char>::const_iterator& it, size_t i, const std::vector<unsigned char>::const_iterator& end) {
+	if (unlikely(it > end-i))
+		throw read_exception();
+	std::advance(it, i);
+}
 uint64_t read_varint(std::vector<unsigned char>::const_iterator& it, const std::vector<unsigned char>::const_iterator& end);
 std::vector<unsigned char> varint(uint32_t size);
 
