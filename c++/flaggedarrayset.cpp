@@ -102,7 +102,7 @@ public:
 #endif
 				}
 #ifdef FOR_TEST
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 #else
 				std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 #endif
