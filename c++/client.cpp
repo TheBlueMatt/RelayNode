@@ -194,11 +194,44 @@ private:
 };
 
 
+#define HOSTNAMES_TO_TEST 20
+#define CONNECT_TESTS 10
+std::chrono::milliseconds connect_durations[HOSTNAMES_TO_TEST];
+void test_node(int node) {
+	const char* relay = "public.%02d.relay.mattcorallo.com";
+	char host[strlen(relay)];
+	sprintf(host, relay, node);
+	sockaddr_in6 addr;
+	if (!lookup_address(host, &addr) ||
+			(addr.sin6_addr.s6_addr[15] == 0 && addr.sin6_addr.s6_addr[14] == 0 && addr.sin6_addr.s6_addr[13] == 0 && addr.sin6_addr.s6_addr[12] == 0)) {
+		connect_durations[node] = std::chrono::milliseconds::max();
+		return;
+	}
+
+	addr.sin6_port = htons(8336);
+
+	auto start = std::chrono::steady_clock::now();
+	for (int i = 0; i < CONNECT_TESTS; i++) {
+		int sock = socket(AF_INET6, SOCK_STREAM, 0);
+		ALWAYS_ASSERT(sock > 0);
+
+		int v6only = 0;
+		setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
+
+		connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+		close(sock);
+	}
+	connect_durations[node] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+}
+
 
 
 int main(int argc, char** argv) {
-	if (argc != 4) {
-		printf("USAGE: %s RELAY_SERVER BITCOIND_ADDRESS BITCOIND_PORT\n", argv[0]);
+	bool validPort = false;
+	try { std::stoul(argv[2]); validPort = true; } catch (std::exception& e) {}
+	if ((argc != 3 && argc != 4) || !validPort) {
+		printf("USAGE: %s BITCOIND_ADDRESS BITCOIND_PORT [ server ]\n", argv[0]);
+		printf("Relay server is automatically selected by pinging available servers, unless one is specified\n");
 		return -1;
 	}
 
@@ -208,11 +241,39 @@ int main(int argc, char** argv) {
 		return -1;
 #endif
 
+	const char* relay = "public.%02d.relay.mattcorallo.com";
+	char host[std::max(argc == 3 ? 0 : strlen(argv[3]), strlen(relay))];
+	if (argc == 3) {
+		std::list<std::thread> threads;
+		for (int i = 0; i < HOSTNAMES_TO_TEST; i++)
+			threads.emplace_back(test_node, i);
+		for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
+			threads.front().join();
+			threads.pop_front();
+		}
+
+		int min = 0; std::chrono::milliseconds min_duration(std::chrono::milliseconds::max());
+		for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
+			if (connect_durations[i] != std::chrono::milliseconds::max()) {
+				printf("Server %d took %ld ms to respond %d times.\n", i, connect_durations[i].count(), CONNECT_TESTS);
+			}
+			if (connect_durations[i] < min_duration) {
+				min_duration = connect_durations[i];
+				min = i;
+			}
+		}
+
+		sprintf(host, relay, min);
+		std::this_thread::sleep_for(std::chrono::seconds(10)); // Wait for server to open up our slot again
+	} else
+		memcpy(host, argv[3], strlen(argv[3]) + 1);
+	printf("Using server %s\n", host);
+
 	RelayNetworkClient* relayClient;
-	P2PClient p2p(argv[2], std::stoul(argv[3]),
+	P2PClient p2p(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { relayClient->receive_transaction(bytes); });
-	relayClient = new RelayNetworkClient(argv[1],
+	relayClient = new RelayNetworkClient(host,
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { p2p.receive_transaction(bytes); },
 										[&]() { p2p.request_mempool(); });
