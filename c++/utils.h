@@ -8,6 +8,9 @@
 #include <mutex>
 #include <atomic>
 
+#define likely(x)   __builtin_expect((x), 1)
+#define unlikely(x) __builtin_expect((x), 0)
+
 /**********************************
  **** Things missing on !Linux ****
  **********************************/
@@ -147,18 +150,30 @@ class WaitCountMutex {
 private:
 	std::mutex mutex;
 	std::atomic_int waitCount;
+
+	friend class WaitCountHint;
 public:
 	WaitCountMutex() { waitCount = 0; }
 	void lock() {
-		if (!mutex.try_lock()) {
-			waitCount++;
+		if (unlikely(!mutex.try_lock())) {
+			waitCount.fetch_add(1, std::memory_order_release);
 			mutex.lock();
-			waitCount--;
+			waitCount.fetch_sub(1, std::memory_order_relaxed);
 		}
 	}
 	bool try_lock() { return mutex.try_lock(); }
 	void unlock() { return mutex.unlock(); }
-	int wait_count() { return waitCount; }
+	int wait_count() { return waitCount.load(std::memory_order_acquire); }
+};
+
+class WaitCountHint {
+private:
+	WaitCountMutex* mutex;
+public:
+	WaitCountHint(WaitCountMutex& mutexIn)
+		: mutex(&mutexIn)
+		{ mutex->waitCount.fetch_add(1, std::memory_order_release); }
+	~WaitCountHint() { mutex->waitCount.fetch_sub(1, std::memory_order_relaxed); }
 };
 
 #endif

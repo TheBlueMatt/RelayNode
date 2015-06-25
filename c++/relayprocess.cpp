@@ -86,6 +86,7 @@ public:
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
+	FASLockHint faslock(send_tx_cache);
 
 	if (check_merkle && (hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0))
 		return std::make_tuple(std::shared_ptr<std::vector<unsigned char> >(), "BAD_WORK");
@@ -171,6 +172,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
+	FASLockHint faslock(recv_tx_cache);
 
 	if (message_size > 100000)
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got a BLOCK message with far too many transactions", std::shared_ptr<std::vector<unsigned char> >(NULL));

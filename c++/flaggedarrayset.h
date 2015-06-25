@@ -53,7 +53,6 @@ namespace std {
 }
 
 
-class Deduper;
 
 class FlaggedArraySet {
 private:
@@ -66,6 +65,7 @@ private:
 	// The mutex is only used by memory deduper, FlaggedArraySet is not thread-safe
 	// It is taken by changes to backingMap, any touches to backingMap in the deduper thread, or any touches to elem
 	friend class Deduper;
+	friend class FASLockHint;
 	mutable WaitCountMutex mutex;
 
 public:
@@ -96,6 +96,14 @@ public:
 	bool remove(int index, std::shared_ptr<std::vector<unsigned char> >& elem, std::shared_ptr<std::vector<unsigned char> >& elemHash);
 
 	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const;
+};
+
+class FASLockHint {
+private:
+	WaitCountHint* hint;
+public:
+	FASLockHint(FlaggedArraySet& fas) : hint(new WaitCountHint(fas.mutex)) {}
+	~FASLockHint() { delete hint; }
 };
 
 #endif
