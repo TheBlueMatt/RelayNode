@@ -68,13 +68,16 @@ private:
 	friend class FASLockHint;
 	mutable WaitCountMutex mutex;
 
+	mutable std::vector<int> to_be_removed;
+	mutable int max_remove, flags_to_remove;
+
 public:
 	void clear();
 	FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn);
 	~FlaggedArraySet();
 
-	size_t size() const { return backingMap.size(); }
-	size_t flagCount() const { return flag_count; }
+	size_t size() const { return backingMap.size() - to_be_removed.size(); }
+	size_t flagCount() const { return flag_count - flags_to_remove; }
 	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e) const;
 
 	FlaggedArraySet& operator=(const FlaggedArraySet& o) {
@@ -89,6 +92,7 @@ public:
 
 private:
 	void remove_(size_t index);
+	void cleanup_late_remove() const;
 
 public:
 	void add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag);
