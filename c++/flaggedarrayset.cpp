@@ -139,32 +139,29 @@ FlaggedArraySet::~FlaggedArraySet() {
 	deduper->removeFAS(this);
 }
 
+bool FlaggedArraySet::sanity_check() const {
+	size_t size = indexMap.size();
+	if (backingMap.size() != size) return false;
+	if (this->size() != size - to_be_removed.size()) return false;
+
+	for (uint64_t i = 0; i < size; i++) {
+		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(i);
+		if (it == backingMap.end()) return false;
+		if (it->second != i + offset) return false;
+		if (backingMap.find(it->first) != it) return false;
+		if (&backingMap.find(it->first)->first != &it->first) return false;
+	}
+
+	return true;
+}
+
 void FlaggedArraySet::remove_(size_t index) {
 	auto& rm = indexMap[index];
+	assert(index < indexMap.size());
 	if (rm->first.flag)
 		flag_count--;
 
-#ifndef NDEBUG
-	assert(indexMap.size() == size() + to_be_removed.size() && size() + to_be_removed.size() == backingMap.size());
-	assert(index < indexMap.size());
-	ElemAndFlag e(rm->first);
-	assert((e = rm->first).elem);
-	assert(index + offset == rm->second);
-#endif
-
 	size_t size = backingMap.size();
-
-#ifndef NDEBUG
-	bool foundRmTarget = false;
-	for (uint64_t i = 0; i < size; i++) {
-		std::unordered_map<ElemAndFlag, uint64_t>::iterator it;
-		assert((it = indexMap.at(i)) != backingMap.end());
-		assert(it->second == i + offset);
-		assert((i == index && !foundRmTarget && (foundRmTarget = true)) || (i != index));
-		assert((i != index && !(it->first == e)) || (i == index && (it->first == e)));
-	}
-	assert(foundRmTarget);
-#endif
 
 	if (index < size/2) {
 		for (uint64_t i = 0; i < index; i++)
@@ -175,25 +172,19 @@ void FlaggedArraySet::remove_(size_t index) {
 			indexMap[i]->second--;
 	backingMap.erase(rm);
 	indexMap.erase(indexMap.begin() + index);
-	size--;
-
-#ifndef NDEBUG
-	for (uint64_t i = 0; i < size; i++) {
-		std::unordered_map<ElemAndFlag, uint64_t>::iterator it;
-		assert((it = indexMap.at(i)) != backingMap.end());
-		assert(it->second == i + offset);
-		assert(!(it->first == e));
-	}
-#endif
 }
 
 inline void FlaggedArraySet::cleanup_late_remove() const {
-	for (unsigned int i = 0; i < to_be_removed.size(); i++) {
-		assert((unsigned int)to_be_removed[i] < indexMap.size());
-		const_cast<FlaggedArraySet*>(this)->remove_(to_be_removed[i]);
+	assert(sanity_check());
+	if (to_be_removed.size()) {
+		for (unsigned int i = 0; i < to_be_removed.size(); i++) {
+			assert((unsigned int)to_be_removed[i] < indexMap.size());
+			const_cast<FlaggedArraySet*>(this)->remove_(to_be_removed[i]);
+		}
+		to_be_removed.clear();
+		max_remove = 0;
 	}
-	to_be_removed.clear();
-	max_remove = 0;
+	assert(sanity_check());
 }
 
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const {
@@ -220,6 +211,8 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 
 	if (flag)
 		flag_count++;
+
+	assert(sanity_check());
 }
 
 int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& e) {
@@ -232,6 +225,8 @@ int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& 
 
 	int res = it->second - offset;
 	remove_(res);
+
+	assert(sanity_check());
 	return res;
 }
 
@@ -257,6 +252,8 @@ bool FlaggedArraySet::remove(int index, std::shared_ptr<std::vector<unsigned cha
 		cleanup_late_remove();
 		remove_(index);
 	}
+
+	assert(sanity_check());
 	return true;
 }
 

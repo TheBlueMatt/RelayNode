@@ -91,6 +91,7 @@ public:
 	}
 
 private:
+	bool sanity_check() const;
 	void remove_(size_t index);
 	void cleanup_late_remove() const;
 
