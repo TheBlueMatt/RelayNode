@@ -146,8 +146,8 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			printf("for_each_sent_tx was not in order!\n");
 			exit(6);
 		}
-		std::shared_ptr<std::vector<unsigned char> > tx_data, tx_hash;
-		if (!tester.send_tx_cache.remove(0, tx_data, tx_hash) || *tx_data != *txVectors[index]) {
+		std::vector<unsigned char> tx_data, tx_hash(32);
+		if (!tester.send_tx_cache.remove(0, tx_data, &tx_hash[0]) || tx_data != *txVectors[index]) {
 			printf("for_each_sent_tx output did not match remove(0)\n");
 			exit(7);
 		}

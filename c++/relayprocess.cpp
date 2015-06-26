@@ -221,7 +221,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	auto vartxcount = varint(message_size);
 	block->insert(block->end(), vartxcount.begin(), vartxcount.end());
 
-	MerkleTreeBuilder merkleTree(check_merkle ? message_size : 0);
+	MerkleTreeBuilder merkleTree(check_merkle ? message_size : 1);
 
 	std::vector<IndexVector> txn_data(message_size);
 	std::vector<IndexPtr> txn_ptrs;
@@ -260,21 +260,15 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	}
 
 	tweak_sort(txn_ptrs, 0, txn_ptrs.size());
+#ifndef NDEBUG
 	int32_t last = -1;
+#endif
 	for (size_t i = 0; i < txn_ptrs.size(); i++) {
-		std::shared_ptr<std::vector<unsigned char> > transaction_data, transaction_hash;
 		const IndexPtr& ptr = txn_ptrs[i];
 		assert(last <= int(ptr.index) && (last = ptr.index) != -1);
 
-		if (!recv_tx_cache.remove(ptr.index, transaction_data, transaction_hash))
+		if (!recv_tx_cache.remove(ptr.index, txn_data[ptr.pos].data, merkleTree.getTxHashLoc(check_merkle ? ptr.pos : 0)))
 			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
-
-		if (check_merkle)
-			memcpy(merkleTree.getTxHashLoc(ptr.pos), &(*transaction_hash)[0], 32);
-
-		std::vector<unsigned char>& d = txn_data[ptr.pos].data;
-		d.resize(transaction_data->size());
-		memcpy(&d[0], &(*transaction_data)[0], d.size());
 	}
 
 	for (uint32_t i = 0; i < message_size; i++)
