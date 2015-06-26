@@ -170,6 +170,35 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
+struct IndexVector {
+	uint16_t index;
+	std::vector<unsigned char> data;
+};
+struct IndexPtr {
+	uint16_t index;
+	size_t pos;
+	IndexPtr(uint16_t index_in, size_t pos_in) : index(index_in), pos(pos_in) {}
+	bool operator< (const IndexPtr& o) const { return index < o.index; }
+};
+
+void tweak_sort(std::vector<IndexPtr>& ptrs, size_t start, size_t end) {
+	if (start + 1 >= end)
+		return;
+	size_t split = (end - start) / 2 + start;
+	tweak_sort(ptrs, start, split);
+	tweak_sort(ptrs, split, end);
+
+	size_t j = 0, k = split;
+	std::vector<IndexPtr> left(ptrs.begin() + start, ptrs.begin() + split);
+	for (size_t i = start; i < end; i++) {
+		if (j < left.size() && (k >= end || left[j].index - (k - split) <= ptrs[k].index)) {
+			ptrs[i] = left[j++];
+			ptrs[i].index -= (k - split);
+		} else
+			ptrs[i] = ptrs[k++];
+	}
+}
+
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
 	FASLockHint faslock(recv_tx_cache);
@@ -197,12 +226,17 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 
 	MerkleTreeBuilder merkleTree(check_merkle ? message_size : 0);
 
+	std::vector<IndexVector> txn_data(message_size);
+	std::vector<IndexPtr> txn_ptrs;
+	txn_ptrs.reserve(message_size);
 	for (uint32_t i = 0; i < message_size; i++) {
 		uint16_t index;
 		if (read_all(sock, (char*)&index, 2) != 2)
 			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx index", std::shared_ptr<std::vector<unsigned char> >(NULL));
 		index = ntohs(index);
 		wire_bytes += 2;
+
+		txn_data[i].index = index;
 
 		if (index == 0xffff) {
 			union intbyte {
@@ -217,26 +251,37 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 			if (tx_size.i > 1000000)
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got unreasonably large tx", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
-			block->insert(block->end(), tx_size.i, 0);
-			if (read_all(sock, (char*)&(*block)[block->size() - tx_size.i], tx_size.i) != int64_t(tx_size.i))
+			txn_data[i].data.resize(tx_size.i);
+			if (read_all(sock, (char*)&(txn_data[i].data[0]), tx_size.i) != int64_t(tx_size.i))
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read transaction data", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			wire_bytes += 3 + tx_size.i;
 
 			if (check_merkle)
-				double_sha256(&(*block)[block->size() - tx_size.i], merkleTree.getTxHashLoc(i), tx_size.i);
-		} else {
-			std::shared_ptr<std::vector<unsigned char> > transaction_data, transaction_hash;
-			if (!recv_tx_cache.remove(index, transaction_data, transaction_hash))
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
-			block->insert(block->end(), transaction_data->begin(), transaction_data->end());
-
-			if (check_merkle)
-				memcpy(merkleTree.getTxHashLoc(i), &(*transaction_hash)[0], 32);
-		}
-
-		if (block->size() > 1000000 + sizeof(bitcoin_msg_header))
-			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block was larger than 1MB", std::shared_ptr<std::vector<unsigned char> >(NULL));
+				double_sha256(&(txn_data[i].data[0]), merkleTree.getTxHashLoc(i), tx_size.i);
+		} else
+			txn_ptrs.emplace_back(index, i);
 	}
+
+	tweak_sort(txn_ptrs, 0, txn_ptrs.size());
+	int32_t last = -1;
+	for (size_t i = 0; i < txn_ptrs.size(); i++) {
+		std::shared_ptr<std::vector<unsigned char> > transaction_data, transaction_hash;
+		const IndexPtr& ptr = txn_ptrs[i];
+		assert(last <= int(ptr.index) && (last = ptr.index) != -1);
+
+		if (!recv_tx_cache.remove(ptr.index, transaction_data, transaction_hash))
+			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
+
+		if (check_merkle)
+			memcpy(merkleTree.getTxHashLoc(ptr.pos), &(*transaction_hash)[0], 32);
+
+		std::vector<unsigned char>& d = txn_data[ptr.pos].data;
+		d.resize(transaction_data->size());
+		memcpy(&d[0], &(*transaction_data)[0], d.size());
+	}
+
+	for (uint32_t i = 0; i < message_size; i++)
+		block->insert(block->end(), txn_data[i].data.begin(), txn_data[i].data.end());
 
 	if (check_merkle && !merkleTree.merkleRootMatches(&(*block)[4 + 32 + sizeof(bitcoin_msg_header)]))
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "merkle tree root did not match", std::shared_ptr<std::vector<unsigned char> >(NULL));
