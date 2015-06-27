@@ -43,7 +43,9 @@ else
 endif
 
 ifeq ($(UNAME_S),Linux)
-  COMMON_CXXFLAGS += -flto
+  ifneq ($(variant),test)
+    COMMON_CXXFLAGS += -flto
+  endif
   LDFLAGS += -Wl,--no-as-needed
   ifneq (,$(findstring avx2,$(shell cat /proc/cpuinfo)))
     NATIVE_CXXFLAGS += -DSHA256=sha256_rorx
@@ -58,7 +60,10 @@ ifeq ($(UNAME_S),Linux)
   endif
 endif
 ifeq ($(UNAME_S),Darwin)
-  COMMON_CXXFLAGS += -flto -DX86_BSD
+  ifneq ($(variant),test)
+    COMMON_CXXFLAGS += -flto
+  endif
+  COMMON_CXXFLAGS += -DX86_BSD
 endif
 ifeq ($(UNAME_S),FreeBSD)
 ifeq ($(LE),Y)
