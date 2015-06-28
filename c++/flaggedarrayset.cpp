@@ -282,11 +282,11 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 	assert(sanity_check());
 }
 
-int FlaggedArraySet::remove(const std::shared_ptr<std::vector<unsigned char> >& e) {
+int FlaggedArraySet::remove(const std::vector<unsigned char>::const_iterator& start, const std::vector<unsigned char>::const_iterator& end) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
 
-	auto it = backingMap.find(ElemAndFlag(e, false, allowDups, false));
+	auto it = backingMap.find(ElemAndFlag(start, end, false, allowDups));
 	if (it == backingMap.end())
 		return -1;
 

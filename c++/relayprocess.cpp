@@ -138,8 +138,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 			if (check_merkle)
 				double_sha256(&(*txstart), merkleTree.getTxHashLoc(i), readit - txstart);
 
-			auto lookupVector = std::make_shared<std::vector<unsigned char> >(txstart, readit);
-			int index = send_tx_cache.remove(lookupVector);
+			int index = send_tx_cache.remove(txstart, readit);
 			if (index < 0) {
 				compressed_block->push_back(0xff);
 				compressed_block->push_back(0xff);
