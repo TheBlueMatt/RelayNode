@@ -6,8 +6,8 @@
 #include <list>
 #include <thread>
 #include <mutex>
+#include <string.h>
 #include <assert.h>
-
 #include <stdio.h>
 
 /******************************
@@ -57,6 +57,7 @@ public:
 							for (const auto& e : fas->backingMap) {
 								if (fas->mutex.wait_count())
 									break;
+								assert(e.first.elem);
 								ptrlist.push_back(PtrPair(e.first.elem, e.first.elemHash));
 							}
 						}
@@ -84,6 +85,7 @@ public:
 							for (auto& e : fas->backingMap) {
 								if (fas->mutex.wait_count())
 									break;
+								assert(e.first.elem);
 								auto it = duplicateMap.find(&(*e.first.elem));
 								if (it != duplicateMap.end()) {
 									assert(*it->second.elem == *e.first.elem);
@@ -138,6 +140,71 @@ FlaggedArraySet::FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn) :
 FlaggedArraySet::~FlaggedArraySet() {
 	deduper->removeFAS(this);
 }
+
+
+ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash) :
+	flag(flagIn), allowDups(allowDupsIn), elem(elemIn)
+{
+	if (setHash) {
+		elemHash = std::make_shared<std::vector<unsigned char> >(32);
+		double_sha256(&(*elem)[0], &(*elemHash)[0], elem->size());
+	}
+}
+ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, bool flagIn, bool allowDupsIn) :
+	flag(flagIn), allowDups(allowDupsIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
+
+bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
+	if (elem && o.elem) {
+		if (allowDups)
+			return o.elem == elem;
+		bool hashSet = o.elemHash && elemHash;
+		return o.elem == elem ||
+			(hashSet && *o.elemHash == *elemHash) ||
+			(!hashSet && *o.elem == *elem);
+	} else {
+		std::vector<unsigned char>::const_iterator o_begin, o_end, e_begin, e_end;
+		if (elem) {
+			e_begin = elem->begin();
+			e_end = elem->end();
+		} else {
+			e_begin = elemBegin;
+			e_end = elemEnd;
+		}
+		if (o.elem) {
+			o_begin = o.elem->begin();
+			o_end = o.elem->end();
+		} else {
+			o_begin = o.elemBegin;
+			o_end = o.elemEnd;
+		}
+		return o_end - o_begin == e_end - e_begin && !memcmp(&(*o_begin), &(*e_begin), o_end - o_begin);
+	}
+}
+
+size_t std::hash<ElemAndFlag>::operator()(const ElemAndFlag& e) const {
+	std::vector<unsigned char>::const_iterator it, end;
+	if (e.elem) {
+		it = e.elem->begin();
+		end = e.elem->end();
+	} else {
+		it = e.elemBegin;
+		end = e.elemEnd;
+	}
+
+	if (end - it < 5 + 32 + 4) {
+		assert(0);
+		return 42; // WAT?
+	}
+	it += 5 + 32 + 4 - 8;
+	size_t res = 0;
+	static_assert(sizeof(size_t) == 4 || sizeof(size_t) == 8, "Your size_t is neither 32-bit nor 64-bit?");
+	for (unsigned int i = 0; i < 8; i += sizeof(size_t)) {
+		for (unsigned int j = 0; j < sizeof(size_t); j++)
+			res ^= *(it + i + j) << 8*j;
+	}
+	return res;
+}
+
 
 bool FlaggedArraySet::sanity_check() const {
 	size_t size = indexMap.size();
@@ -241,6 +308,7 @@ bool FlaggedArraySet::remove(int index, std::shared_ptr<std::vector<unsigned cha
 		return false;
 
 	const ElemAndFlag& e = indexMap[lookup_index]->first;
+	assert(e.elem && e.elemHash);
 	elem = e.elem;
 	elemHash = e.elemHash;
 
@@ -267,6 +335,8 @@ void FlaggedArraySet::clear() {
 void FlaggedArraySet::for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
-	for (const auto& e : indexMap)
+	for (const auto& e : indexMap) {
+		assert(e->first.elem);
 		callback(e->first.elem);
+	}
 }

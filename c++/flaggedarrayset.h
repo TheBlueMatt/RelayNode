@@ -13,42 +13,16 @@
  ******************************/
 struct ElemAndFlag {
 	bool flag;
-	std::shared_ptr<std::vector<unsigned char> > elem;
-	std::shared_ptr<std::vector<unsigned char> > elemHash;
 	bool allowDups;
-	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash) :
-		flag(flagIn), elem(elemIn), allowDups(allowDupsIn)
-	{
-		if (setHash) {
-			elemHash = std::make_shared<std::vector<unsigned char> >(32);
-			double_sha256(&(*elem)[0], &(*elemHash)[0], elem->size());
-		}
-	}
-	bool operator == (const ElemAndFlag& o) const {
-		if (allowDups)
-			return o.elem == elem;
-		bool hashSet = o.elemHash && elemHash;
-		return o.elem == elem ||
-			(hashSet && *o.elemHash == *elemHash) ||
-			(!hashSet && *o.elem == *elem);
-	}
+	std::shared_ptr<std::vector<unsigned char> > elem, elemHash;
+	std::vector<unsigned char>::const_iterator elemBegin, elemEnd;
+	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash);
+	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, bool flagIn, bool allowDupsIn);
+	bool operator == (const ElemAndFlag& o) const;
 };
-
 namespace std {
 	template <> struct hash<ElemAndFlag> {
-		size_t operator()(const ElemAndFlag& e) const {
-			const std::vector<unsigned char>& v = *e.elem;
-
-			if (v.size() < 5 + 32 + 4)
-				return 42; // WAT?
-			size_t res = 0;
-			static_assert(sizeof(size_t) == 4 || sizeof(size_t) == 8, "Your size_t is neither 32-bit nor 64-bit?");
-			for (unsigned int i = (5 + 32 + 4) - 8; i < 5 + 32 + 4; i += sizeof(size_t)) {
-				for (unsigned int j = 0; j < sizeof(size_t); j++)
-					res ^= v[i+j] << 8*j;
-			}
-			return res;
-		}
+		size_t operator()(const ElemAndFlag& e) const;
 	};
 }
 
