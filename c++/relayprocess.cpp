@@ -121,18 +121,16 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 			move_forward(readit, 4, block.end());
 
-			uint32_t txins = read_varint(readit, block.end());
-			for (uint32_t j = 0; j < txins; j++) {
+			uint64_t txins = read_varint(readit, block.end());
+			for (uint64_t j = 0; j < txins; j++) {
 				move_forward(readit, 36, block.end());
-				uint32_t scriptlen = read_varint(readit, block.end());
-				move_forward(readit, scriptlen + 4, block.end());
+				move_forward(readit, read_varint(readit, block.end()) + 4, block.end());
 			}
 
-			uint32_t txouts = read_varint(readit, block.end());
-			for (uint32_t j = 0; j < txouts; j++) {
+			uint64_t txouts = read_varint(readit, block.end());
+			for (uint64_t j = 0; j < txouts; j++) {
 				move_forward(readit, 8, block.end());
-				uint32_t scriptlen = read_varint(readit, block.end());
-				move_forward(readit, scriptlen, block.end());
+				move_forward(readit, read_varint(readit, block.end()), block.end());
 			}
 
 			move_forward(readit, 4, block.end());
