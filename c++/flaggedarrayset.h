@@ -33,7 +33,7 @@ private:
 	unsigned int maxSize, flag_count;
 	uint64_t offset;
 	std::unordered_map<ElemAndFlag, uint64_t> backingMap;
-	std::vector<std::unordered_map<ElemAndFlag, uint64_t>::iterator> indexMap;
+	std::vector<std::pair<std::unordered_map<ElemAndFlag, uint64_t>::iterator, bool> > indexMap;
 	bool allowDups;
 
 	// The mutex is only used by memory deduper, FlaggedArraySet is not thread-safe
@@ -44,6 +44,10 @@ private:
 
 	mutable std::vector<int> to_be_removed;
 	mutable int max_remove, flags_to_remove;
+
+	mutable std::vector<int> partially_removed;
+
+	mutable size_t backingMapBuckets;
 
 public:
 	void clear();
@@ -66,8 +70,10 @@ public:
 
 private:
 	bool sanity_check() const;
-	void remove_(size_t index);
+	void remove_(size_t index, bool partial);
 	void cleanup_late_remove() const;
+	void cleanup_partially_removed() const;
+	void cleanup_all() const;
 
 public:
 	void add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag);
