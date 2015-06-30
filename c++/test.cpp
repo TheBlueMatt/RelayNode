@@ -94,17 +94,25 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 
 	for (auto v : txVectors) {
 		unsigned int made = sender.get_relay_transaction(v).use_count();
+#ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v); // Copy the vector to give the deduper something to do
+#endif
 		if (made)
 			receiver.recv_tx(v);
+#ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
+#endif
 		if (made != tester.get_relay_transaction(v).use_count() || made != tester2.get_relay_transaction(v).use_count()) {
 			printf("get_relay_transaction behavior not consistent???\n");
 			exit(5);
 		}
+#ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
+#endif
 		made = global_sender.get_relay_transaction(v).use_count();
+#ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
+#endif
 		if (made)
 			global_receiver.recv_tx(v);
 	}
@@ -212,7 +220,7 @@ int main() {
 		else if (hex[0] == '\n') {
 			if (data.size()) {
 #ifdef BENCH
-				for (int i = 0; i < 50; i++)
+				for (int i = 0; i < 100; i++)
 #endif
 					run_test(data);
 				fill_txv(data, allTxn, 0.9);
@@ -231,7 +239,7 @@ int main() {
 	}
 
 #ifdef BENCH
-	for (int i = 0; i < 50; i++)
+	for (int i = 0; i < 100; i++)
 #endif
 		test_compress_block(lastBlock, allTxn);
 

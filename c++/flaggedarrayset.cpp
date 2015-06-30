@@ -39,6 +39,9 @@ private:
 public:
 	Deduper()
 		: dedup_thread([&]() {
+#ifdef PRECISE_BENCH
+			return;
+#endif
 			while (true) {
 				if (allArraySets.size() > 1) {
 					std::list<PtrPair> ptrlist;

@@ -30,6 +30,10 @@ ifeq ($(variant),test)
 else
   ifeq ($(variant),bench)
     COMMON_CXXFLAGS += -DBENCH
+  else
+    ifeq ($(variant),precise_bench)
+      COMMON_CXXFLAGS += -DBENCH -DPRECISE_BENCH
+    endif
   endif
   COMMON_CXXFLAGS += -DNDEBUG -O3
   ifneq ($(variant),generic)
