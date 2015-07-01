@@ -58,7 +58,7 @@ public:
 	void for_each_sent_tx(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback);
 
 	std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle);
-	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > decompress_relay_block(int sock, uint32_t message_size, bool check_merkle);
+	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle);
 
 	bool block_sent(std::vector<unsigned char>& hash);
 	uint32_t blocks_sent();

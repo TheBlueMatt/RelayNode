@@ -70,7 +70,8 @@ static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_d
 
 void recv_block(RelayNodeCompressor* receiver, bool time) {
 	auto start = std::chrono::steady_clock::now();
-	auto res = receiver->decompress_relay_block(pipefd[0], block_tx_count, true);
+	std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return read_all(pipefd[0], buf, count); };
+	auto res = receiver->decompress_relay_block(do_read, block_tx_count, true);
 	auto decompressed = std::chrono::steady_clock::now();
 	if (time) {
 		total_decompress_time += decompressed - start; decompress_runs++;

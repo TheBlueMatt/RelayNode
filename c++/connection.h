@@ -17,9 +17,8 @@ enum DisconnectFlags {
 };
 
 class Connection {
-public: // TODO: make private
-	const int sock;
 private:
+	const int sock;
 	std::mutex send_mutex;
 	int outside_send_mutex_token;
 

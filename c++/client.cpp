@@ -106,7 +106,8 @@ private:
 				else
 					return disconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
-				auto res = compressor.decompress_relay_block(sock, message_size, false);
+				std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return this->read_all(buf, count); };
+				auto res = compressor.decompress_relay_block(do_read, message_size, false);
 				if (std::get<2>(res))
 					return disconnect(std::get<2>(res));
 

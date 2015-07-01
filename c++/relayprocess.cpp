@@ -196,7 +196,7 @@ void tweak_sort(std::vector<IndexPtr>& ptrs, size_t start, size_t end) {
 	}
 }
 
-std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(int sock, uint32_t message_size, bool check_merkle) {
+std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
 	FASLockHint faslock(recv_tx_cache);
 
@@ -208,7 +208,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	auto block = std::make_shared<std::vector<unsigned char> > (sizeof(bitcoin_msg_header) + 80);
 	block->reserve(1000000 + sizeof(bitcoin_msg_header));
 
-	if (read_all(sock, (char*)&(*block)[sizeof(bitcoin_msg_header)], 80) != 80)
+	if (read_all((char*)&(*block)[sizeof(bitcoin_msg_header)], 80) != 80)
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read block header", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
@@ -228,7 +228,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	txn_ptrs.reserve(message_size);
 	for (uint32_t i = 0; i < message_size; i++) {
 		uint16_t index;
-		if (read_all(sock, (char*)&index, 2) != 2)
+		if (read_all((char*)&index, 2) != 2)
 			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx index", std::shared_ptr<std::vector<unsigned char> >(NULL));
 		index = ntohs(index);
 		wire_bytes += 2;
@@ -241,7 +241,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 				char c[4];
 			} tx_size {0};
 
-			if (read_all(sock, tx_size.c + 1, 3) != 3)
+			if (read_all(tx_size.c + 1, 3) != 3)
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx length", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			tx_size.i = ntohl(tx_size.i);
 
@@ -249,7 +249,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got unreasonably large tx", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 			txn_data[i].data.resize(tx_size.i);
-			if (read_all(sock, (char*)&(txn_data[i].data[0]), tx_size.i) != int64_t(tx_size.i))
+			if (read_all((char*)&(txn_data[i].data[0]), tx_size.i) != int64_t(tx_size.i))
 				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read transaction data", std::shared_ptr<std::vector<unsigned char> >(NULL));
 			wire_bytes += 3 + tx_size.i;
 

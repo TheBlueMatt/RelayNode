@@ -108,7 +108,8 @@ private:
 					return disconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
 				std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
-				auto res = compressor.decompress_relay_block(sock, message_size, true);
+				std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return read_all(buf, count); };
+				auto res = compressor.decompress_relay_block(do_read, message_size, true);
 				if (std::get<2>(res))
 					return disconnect(std::get<2>(res));
 				std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
