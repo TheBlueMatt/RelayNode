@@ -35,19 +35,15 @@
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
-class RelayNetworkClient {
+class RelayNetworkClient : public OutboundPersistentConnection {
 private:
 	RELAY_DECLARE_CLASS_VARS
-
-	const char* server_host;
 
 	const std::function<void (std::vector<unsigned char>&)> provide_block;
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<void (void)> on_connected;
 
-	int sock;
-	std::mutex send_mutex;
-	std::thread* net_thread, *new_thread;
+	std::atomic_bool connected;
 
 	RelayNodeCompressor compressor;
 
@@ -56,124 +52,63 @@ public:
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (void)>& on_connected_in)
-			: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, server_host(serverHostIn),
+			: OutboundPersistentConnection(serverHostIn, 8336), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), on_connected(on_connected_in),
-			sock(0), net_thread(NULL), new_thread(NULL), compressor(false) {
-		send_mutex.lock();
-		new_thread = new std::thread(do_connect, this);
-		send_mutex.unlock();
+			connected(false), compressor(false) {
+		construction_done();
 	}
 
 private:
-	void reconnect(std::string disconnectReason, bool alreadyLocked=false) {
-		if (!alreadyLocked)
-			send_mutex.lock();
-
-		if (sock) {
-			printf("Closing relay socket, %s (%i: %s)\n", disconnectReason.c_str(), errno, errno ? strerror(errno) : "");
-			#ifndef WIN32
-				errno = 0;
-			#endif
-			close(sock);
-		}
-
-		sleep(1);
-
-		new_thread = new std::thread(do_connect, this);
-		send_mutex.unlock();
+	void on_disconnect() {
+		connected = false;
 	}
 
-	static void do_connect(RelayNetworkClient* me) {
-		me->send_mutex.lock();
-
-		if (me->net_thread)
-			me->net_thread->join();
-		me->net_thread = me->new_thread;
-
-		me->sock = socket(AF_INET6, SOCK_STREAM, 0);
-		if (me->sock <= 0)
-			return me->reconnect("unable to create socket", true);
-
-		sockaddr_in6 addr;
-		if (!lookup_address(me->server_host, &addr))
-			return me->reconnect("unable to lookup host", true);
-
-		int v6only = 0;
-		setsockopt(me->sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
-
-		addr.sin6_port = htons(8336);
-		if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
-			return me->reconnect("failed to connect()", true);
-
-		#ifdef WIN32
-			unsigned long nonblocking = 0;
-			ioctlsocket(me->sock, FIONBIO, &nonblocking);
-		#else
-			fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
-		#endif
-
-		#ifdef X86_BSD
-			int nosigpipe = 1;
-			setsockopt(me->sock, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
-		#endif
-
-		me->net_process();
-	}
-
-	void net_process() {
+	void net_process(const std::function<void(const char*)>& disconnect) {
 		compressor.reset();
 
 		relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
-		if (send_all(sock, (char*)&version_header, sizeof(version_header)) != sizeof(version_header))
-			return reconnect("failed to write version header", true);
-		if (send_all(sock, VERSION_STRING, strlen(VERSION_STRING)) != strlen(VERSION_STRING))
-			return reconnect("failed to write version string", true);
+		maybe_do_send_bytes((char*)&version_header, sizeof(version_header));
+		maybe_do_send_bytes(VERSION_STRING, strlen(VERSION_STRING));
 
-		int nodelay = 1;
-		setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
-
-		if (errno)
-			return reconnect("error during connect", true);
-
-		send_mutex.unlock();
+		connected = true;
 
 		while (true) {
 			relay_msg_header header;
-			if (read_all(sock, (char*)&header, 4*3) != 4*3)
-				return reconnect("failed to read message header");
+			if (read_all((char*)&header, 4*3) != 4*3)
+				return disconnect("failed to read message header");
 
 			if (header.magic != RELAY_MAGIC_BYTES)
-				return reconnect("invalid magic bytes");
+				return disconnect("invalid magic bytes");
 
 			uint32_t message_size = ntohl(header.length);
 
 			if (message_size > 1000000)
-				return reconnect("got message too large");
+				return disconnect("got message too large");
 
 			if (header.type == VERSION_TYPE) {
 				char data[message_size];
-				if (read_all(sock, data, message_size) < (int64_t)(message_size))
-					return reconnect("failed to read version message");
+				if (read_all(data, message_size) < (int64_t)(message_size))
+					return disconnect("failed to read version message");
 
 				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
-					return reconnect("unknown version string");
+					return disconnect("unknown version string");
 				else {
 					printf("Connected to relay node with protocol version %s\n", VERSION_STRING);
 					on_connected();
 				}
 			} else if (header.type == MAX_VERSION_TYPE) {
 				char data[message_size];
-				if (read_all(sock, data, message_size) < (int64_t)(message_size))
-					return reconnect("failed to read max_version string");
+				if (read_all(data, message_size) < (int64_t)(message_size))
+					return disconnect("failed to read max_version string");
 
 				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
 					printf("Relay network is using a later version (PLEASE UPGRADE)\n");
 				else
-					return reconnect("got MAX_VERSION of same version as us");
+					return disconnect("got MAX_VERSION of same version as us");
 			} else if (header.type == BLOCK_TYPE) {
 				auto res = compressor.decompress_relay_block(sock, message_size, false);
 				if (std::get<2>(res))
-					return reconnect(std::get<2>(res));
+					return disconnect(std::get<2>(res));
 
 				provide_block(*std::get<1>(res));
 
@@ -188,44 +123,37 @@ private:
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
 				if (!compressor.maybe_recv_tx_of_size(message_size, true))
-					return reconnect("got freely relayed transaction too large");
+					return disconnect("got freely relayed transaction too large");
 
 				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
-				if (read_all(sock, (char*)&(*tx)[0], message_size) < (int64_t)(message_size))
-					return reconnect("failed to read loose transaction data");
+				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
+					return disconnect("failed to read loose transaction data");
 
 				compressor.recv_tx(tx);
 				provide_transaction(tx);
 				printf("Received transaction of size %u from relay server\n", message_size);
 			} else
-				return reconnect("got unknown message type");
+				return disconnect("got unknown message type");
 		}
 	}
 
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-		if (!send_mutex.try_lock())
+		if (!connected)
 			return;
 
 		auto msgptr = compressor.get_relay_transaction(tx);
-
-		if (!msgptr.use_count()) {
-			send_mutex.unlock();
+		if (!msgptr.use_count())
 			return;
-		}
 
 		auto& msg = *msgptr.get();
 
-		if (send_all(sock, (char*)&msg[0], msg.size()) != int(msg.size()))
-			printf("Error sending transaction to relay server\n"); // Will reconnect...eventually
-		else
-			printf("Sent transaction of size %lu to relay server\n", (unsigned long)tx->size());
-
-		send_mutex.unlock();
+		maybe_do_send_bytes((char*)&msg[0], msg.size());
+		printf("Sent transaction of size %lu to relay server\n", (unsigned long)tx->size());
 	}
 
 	void receive_block(const std::vector<unsigned char>& block) {
-		if (!send_mutex.try_lock())
+		if (!connected)
 			return;
 
 		std::vector<unsigned char> fullhash(32);
@@ -234,25 +162,16 @@ public:
 		auto tuple = compressor.maybe_compress_block(fullhash, block, false);
 		if (std::get<1>(tuple)) {
 			printf("Failed to process block from bitcoind (%s)\n", std::get<1>(tuple));
-			send_mutex.unlock();
 			return;
 		}
 		auto compressed_block = std::get<0>(tuple);
 
-		if (send_all(sock, (char*)&(*compressed_block)[0], compressed_block->size()) != int(compressed_block->size()))
-			printf("Error sending block to relay server\n");
-		else {
-			struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-			if (send_all(sock, (char*)&header, sizeof(header)) != int(sizeof(header)))
-				printf("Error sending end block message to relay server\n");
-			else {
-				for (unsigned int i = 0; i < fullhash.size(); i++)
-					printf("%02x", fullhash[fullhash.size() - i - 1]);
-				printf(" sent, size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block->size());
-			}
-		}
+		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
+		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
+		maybe_do_send_bytes((char*)&header, sizeof(header));
 
-		send_mutex.unlock();
+		print_hash(&fullhash[0]);
+		printf(" sent, size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block->size());
 	}
 };
 
