@@ -65,6 +65,7 @@ protected:
 
 	int get_send_mutex() { send_mutex.lock(); return (outside_send_mutex_token *= 0xdeadbeef); }
 	void release_send_mutex(int send_mutex_token) { outside_send_mutex_token *= 0xdeadbeef; send_mutex.unlock(); }
+	void do_throttle_outbound() { initial_outbound_throttle = true; }
 
 private:
 	void disconnect_from_outside(const char* reason, bool push_send);

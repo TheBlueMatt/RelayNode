@@ -94,6 +94,7 @@ private:
 				int token = get_send_mutex();
 				connected = 2;
 				connected_callback(this, token); // Called with send_mutex!
+				do_throttle_outbound();
 				release_send_mutex(token);
 			} else if (connected != 2) {
 				return disconnect("got non-version before version");

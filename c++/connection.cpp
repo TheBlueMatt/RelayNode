@@ -147,6 +147,7 @@ void Connection::net_write() {
 	//TODO: Have a single global thread doing this
 	while (true) {
 		std::shared_ptr<std::vector<unsigned char> > msg;
+		bool sleepFirst = false;
 		{
 			std::unique_lock<std::mutex> write_lock(send_mutex);
 			while (!outbound_secondary_queue.size() && !outbound_primary_queue.size())
@@ -167,8 +168,10 @@ void Connection::net_write() {
 			if (!total_waiting_size)
 				initial_outbound_throttle = false;
 			else if (initial_outbound_throttle)
-				usleep(20*1000); /* Limit outbound to avg 5Mbps worst case */
+				sleepFirst = true;
 		}
+		if (sleepFirst)
+			std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Limit outbound to avg 5Mbps worst-case
 		if (send_all(sock, (char*)&(*msg)[0], msg->size()) != int64_t(msg->size()))
 			return disconnect("failed to send msg");
 	}
