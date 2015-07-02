@@ -14,6 +14,7 @@
 #endif // !WIN32
 
 #include <unordered_map>
+#include <set>
 
 #include "connection.h"
 
@@ -79,7 +80,7 @@ public:
 			now = std::chrono::steady_clock::now();
 			unsigned char buf[4096];
 			{
-				std::list<int> remove_list;
+				std::set<int> remove_set;
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
 					Connection* conn = e.second;
@@ -88,8 +89,8 @@ public:
 						ssize_t count = recv(conn->sock, (char*)buf, 4096, 0);
 
 						std::lock_guard<std::mutex> lock(conn->read_mutex);
-						if (count <= 0) {
-							remove_list.push_back(e.first);
+						if (count <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+							remove_set.insert(e.first);
 							conn->sock_errno = errno;
 						} else {
 							conn->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
@@ -104,8 +105,8 @@ public:
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
-							if (count <= 0) {
-								remove_list.push_back(e.first);
+							if (count <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+								remove_set.insert(e.first);
 								conn->sock_errno = errno;
 							} else {
 								conn->primary_writepos += count;
@@ -119,8 +120,8 @@ public:
 							assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
 							auto& msg = conn->outbound_secondary_queue.front();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
-							if (count <= 0) {
-								remove_list.push_back(e.first);
+							if (count <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+								remove_set.insert(e.first);
 								conn->sock_errno = errno;
 							} else {
 								conn->secondary_writepos += count;
@@ -138,7 +139,7 @@ public:
 					}
 				}
 
-				for (const int fd : remove_list) {
+				for (const int fd : remove_set) {
 					Connection* conn = me->fd_map[fd];
 					std::lock_guard<std::mutex> lock(conn->read_mutex);
 					conn->inbound_queue.emplace_back((std::nullptr_t)NULL);
@@ -253,7 +254,7 @@ void Connection::disconnect(const char* reason) {
 
 void Connection::do_setup_and_read(Connection* me) {
 	#ifdef WIN32
-		unsigned long nonblocking = 0;
+		unsigned long nonblocking = 1;
 		ioctlsocket(me->sock, FIONBIO, &nonblocking);
 	#else
 		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) | O_NONBLOCK);
