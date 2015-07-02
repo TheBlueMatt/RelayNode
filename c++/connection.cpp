@@ -123,17 +123,38 @@ class GlobalNetProcess {
 public:
 	std::mutex fd_map_mutex;
 	std::unordered_map<int, Connection*> fd_map;
+#ifndef WIN32
+	int pipe_write;
+#endif
 
 	static void do_net_process(GlobalNetProcess* me) {
 		fd_set fd_set_read, fd_set_write;
 		struct timeval timeout;
 
+#ifndef WIN32
+		int pipefd[2];
+		assert(!pipe(pipefd));
+		fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL) | O_NONBLOCK);
+		fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL) | O_NONBLOCK);
+		me->pipe_write = pipefd[1];
+#endif
+
 		while (true) {
-			timeout.tv_sec = 1;
+#ifndef WIN32
+			timeout.tv_sec = 60;
 			timeout.tv_usec = 0;
+#else
+			timeout.tv_sec = 0;
+			timeout.tv_usec = 1000;
+#endif
 
 			FD_ZERO(&fd_set_read); FD_ZERO(&fd_set_write);
+#ifndef WIN32
+			int max = pipefd[0];
+			FD_SET(pipefd[0], &fd_set_read);
+#else
 			int max = 0;
+#endif
 			{
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
@@ -146,28 +167,34 @@ public:
 
 			assert(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
 
-			std::list<int> remove_list;
-			std::lock_guard<std::mutex> lock(me->fd_map_mutex);
-			for (const auto& e : me->fd_map) {
-				if (FD_ISSET(e.first, &fd_set_read)) {
-					unsigned char buf[4096];
-					ssize_t count = recv(e.second->sock, (char*)buf, 4096, 0);
+			unsigned char buf[4096];
+			{
+				std::list<int> remove_list;
+				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
+				for (const auto& e : me->fd_map) {
+					if (FD_ISSET(e.first, &fd_set_read)) {
+						ssize_t count = recv(e.second->sock, (char*)buf, 4096, 0);
 
-					std::lock_guard<std::mutex> lock(e.second->read_mutex);
-					if (count <= 0) {
-						e.second->inbound_queue.emplace_back((std::nullptr_t)NULL);
-						remove_list.push_back(e.first);
-					} else
-						e.second->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
-					e.second->read_cv.notify_all();
+						std::lock_guard<std::mutex> lock(e.second->read_mutex);
+						if (count <= 0) {
+							e.second->inbound_queue.emplace_back((std::nullptr_t)NULL);
+							remove_list.push_back(e.first);
+						} else
+							e.second->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
+						e.second->read_cv.notify_all();
+					}
+					if (FD_ISSET(e.first, &fd_set_write)) {
+						//TODO: Move write here
+					}
 				}
-				if (FD_ISSET(e.first, &fd_set_write)) {
-					//TODO: Move write here
-				}
+
+				for (const int fd : remove_list)
+					me->fd_map.erase(fd);
 			}
-
-			for (const int fd : remove_list)
-				me->fd_map.erase(fd);
+#ifndef WIN32
+			if (FD_ISSET(pipefd[0], &fd_set_read))
+				while (read(pipefd[0], buf, 4096) > 0);
+#endif
 		}
 	}
 
@@ -199,6 +226,9 @@ void Connection::do_setup_and_read(Connection* me) {
 	{
 		std::lock_guard<std::mutex>(processor.fd_map_mutex);
 		processor.fd_map[me->sock] = me;
+#ifndef WIN32
+		write(processor.pipe_write, "1", 1);
+#endif
 	}
 
 	me->net_process([&](const char* reason) { me->disconnect(reason); });
