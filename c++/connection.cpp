@@ -31,10 +31,6 @@ Connection::~Connection() {
 }
 
 
-ssize_t Connection::read_all(char *buf, size_t nbyte) {
-	return ::read_all(sock, buf, nbyte);
-}
-
 void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) {
 	if (!send_mutex_token)
 		send_mutex.lock();
@@ -110,6 +106,7 @@ void Connection::disconnect(const char* reason) {
 
 	outbound_secondary_queue.clear();
 	outbound_primary_queue.clear();
+	inbound_queue.clear();
 
 	disconnectFlags |= DISCONNECT_COMPLETE;
 
@@ -136,7 +133,47 @@ void Connection::do_setup_and_read(Connection* me) {
 	if (errno)
 		return me->disconnect("error during connect");
 
+	std::thread(do_read_bytes, me).detach();
+
 	me->net_process([&](const char* reason) { me->disconnect(reason); });
+}
+
+void Connection::do_read_bytes(Connection* me) {
+	unsigned char buf[4096];
+	while (true) {
+		ssize_t count = recv(me->sock, (char*)buf, 4096, 0);
+		if (count <= 0)
+			break;
+		std::lock_guard<std::mutex> lock(me->read_mutex);
+		me->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
+		me->read_cv.notify_all();
+	}
+	std::lock_guard<std::mutex> lock(me->read_mutex);
+	me->inbound_queue.emplace_back((std::nullptr_t)NULL);
+	me->read_cv.notify_all();
+}
+
+ssize_t Connection::read_all(char *buf, size_t nbyte) {
+	size_t total = 0;
+	while (total < nbyte) {
+		std::unique_lock<std::mutex> lock(read_mutex);
+		while (!inbound_queue.size())
+			read_cv.wait(lock);
+
+		if (!inbound_queue.front())
+			return -1;
+
+		size_t readamt = std::min(nbyte - total, inbound_queue.front()->size() - readpos);
+		memcpy(buf + total, &(*inbound_queue.front())[readpos], readamt);
+		if (readpos + readamt == inbound_queue.front()->size()) {
+			readpos = 0;
+			inbound_queue.pop_front();
+		} else
+			readpos += readamt;
+		total += readamt;
+	}
+	assert(total == nbyte);
+	return nbyte;
 }
 
 void Connection::do_write(Connection* me) {

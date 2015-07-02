@@ -30,6 +30,11 @@ private:
 	bool initial_outbound_throttle;
 	uint32_t total_waiting_size;
 
+	std::mutex read_mutex;
+	std::condition_variable read_cv;
+	size_t readpos;
+	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
+
 	std::thread *read_thread, *write_thread;
 
 	std::atomic<int> disconnectFlags;
@@ -38,7 +43,7 @@ public:
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef), on_disconnect(on_disconnect_in),
-			initial_outbound_throttle(true), total_waiting_size(0), disconnectFlags(0), host(hostIn)
+			initial_outbound_throttle(true), total_waiting_size(0), readpos(0), disconnectFlags(0), host(hostIn)
 		{}
 
 protected:
@@ -79,6 +84,7 @@ private:
 	void disconnect(const char* reason);
 	static void do_setup_and_read(Connection* me);
 	static void do_write(Connection* me);
+	static void do_read_bytes(Connection* me);
 	void net_write();
 };
 
@@ -131,7 +137,7 @@ protected:
 	}
 
 private:
-	void reconnect(std::string disconnectReason);
+	void reconnect(std::string disconnectReason); // Called only after DISCONNECT_COMPLETE in Connection, or before Connection::construction_done()
 	static void do_connect(OutboundPersistentConnection* me);
 };
 
