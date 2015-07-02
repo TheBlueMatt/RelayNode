@@ -11,10 +11,8 @@
 enum DisconnectFlags {
 	DISCONNECT_STARTED = 1,
 	DISCONNECT_PRINT_AND_CLOSE = 2,
-	DISCONNECT_FROM_GLOBAL_THREAD = 4,
-	DISCONNECT_FROM_USER_THREAD = 8,
-	DISCONNECT_GLOBAL_THREAD_DONE = 16,
-	DISCONNECT_COMPLETE = 32,
+	DISCONNECT_GLOBAL_THREAD_DONE = 4,
+	DISCONNECT_COMPLETE = 8,
 };
 
 class Connection {
@@ -36,6 +34,7 @@ private:
 	bool initial_outbound_throttle;
 	int32_t initial_outbound_bytes;
 	std::atomic<int32_t> total_waiting_size;
+	std::chrono::steady_clock::time_point earliest_next_write;
 
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
@@ -51,7 +50,8 @@ public:
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
-			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(true), total_waiting_size(0),
+			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), total_waiting_size(0),
+			earliest_next_write(std::chrono::steady_clock::time_point::min()),
 			readpos(0), total_inbound_size(0), disconnectFlags(0), host(hostIn)
 		{}
 

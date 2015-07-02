@@ -138,6 +138,7 @@ void print_hash(const unsigned char *input);
 
 #define to_millis_double(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
 #define to_millis_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::milliseconds::period> >(t).count())
+#define to_micros_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::microseconds::period> >(t).count())
 #define epoch_millis_lu(t) to_millis_lu((t).time_since_epoch())
 
 void do_assert(bool flag, const char* file, unsigned long line);
