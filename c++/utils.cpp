@@ -137,9 +137,6 @@ bool lookup_address(const char* addr, struct sockaddr_in6* res) {
 		printf("Unable to lookup hostname: %d (%s)\n", gaires, gai_strerror(gaires));
 		freeaddrinfo(server);
 		return false;
-	} else if (server->ai_addrlen != sizeof(*res)) {
-		freeaddrinfo(server);
-		return false;
 	}
 	memset((void*)res, 0, sizeof(*res));
 	res->sin6_family = AF_INET6;
@@ -155,6 +152,10 @@ bool lookup_address(const char* addr, struct sockaddr_in6* res) {
 		p6[12+i] = p4[i];
 	res->sin6_family = AF_INET6;
 #else
+	if (server->ai_addrlen != sizeof(*res)) {
+		freeaddrinfo(server);
+		return false;
+	}
 	res->sin6_addr = ((struct sockaddr_in6*)server->ai_addr)->sin6_addr;
 #endif
 
