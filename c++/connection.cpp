@@ -42,8 +42,8 @@ public:
 
 		while (true) {
 #ifndef WIN32
-			timeout.tv_sec = 60;
-			timeout.tv_usec = 0;
+			timeout.tv_sec = 86400;
+			timeout.tv_usec = 20 * 1000;
 #else
 			timeout.tv_sec = 0;
 			timeout.tv_usec = 1000;
@@ -56,20 +56,27 @@ public:
 #else
 			int max = 0;
 #endif
+			auto now = std::chrono::steady_clock::now();
 			{
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
 					if (e.second->total_inbound_size < 65536)
 						FD_SET(e.first, &fd_set_read);
-					if (e.second->total_waiting_size > 0)
+					if (e.second->total_waiting_size > 0) {
 						FD_SET(e.first, &fd_set_write);
+						if (now < e.second->earliest_next_write) {
+							timeout.tv_sec = 0;
+							timeout.tv_usec = std::min((long unsigned)timeout.tv_usec, to_micros_lu(e.second->earliest_next_write - now));
+						}
+					}
 					max = std::max(e.first, max);
 				}
 			}
 
-			assert(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
+			ALWAYS_ASSERT(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
 
+			now = std::chrono::steady_clock::now();
 			unsigned char buf[4096];
 			{
 				std::list<int> remove_list;
@@ -81,45 +88,61 @@ public:
 						ssize_t count = recv(conn->sock, (char*)buf, 4096, 0);
 
 						std::lock_guard<std::mutex> lock(conn->read_mutex);
-						if (count <= 0) {
-							conn->inbound_queue.emplace_back((std::nullptr_t)NULL);
+						if (count <= 0)
 							remove_list.push_back(e.first);
-						} else {
+						else {
 							conn->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
 							conn->total_inbound_size += count;
+							conn->read_cv.notify_all();
 						}
-						conn->read_cv.notify_all();
 					}
 					if (FD_ISSET(e.first, &fd_set_write)) {
+						if (now < conn->earliest_next_write)
+							continue;
 						std::lock_guard<std::mutex> lock(conn->send_mutex);
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
-							conn->primary_writepos += send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
-							if (conn->primary_writepos == msg->size()) {
-								conn->primary_writepos = 0;
-								conn->total_waiting_size -= msg->size();
-								conn->outbound_primary_queue.pop_front();
+							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
+							if (count <= 0)
+								remove_list.push_back(e.first);
+							else {
+								conn->primary_writepos += count;
+								if (conn->primary_writepos == msg->size()) {
+									conn->primary_writepos = 0;
+									conn->total_waiting_size -= msg->size();
+									conn->outbound_primary_queue.pop_front();
+								}
 							}
 						} else {
-							assert(conn->outbound_secondary_queue.size());
+							assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
 							auto& msg = conn->outbound_secondary_queue.front();
-							conn->secondary_writepos += send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
-							if (conn->secondary_writepos == msg->size()) {
-								conn->secondary_writepos = 0;
-								conn->total_waiting_size -= msg->size();
-								conn->outbound_secondary_queue.pop_front();
+							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
+							if (count <= 0)
+								remove_list.push_back(e.first);
+							else {
+								conn->secondary_writepos += count;
+								if (conn->secondary_writepos == msg->size()) {
+									conn->secondary_writepos = 0;
+									conn->total_waiting_size -= msg->size();
+									conn->outbound_secondary_queue.pop_front();
+								}
 							}
 						}
 						if (!conn->total_waiting_size)
 							conn->initial_outbound_throttle = false;
-						else if (conn->initial_outbound_throttle) {
-							std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Limit outbound to avg 5Mbps worst-case
-						}
+						else if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
+							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::milliseconds(20); // Limit outbound to avg 5Mbps worst-case
 					}
 				}
 
-				for (const int fd : remove_list)
+				for (const int fd : remove_list) {
+					Connection* conn = me->fd_map[fd];
+					std::lock_guard<std::mutex> lock(conn->read_mutex);
+					conn->inbound_queue.emplace_back((std::nullptr_t)NULL);
+					conn->read_cv.notify_all();
+					conn->disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
 					me->fd_map.erase(fd);
+				}
 			}
 #ifndef WIN32
 			if (FD_ISSET(pipefd[0], &fd_set_read))
@@ -138,10 +161,7 @@ static GlobalNetProcess processor;
 
 Connection::~Connection() {
 	assert(disconnectFlags & DISCONNECT_COMPLETE);
-	if (disconnectFlags & DISCONNECT_FROM_USER_THREAD)
-		user_thread->join();
-	else if (!(disconnectFlags & DISCONNECT_FROM_GLOBAL_THREAD))
-		assert(!"DISCONNECT_COMPLETE set but not from either thread?");
+	user_thread->join();
 	close(sock);
 	delete user_thread;
 }
@@ -165,7 +185,7 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	outbound_primary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 #ifndef WIN32
-	if (total_waiting_size > bytes->size())
+	if (total_waiting_size > (ssize_t)bytes->size())
 		write(processor.pipe_write, "1", 1);
 #endif
 
@@ -189,7 +209,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	outbound_secondary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 #ifndef WIN32
-	if (total_waiting_size > bytes->size())
+	if (total_waiting_size > (ssize_t)bytes->size())
 		write(processor.pipe_write, "1", 1);
 #endif
 
@@ -214,15 +234,9 @@ void Connection::disconnect(const char* reason) {
 		shutdown(sock, SHUT_RDWR);
 	}
 
-	if (std::this_thread::get_id() != user_thread->get_id()) {
-		disconnectFlags |= DISCONNECT_FROM_GLOBAL_THREAD;
-		user_thread->join();
-	} else {
-		disconnectFlags |= DISCONNECT_FROM_USER_THREAD;
-		std::unique_lock<std::mutex> lock(read_mutex);
-		while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
-			read_cv.wait(lock);
-	}
+	std::unique_lock<std::mutex> lock(read_mutex);
+	while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
+		read_cv.wait(lock);
 
 	outbound_secondary_queue.clear();
 	outbound_primary_queue.clear();
@@ -250,8 +264,10 @@ void Connection::do_setup_and_read(Connection* me) {
 	int nodelay = 1;
 	setsockopt(me->sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
 
-	if (errno)
+	if (errno) {
+		me->disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
 		return me->disconnect("error during connect");
+	}
 
 	{
 		std::lock_guard<std::mutex>(processor.fd_map_mutex);
