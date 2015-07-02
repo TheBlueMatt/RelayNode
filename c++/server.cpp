@@ -93,8 +93,8 @@ private:
 				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), data);
 				int token = get_send_mutex();
 				connected = 2;
-				connected_callback(this, token); // Called with send_mutex!
 				do_throttle_outbound();
+				connected_callback(this, token); // Called with send_mutex!
 				release_send_mutex(token);
 			} else if (connected != 2) {
 				return disconnect("got non-version before version");
