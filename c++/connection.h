@@ -11,9 +11,10 @@
 enum DisconnectFlags {
 	DISCONNECT_STARTED = 1,
 	DISCONNECT_PRINT_AND_CLOSE = 2,
-	DISCONNECT_FROM_WRITE_THREAD = 4,
-	DISCONNECT_FROM_READ_THREAD = 8,
-	DISCONNECT_COMPLETE = 16,
+	DISCONNECT_FROM_GLOBAL_THREAD = 4,
+	DISCONNECT_FROM_USER_THREAD = 8,
+	DISCONNECT_GLOBAL_THREAD_DONE = 16,
+	DISCONNECT_COMPLETE = 32,
 };
 
 class Connection {
@@ -24,9 +25,8 @@ private:
 
 	std::function<void(void)> on_disconnect;
 
-	std::condition_variable cv;
-	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_secondary_queue;
-	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_primary_queue;
+	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_primary_queue, outbound_secondary_queue;
+	size_t primary_writepos, secondary_writepos;
 
 	// During initial_outbound_throttle, total_waiting_size is allowed to exceed the
 	// usual outbound buffer size but only by initial_outbound_bytes
@@ -35,7 +35,7 @@ private:
 	// (not mabye_send, do_send), during initial_outbound_throttle
 	bool initial_outbound_throttle;
 	int32_t initial_outbound_bytes;
-	int32_t total_waiting_size;
+	std::atomic<int32_t> total_waiting_size;
 
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
@@ -43,7 +43,7 @@ private:
 	std::atomic<int32_t> total_inbound_size;
 	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
 
-	std::thread *read_thread, *write_thread;
+	std::thread *user_thread;
 
 	std::atomic<int> disconnectFlags;
 public:
@@ -51,13 +51,13 @@ public:
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
-			initial_outbound_throttle(true), total_waiting_size(0), readpos(0), total_inbound_size(0), disconnectFlags(0), host(hostIn)
+			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(true), total_waiting_size(0),
+			readpos(0), total_inbound_size(0), disconnectFlags(0), host(hostIn)
 		{}
 
 protected:
 	void construction_done() {
-		read_thread = new std::thread(do_setup_and_read, this);
-		write_thread = new std::thread(do_write, this);
+		user_thread = new std::thread(do_setup_and_read, this);
 	}
 
 public:
@@ -81,19 +81,12 @@ protected:
 	void release_send_mutex(int send_mutex_token) { outside_send_mutex_token *= 0xdeadbeef; send_mutex.unlock(); }
 	void do_throttle_outbound() { initial_outbound_throttle = true; }
 
-private:
-	void disconnect_from_outside(const char* reason, bool push_send);
-
 public:
-	void disconnect_from_outside(const char* reason) {
-		return disconnect_from_outside(reason, true);
-	}
+	void disconnect_from_outside(const char* reason);
 
 private:
 	void disconnect(const char* reason);
 	static void do_setup_and_read(Connection* me);
-	static void do_write(Connection* me);
-	void net_write();
 
 	friend class GlobalNetProcess;
 };
