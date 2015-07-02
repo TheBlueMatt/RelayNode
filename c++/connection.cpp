@@ -35,7 +35,7 @@ public:
 
 #ifndef WIN32
 		int pipefd[2];
-		assert(!pipe(pipefd));
+		ALWAYS_ASSERT(!pipe(pipefd));
 		fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL) | O_NONBLOCK);
 		fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL) | O_NONBLOCK);
 		me->pipe_write = pipefd[1];
