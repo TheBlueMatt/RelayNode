@@ -43,6 +43,7 @@ private:
 	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
 
 	std::thread *user_thread;
+	int sock_errno;
 
 	std::atomic<int> disconnectFlags;
 public:
@@ -52,7 +53,7 @@ public:
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
 			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), total_waiting_size(0),
 			earliest_next_write(std::chrono::steady_clock::time_point::min()),
-			readpos(0), total_inbound_size(0), disconnectFlags(0), host(hostIn)
+			readpos(0), total_inbound_size(0), sock_errno(0), disconnectFlags(0), host(hostIn)
 		{}
 
 protected:
