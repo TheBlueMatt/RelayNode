@@ -135,7 +135,8 @@ bool lookup_address(const char* addr, struct sockaddr_in6* res) {
 	int gaires = getaddrinfo(addr, NULL, &hints, &server);
 	if (gaires) {
 		printf("Unable to lookup hostname: %d (%s)\n", gaires, gai_strerror(gaires));
-		freeaddrinfo(server);
+		if (server)
+			freeaddrinfo(server);
 		return false;
 	}
 	memset((void*)res, 0, sizeof(*res));
