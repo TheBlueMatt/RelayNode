@@ -40,6 +40,7 @@ private:
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
 	size_t readpos;
+	std::atomic<int32_t> total_inbound_size;
 	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
 
 	std::thread *read_thread, *write_thread;
@@ -50,7 +51,7 @@ public:
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
-			initial_outbound_throttle(true), total_waiting_size(0), readpos(0), disconnectFlags(0), host(hostIn)
+			initial_outbound_throttle(true), total_waiting_size(0), readpos(0), total_inbound_size(0), disconnectFlags(0), host(hostIn)
 		{}
 
 protected:

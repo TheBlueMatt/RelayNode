@@ -159,7 +159,8 @@ public:
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					FD_SET(e.first, &fd_set_read);
+					if (e.second->total_inbound_size < 65536)
+						FD_SET(e.first, &fd_set_read);
 					//FD_SET(e.first, &fd_set_write);
 					max = std::max(e.first, max);
 				}
@@ -179,8 +180,10 @@ public:
 						if (count <= 0) {
 							e.second->inbound_queue.emplace_back((std::nullptr_t)NULL);
 							remove_list.push_back(e.first);
-						} else
+						} else {
 							e.second->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
+							e.second->total_inbound_size += count;
+						}
 						e.second->read_cv.notify_all();
 					}
 					if (FD_ISSET(e.first, &fd_set_write)) {
@@ -247,6 +250,16 @@ ssize_t Connection::read_all(char *buf, size_t nbyte) {
 		size_t readamt = std::min(nbyte - total, inbound_queue.front()->size() - readpos);
 		memcpy(buf + total, &(*inbound_queue.front())[readpos], readamt);
 		if (readpos + readamt == inbound_queue.front()->size()) {
+#ifndef WIN32
+			int32_t old_size = total_inbound_size;
+#endif
+			total_inbound_size -= inbound_queue.front()->size();
+#ifndef WIN32
+			// If the old size is >= 64k, we may need to wakeup the select thread to get it to read more
+			if (old_size >= 65536)
+				write(processor.pipe_write, "1", 1);
+#endif
+
 			readpos = 0;
 			inbound_queue.pop_front();
 		} else
