@@ -44,7 +44,13 @@ public:
 			return;
 #endif
 			while (true) {
-				if (allArraySets.size() > 1) {
+				bool haveMultipleSets = false;
+				{
+					std::lock_guard<std::mutex> lock(dedup_mutex);
+					haveMultipleSets = allArraySets.size() > 1;
+				}
+
+				if (haveMultipleSets) {
 					std::list<PtrPair> ptrlist;
 
 					{
