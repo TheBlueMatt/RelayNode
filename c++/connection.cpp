@@ -62,7 +62,8 @@ public:
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
 					if (e.second->total_inbound_size < 65536)
 						FD_SET(e.first, &fd_set_read);
-					//FD_SET(e.first, &fd_set_write);
+					if (e.second->total_waiting_size > 0)
+						FD_SET(e.first, &fd_set_write);
 					max = std::max(e.first, max);
 				}
 			}
@@ -90,7 +91,30 @@ public:
 						conn->read_cv.notify_all();
 					}
 					if (FD_ISSET(e.first, &fd_set_write)) {
-						//TODO: Move write here
+						std::lock_guard<std::mutex> lock(conn->send_mutex);
+						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
+							auto& msg = conn->outbound_primary_queue.front();
+							conn->primary_writepos += send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
+							if (conn->primary_writepos == msg->size()) {
+								conn->primary_writepos = 0;
+								conn->total_waiting_size -= msg->size();
+								conn->outbound_primary_queue.pop_front();
+							}
+						} else {
+							assert(conn->outbound_secondary_queue.size());
+							auto& msg = conn->outbound_secondary_queue.front();
+							conn->secondary_writepos += send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
+							if (conn->secondary_writepos == msg->size()) {
+								conn->secondary_writepos = 0;
+								conn->total_waiting_size -= msg->size();
+								conn->outbound_secondary_queue.pop_front();
+							}
+						}
+						if (!conn->total_waiting_size)
+							conn->initial_outbound_throttle = false;
+						else if (conn->initial_outbound_throttle) {
+							std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Limit outbound to avg 5Mbps worst-case
+						}
 					}
 				}
 
@@ -114,15 +138,12 @@ static GlobalNetProcess processor;
 
 Connection::~Connection() {
 	assert(disconnectFlags & DISCONNECT_COMPLETE);
-	if (disconnectFlags & DISCONNECT_FROM_WRITE_THREAD)
-		write_thread->join();
-	else if (disconnectFlags & DISCONNECT_FROM_READ_THREAD)
-		read_thread->join();
-	else
+	if (disconnectFlags & DISCONNECT_FROM_USER_THREAD)
+		user_thread->join();
+	else if (!(disconnectFlags & DISCONNECT_FROM_GLOBAL_THREAD))
 		assert(!"DISCONNECT_COMPLETE set but not from either thread?");
 	close(sock);
-	delete read_thread;
-	delete write_thread;
+	delete user_thread;
 }
 
 
@@ -138,12 +159,16 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > 4000000) {
 		if (!send_mutex_token)
 			send_mutex.unlock();
-		return disconnect_from_outside("total_waiting_size blew up :(", false);
+		return disconnect_from_outside("total_waiting_size blew up :(");
 	}
 
 	outbound_primary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
-	cv.notify_all();
+#ifndef WIN32
+	if (total_waiting_size > bytes->size())
+		write(processor.pipe_write, "1", 1);
+#endif
+
 	if (!send_mutex_token)
 		send_mutex.unlock();
 }
@@ -158,25 +183,26 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > 4000000) {
 		if (!send_mutex_token)
 			send_mutex.unlock();
-		return disconnect_from_outside("total_waiting_size blew up :(", false);
+		return disconnect_from_outside("total_waiting_size blew up :(");
 	}
 
 	outbound_secondary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
-	cv.notify_all();
+#ifndef WIN32
+	if (total_waiting_size > bytes->size())
+		write(processor.pipe_write, "1", 1);
+#endif
+
 	if (!send_mutex_token)
 		send_mutex.unlock();
 }
 
-void Connection::disconnect_from_outside(const char* reason, bool push_send) {
+void Connection::disconnect_from_outside(const char* reason) {
 	if (disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)
 		return;
 
 	printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno));
 	shutdown(sock, SHUT_RDWR);
-
-	if (push_send)
-		do_send_bytes(std::make_shared<std::vector<unsigned char> >(1));
 }
 
 void Connection::disconnect(const char* reason) {
@@ -188,18 +214,14 @@ void Connection::disconnect(const char* reason) {
 		shutdown(sock, SHUT_RDWR);
 	}
 
-	if (std::this_thread::get_id() != read_thread->get_id()) {
-		disconnectFlags |= DISCONNECT_FROM_WRITE_THREAD;
-		read_thread->join();
+	if (std::this_thread::get_id() != user_thread->get_id()) {
+		disconnectFlags |= DISCONNECT_FROM_GLOBAL_THREAD;
+		user_thread->join();
 	} else {
-		disconnectFlags |= DISCONNECT_FROM_READ_THREAD;
-		{
-			/* Wake up the write thread */
-			std::lock_guard<std::mutex> lock(send_mutex);
-			outbound_secondary_queue.push_back(std::make_shared<std::vector<unsigned char> >(1));
-			cv.notify_all();
-		}
-		write_thread->join();
+		disconnectFlags |= DISCONNECT_FROM_USER_THREAD;
+		std::unique_lock<std::mutex> lock(read_mutex);
+		while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
+			read_cv.wait(lock);
 	}
 
 	outbound_secondary_queue.clear();
@@ -217,7 +239,7 @@ void Connection::do_setup_and_read(Connection* me) {
 		unsigned long nonblocking = 0;
 		ioctlsocket(me->sock, FIONBIO, &nonblocking);
 	#else
-		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
+		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) | O_NONBLOCK);
 	#endif
 
 	#ifdef X86_BSD
@@ -273,44 +295,6 @@ ssize_t Connection::read_all(char *buf, size_t nbyte) {
 	}
 	assert(total == nbyte);
 	return nbyte;
-}
-
-void Connection::do_write(Connection* me) {
-	me->net_write();
-}
-
-void Connection::net_write() {
-	//TODO: Have a single global thread doing this
-	while (true) {
-		std::shared_ptr<std::vector<unsigned char> > msg;
-		bool sleepFirst = false;
-		{
-			std::unique_lock<std::mutex> write_lock(send_mutex);
-			while (!outbound_secondary_queue.size() && !outbound_primary_queue.size())
-				cv.wait(write_lock);
-
-			if (disconnectFlags)
-				return disconnect("disconnect started elsewhere");
-
-			if (outbound_primary_queue.size()) {
-				msg = outbound_primary_queue.front();
-				outbound_primary_queue.pop_front();
-			} else {
-				msg = outbound_secondary_queue.front();
-				outbound_secondary_queue.pop_front();
-			}
-
-			total_waiting_size -= msg->size();
-			if (!total_waiting_size)
-				initial_outbound_throttle = false;
-			else if (initial_outbound_throttle)
-				sleepFirst = true;
-		}
-		if (sleepFirst)
-			std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Limit outbound to avg 5Mbps worst-case
-		if (send_all(sock, (char*)&(*msg)[0], msg->size()) != int64_t(msg->size()))
-			return disconnect("failed to send msg");
-	}
 }
 
 void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
