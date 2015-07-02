@@ -38,10 +38,14 @@
 	#define le32toh(val) (val)
 	#define le16toh(val) (val)
 
-	#define MSG_NOSIGNAL 0
+	#ifndef MSG_NOSIGNAL
+		#define MSG_NOSIGNAL 0
+	#endif
 #elif defined(__FreeBSD__)
 	#include <sys/endian.h>
-	#define MSG_NOSIGNAL 0
+	#ifndef MSG_NOSIGNAL
+		#define MSG_NOSIGNAL 0
+	#endif
 #else
 	#include <endian.h>
 #endif
