@@ -139,6 +139,7 @@ FlaggedArraySet::FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn) :
 
 FlaggedArraySet::~FlaggedArraySet() {
 	deduper->removeFAS(this);
+	assert(sanity_check());
 }
 
 
@@ -327,6 +328,8 @@ bool FlaggedArraySet::remove(int index, std::shared_ptr<std::vector<unsigned cha
 
 void FlaggedArraySet::clear() {
 	std::lock_guard<WaitCountMutex> lock(mutex);
+	assert(sanity_check());
+
 	flag_count = 0; offset = 0;
 	flags_to_remove = 0; max_remove = 0;
 	backingMap.clear(); indexMap.clear(); to_be_removed.clear();
