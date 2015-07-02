@@ -27,8 +27,15 @@ private:
 	std::condition_variable cv;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_secondary_queue;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_primary_queue;
+
+	// During initial_outbound_throttle, total_waiting_size is allowed to exceed the
+	// usual outbound buffer size but only by initial_outbound_bytes
+	//
+	// initial_outbound_bytes is defined as the quantity of bytes sent with send_mutex_token
+	// (not mabye_send, do_send), during initial_outbound_throttle
 	bool initial_outbound_throttle;
-	uint32_t total_waiting_size;
+	int32_t initial_outbound_bytes;
+	int32_t total_waiting_size;
 
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
@@ -42,7 +49,7 @@ public:
 	const std::string host;
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
-			sock(sockIn), outside_send_mutex_token(0xdeadbeef), on_disconnect(on_disconnect_in),
+			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
 			initial_outbound_throttle(true), total_waiting_size(0), readpos(0), disconnectFlags(0), host(hostIn)
 		{}
 
@@ -68,6 +75,7 @@ protected:
 	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
+	// See the comment above initial_outbound_throttle for special meanings of the send_mutex_tokens
 	int get_send_mutex() { send_mutex.lock(); return (outside_send_mutex_token *= 0xdeadbeef); }
 	void release_send_mutex(int send_mutex_token) { outside_send_mutex_token *= 0xdeadbeef; send_mutex.unlock(); }
 	void do_throttle_outbound() { initial_outbound_throttle = true; }
