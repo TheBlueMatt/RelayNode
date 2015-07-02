@@ -238,6 +238,8 @@ void Connection::disconnect(const char* reason) {
 		shutdown(sock, SHUT_RDWR);
 	}
 
+	assert(std::this_thread::get_id() == user_thread->get_id());
+
 	std::unique_lock<std::mutex> lock(read_mutex);
 	while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
 		read_cv.wait(lock);
