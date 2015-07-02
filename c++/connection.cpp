@@ -13,6 +13,8 @@
 	#include <fcntl.h>
 #endif // !WIN32
 
+#include <unordered_map>
+
 #include "connection.h"
 
 #include "utils.h"
@@ -114,6 +116,64 @@ void Connection::disconnect(const char* reason) {
 		std::thread(on_disconnect).detach();
 }
 
+class GlobalNetProcess {
+public:
+	std::mutex fd_map_mutex;
+	std::unordered_map<int, Connection*> fd_map;
+
+	static void do_net_process(GlobalNetProcess* me) {
+		fd_set fd_set_read, fd_set_write;
+		struct timeval timeout;
+
+		while (true) {
+			timeout.tv_sec = 1;
+			timeout.tv_usec = 0;
+
+			FD_ZERO(&fd_set_read); FD_ZERO(&fd_set_write);
+			int max = 0;
+			{
+				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
+				for (const auto& e : me->fd_map) {
+					ALWAYS_ASSERT(e.first < FD_SETSIZE);
+					FD_SET(e.first, &fd_set_read);
+					//FD_SET(e.first, &fd_set_write);
+					max = std::max(e.first, max);
+				}
+			}
+
+			assert(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
+
+			std::list<int> remove_list;
+			std::lock_guard<std::mutex> lock(me->fd_map_mutex);
+			for (const auto& e : me->fd_map) {
+				if (FD_ISSET(e.first, &fd_set_read)) {
+					unsigned char buf[4096];
+					ssize_t count = recv(e.second->sock, (char*)buf, 4096, 0);
+
+					std::lock_guard<std::mutex> lock(e.second->read_mutex);
+					if (count <= 0) {
+						e.second->inbound_queue.emplace_back((std::nullptr_t)NULL);
+						remove_list.push_back(e.first);
+					} else
+						e.second->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
+					e.second->read_cv.notify_all();
+				}
+				if (FD_ISSET(e.first, &fd_set_write)) {
+					//TODO: Move write here
+				}
+			}
+
+			for (const int fd : remove_list)
+				me->fd_map.erase(fd);
+		}
+	}
+
+	GlobalNetProcess() {
+		std::thread(do_net_process, this).detach();
+	}
+};
+static GlobalNetProcess processor;
+
 void Connection::do_setup_and_read(Connection* me) {
 	#ifdef WIN32
 		unsigned long nonblocking = 0;
@@ -133,24 +193,12 @@ void Connection::do_setup_and_read(Connection* me) {
 	if (errno)
 		return me->disconnect("error during connect");
 
-	std::thread(do_read_bytes, me).detach();
+	{
+		std::lock_guard<std::mutex>(processor.fd_map_mutex);
+		processor.fd_map[me->sock] = me;
+	}
 
 	me->net_process([&](const char* reason) { me->disconnect(reason); });
-}
-
-void Connection::do_read_bytes(Connection* me) {
-	unsigned char buf[4096];
-	while (true) {
-		ssize_t count = recv(me->sock, (char*)buf, 4096, 0);
-		if (count <= 0)
-			break;
-		std::lock_guard<std::mutex> lock(me->read_mutex);
-		me->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
-		me->read_cv.notify_all();
-	}
-	std::lock_guard<std::mutex> lock(me->read_mutex);
-	me->inbound_queue.emplace_back((std::nullptr_t)NULL);
-	me->read_cv.notify_all();
 }
 
 ssize_t Connection::read_all(char *buf, size_t nbyte) {

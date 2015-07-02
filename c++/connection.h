@@ -84,8 +84,9 @@ private:
 	void disconnect(const char* reason);
 	static void do_setup_and_read(Connection* me);
 	static void do_write(Connection* me);
-	static void do_read_bytes(Connection* me);
 	void net_write();
+
+	friend class GlobalNetProcess;
 };
 
 class OutboundPersistentConnection {
