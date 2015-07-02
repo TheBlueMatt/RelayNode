@@ -74,18 +74,20 @@ public:
 				std::list<int> remove_list;
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
-					if (FD_ISSET(e.first, &fd_set_read)) {
-						ssize_t count = recv(e.second->sock, (char*)buf, 4096, 0);
+					Connection* conn = e.second;
 
-						std::lock_guard<std::mutex> lock(e.second->read_mutex);
+					if (FD_ISSET(e.first, &fd_set_read)) {
+						ssize_t count = recv(conn->sock, (char*)buf, 4096, 0);
+
+						std::lock_guard<std::mutex> lock(conn->read_mutex);
 						if (count <= 0) {
-							e.second->inbound_queue.emplace_back((std::nullptr_t)NULL);
+							conn->inbound_queue.emplace_back((std::nullptr_t)NULL);
 							remove_list.push_back(e.first);
 						} else {
-							e.second->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
-							e.second->total_inbound_size += count;
+							conn->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
+							conn->total_inbound_size += count;
 						}
-						e.second->read_cv.notify_all();
+						conn->read_cv.notify_all();
 					}
 					if (FD_ISSET(e.first, &fd_set_write)) {
 						//TODO: Move write here
