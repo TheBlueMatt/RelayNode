@@ -88,9 +88,10 @@ public:
 						ssize_t count = recv(conn->sock, (char*)buf, 4096, 0);
 
 						std::lock_guard<std::mutex> lock(conn->read_mutex);
-						if (count <= 0)
+						if (count <= 0) {
 							remove_list.push_back(e.first);
-						else {
+							conn->sock_errno = errno;
+						} else {
 							conn->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
 							conn->total_inbound_size += count;
 							conn->read_cv.notify_all();
@@ -103,9 +104,10 @@ public:
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
-							if (count <= 0)
+							if (count <= 0) {
 								remove_list.push_back(e.first);
-							else {
+								conn->sock_errno = errno;
+							} else {
 								conn->primary_writepos += count;
 								if (conn->primary_writepos == msg->size()) {
 									conn->primary_writepos = 0;
@@ -117,9 +119,10 @@ public:
 							assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
 							auto& msg = conn->outbound_secondary_queue.front();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
-							if (count <= 0)
+							if (count <= 0) {
 								remove_list.push_back(e.first);
-							else {
+								conn->sock_errno = errno;
+							} else {
 								conn->secondary_writepos += count;
 								if (conn->secondary_writepos == msg->size()) {
 									conn->secondary_writepos = 0;
@@ -230,7 +233,7 @@ void Connection::disconnect(const char* reason) {
 		return;
 
 	if (!(disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)) {
-		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno));
+		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(sock_errno));
 		shutdown(sock, SHUT_RDWR);
 	}
 
