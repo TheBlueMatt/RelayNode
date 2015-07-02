@@ -274,7 +274,7 @@ void Connection::do_setup_and_read(Connection* me) {
 	}
 
 	{
-		std::lock_guard<std::mutex>(processor.fd_map_mutex);
+		std::lock_guard<std::mutex> lock(processor.fd_map_mutex);
 		processor.fd_map[me->sock] = me;
 #ifndef WIN32
 		write(processor.pipe_write, "1", 1);
