@@ -328,7 +328,8 @@ bool FlaggedArraySet::remove(int index, std::shared_ptr<std::vector<unsigned cha
 
 void FlaggedArraySet::clear() {
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	assert(sanity_check());
+	if (!indexMap.empty() && !backingMap.empty())
+		assert(sanity_check());
 
 	flag_count = 0; offset = 0;
 	flags_to_remove = 0; max_remove = 0;
