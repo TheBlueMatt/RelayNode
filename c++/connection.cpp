@@ -65,11 +65,11 @@ public:
 					if (e.second->total_inbound_size < 65536)
 						FD_SET(e.first, &fd_set_read);
 					if (e.second->total_waiting_size > 0) {
-						FD_SET(e.first, &fd_set_write);
 						if (now < e.second->earliest_next_write) {
 							timeout.tv_sec = 0;
 							timeout.tv_usec = std::min((long unsigned)timeout.tv_usec, to_micros_lu(e.second->earliest_next_write - now));
-						}
+						} else
+							FD_SET(e.first, &fd_set_write);
 					}
 					max = std::max(e.first, max);
 				}
