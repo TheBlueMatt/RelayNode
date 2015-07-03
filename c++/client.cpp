@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
 		int min = 0; std::chrono::milliseconds min_duration(std::chrono::milliseconds::max());
 		for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
 			if (connect_durations[i] != std::chrono::milliseconds::max()) {
-				printf("Server %d took %lld ms to respond %d times.\n", i, connect_durations[i].count(), CONNECT_TESTS);
+				printf("Server %d took %lld ms to respond %d times.\n", i, (long long int)connect_durations[i].count(), CONNECT_TESTS);
 			}
 			if (connect_durations[i] < min_duration) {
 				min_duration = connect_durations[i];

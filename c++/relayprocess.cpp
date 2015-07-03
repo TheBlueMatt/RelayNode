@@ -31,7 +31,7 @@ bool RelayNodeCompressor::maybe_recv_tx_of_size(uint32_t tx_size, bool debug_pri
 
 	if (!check_recv_tx(tx_size)) {
 		if (debug_print)
-			printf("Freely relayed tx of size %u, with %lu oversize txn already present\n", tx_size, recv_tx_cache.flagCount());
+			printf("Freely relayed tx of size %u, with %lu oversize txn already present\n", tx_size, (long unsigned)recv_tx_cache.flagCount());
 		return false;
 	}
 	return true;

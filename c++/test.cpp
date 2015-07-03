@@ -101,7 +101,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribut
 	if ((compressed - start) > max_compress_time) max_compress_time = compressed - start;
 	if ((compressed - start) < min_compress_time) min_compress_time = compressed - start;
 	if(std::get<0>(res))
-		PRINT_TIME("Compressed from %lu to %lu in %lf ms with %lu txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis_double(compressed - start), tx_count);
+		PRINT_TIME("Compressed from %lu to %lu in %lf ms with %u txn pre-relayed\n", data.size(), std::get<0>(res)->size(), to_millis_double(compressed - start), tx_count);
 	return res;
 }
 
