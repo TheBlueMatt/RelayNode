@@ -231,8 +231,8 @@ bool FlaggedArraySet::sanity_check() const {
 	assert(expected_flag_count == flag_count);
 
 	ssize_t expected_flags_removed = 0;
-	for (int index : to_be_removed) {
-		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(index);
+	for (size_t i = 0; i < to_be_removed.size(); i++) {
+		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(to_be_removed[i] + i);
 		if (it->first.flag)
 			expected_flags_removed++;
 	}
