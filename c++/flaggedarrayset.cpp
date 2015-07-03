@@ -215,18 +215,30 @@ size_t std::hash<ElemAndFlag>::operator()(const ElemAndFlag& e) const {
 
 bool FlaggedArraySet::sanity_check() const {
 	size_t size = indexMap.size();
-	if (backingMap.size() != size) return false;
-	if (this->size() != size - to_be_removed.size()) return false;
+	assert(backingMap.size() == size);
+	assert(this->size() == size - to_be_removed.size());
 
+	size_t expected_flag_count = 0;
 	for (uint64_t i = 0; i < size; i++) {
 		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(i);
-		if (it == backingMap.end()) return false;
-		if (it->second != i + offset) return false;
-		if (backingMap.find(it->first) != it) return false;
-		if (&backingMap.find(it->first)->first != &it->first) return false;
+		assert(it != backingMap.end());
+		assert(it->second == i + offset);
+		assert(backingMap.find(it->first) == it);
+		assert(&backingMap.find(it->first)->first == &it->first);
+		if (it->first.flag)
+			expected_flag_count++;
 	}
+	assert(expected_flag_count == flag_count);
 
-	return true;
+	ssize_t expected_flags_removed = 0;
+	for (int index : to_be_removed) {
+		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(index);
+		if (it->first.flag)
+			expected_flags_removed++;
+	}
+	assert(expected_flags_removed == flags_to_remove);
+
+	return expected_flags_removed == flags_to_remove && expected_flag_count == flag_count;
 }
 
 void FlaggedArraySet::remove_(size_t index) {
@@ -256,6 +268,7 @@ inline void FlaggedArraySet::cleanup_late_remove() const {
 			const_cast<FlaggedArraySet*>(this)->remove_(to_be_removed[i]);
 		}
 		to_be_removed.clear();
+		flags_to_remove = 0;
 		max_remove = 0;
 	}
 	assert(sanity_check());
