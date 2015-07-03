@@ -58,7 +58,6 @@ void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std
 
 int pipefd[2];
 uint32_t block_tx_count;
-std::shared_ptr<std::vector<unsigned char> > decompressed_block;
 
 RelayNodeCompressor global_sender(false), global_receiver(false);
 std::set<std::vector<unsigned char> > globalSeenSet;
@@ -68,9 +67,16 @@ static std::chrono::nanoseconds total_compress_time, total_decompress_time;
 static std::chrono::nanoseconds max_compress_time, max_decompress_time;
 static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1);
 
-void recv_block(RelayNodeCompressor* receiver, bool time) {
+std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_block(std::shared_ptr<std::vector<unsigned char> >& data, RelayNodeCompressor* receiver, bool time) {
+	size_t readpos = sizeof(struct relay_msg_header);
+
 	auto start = std::chrono::steady_clock::now();
-	std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return read_all(pipefd[0], buf, count); };
+	std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) {
+		memcpy(buf, &(*data)[readpos], count);
+		readpos += count;
+		assert(readpos <= data->size());
+		return count;
+	};
 	auto res = receiver->decompress_relay_block(do_read, block_tx_count, true);
 	auto decompressed = std::chrono::steady_clock::now();
 	if (time) {
@@ -84,7 +90,7 @@ void recv_block(RelayNodeCompressor* receiver, bool time) {
 		exit(2);
 	} else if (time)
 		PRINT_TIME("Decompressed block in %lf ms\n", to_millis_double(decompressed - start));
-	decompressed_block = std::get<1>(res);
+	return std::get<1>(res);
 }
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribute__((noinline)) do_compress_test(RelayNodeCompressor& sender, const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& data, uint32_t tx_count) {
@@ -163,14 +169,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
 	block_tx_count = ntohl(header.length);
 
-	if (pipe(pipefd)) {
-		printf("Failed to create pipe?\n");
-		exit(3);
-	}
-
-	std::thread recv(recv_block, &receiver, true);
-	write(pipefd[1], &(*std::get<0>(res))[sizeof(header)], std::get<0>(res)->size() - sizeof(header));
-	recv.join();
+	auto decompressed_block = recv_block(std::get<0>(res), &receiver, true);
 
 	if (*decompressed_block != data) {
 		printf("Re-constructed block did not match!\n");
@@ -183,18 +182,13 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			printf("Failed to compress block globally %s\n", std::get<1>(res));
 			exit(8);
 		}
-		recv = std::thread(recv_block, &global_receiver, false);
-		write(pipefd[1], &(*std::get<0>(res))[sizeof(header)], std::get<0>(res)->size() - sizeof(header));
-		recv.join();
+		decompressed_block = recv_block(std::get<0>(res), &global_receiver, false);
 
 		if (*decompressed_block != data) {
 			printf("Global re-constructed block did not match!\n");
 			exit(4);
 		}
 	}
-
-	close(pipefd[0]);
-	close(pipefd[1]);
 }
 
 void run_test(std::vector<unsigned char>& data) {
