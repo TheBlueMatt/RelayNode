@@ -32,14 +32,14 @@ private:
 	// initial_outbound_bytes is defined as the quantity of bytes sent with send_mutex_token
 	// (not mabye_send, do_send), during initial_outbound_throttle
 	bool initial_outbound_throttle;
-	int32_t initial_outbound_bytes;
-	std::atomic<int32_t> total_waiting_size;
+	int64_t initial_outbound_bytes;
+	std::atomic<int64_t> total_waiting_size;
 	std::chrono::steady_clock::time_point earliest_next_write;
 
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
 	size_t readpos;
-	std::atomic<int32_t> total_inbound_size;
+	std::atomic<int64_t> total_inbound_size;
 	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
 
 	std::thread *user_thread;
@@ -51,8 +51,8 @@ public:
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
-			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), total_waiting_size(0),
-			earliest_next_write(std::chrono::steady_clock::time_point::min()),
+			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_bytes(0),
+			total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
 			readpos(0), total_inbound_size(0), sock_errno(0), disconnectFlags(0), host(hostIn)
 		{}
 
