@@ -101,9 +101,15 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	try {
 		std::vector<unsigned char>::const_iterator readit = block.begin();
 		move_forward(readit, sizeof(struct bitcoin_msg_header), block.end());
-		move_forward(readit, 4 + 32, block.end());
+		move_forward(readit, 4, block.end());
+		int32_t block_version = ((*(readit-1) << 24) | (*(readit-2) << 16) | (*(readit-3) << 8) | *(readit-4));
+		if (block_version < 3)
+			return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "SMALL_VERSION");
+
+		move_forward(readit, 32, block.end());
 		auto merkle_hash_it = readit;
 		move_forward(readit, 80 - (4 + 32), block.end());
+
 		uint64_t txcount = read_varint(readit, block.end());
 		if (txcount < 1 || txcount > 100000)
 			return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "TXCOUNT_RANGE");
@@ -210,6 +216,10 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 
 	if (read_all((char*)&(*block)[sizeof(bitcoin_msg_header)], 80) != 80)
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read block header", std::shared_ptr<std::vector<unsigned char> >(NULL));
+
+	int32_t block_version = (((*block)[sizeof(bitcoin_msg_header) + 3] << 24) | ((*block)[sizeof(bitcoin_msg_header) + 2] << 16) | ((*block)[sizeof(bitcoin_msg_header) + 1] << 8) | (*block)[sizeof(bitcoin_msg_header)]);
+	if (block_version < 3)
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block had version < 3", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
 	getblockhash(*fullhashptr.get(), *block, sizeof(struct bitcoin_msg_header));
