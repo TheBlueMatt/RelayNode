@@ -195,7 +195,7 @@ private:
 
 
 #define HOSTNAMES_TO_TEST 20
-#define CONNECT_TESTS 10
+#define CONNECT_TESTS 20
 std::chrono::milliseconds connect_durations[HOSTNAMES_TO_TEST];
 void test_node(int node) {
 	const char* relay = "public.%02d.relay.mattcorallo.com";
@@ -255,7 +255,9 @@ int main(int argc, char** argv) {
 		int min = 0; std::chrono::milliseconds min_duration(std::chrono::milliseconds::max());
 		for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
 			if (connect_durations[i] != std::chrono::milliseconds::max()) {
-				printf("Server %d took %lld ms to respond %d times.\n", i, (long long int)connect_durations[i].count(), CONNECT_TESTS);
+				std::string aka;
+				sprintf(host, relay, i);
+				printf("Server %d (%s) took %lld ms to respond %d times.\n", i, lookup_cname(host, aka) ? aka.c_str() : "", (long long int)connect_durations[i].count(), CONNECT_TESTS);
 			}
 			if (connect_durations[i] < min_duration) {
 				min_duration = connect_durations[i];

@@ -129,6 +129,7 @@ ssize_t read_all(int filedes, char *buf, size_t nbyte);
 ssize_t send_all(int filedes, const char *buf, size_t nbyte);
 std::string gethostname(struct sockaddr_in6 *addr);
 bool lookup_address(const char* addr, struct sockaddr_in6* res);
+bool lookup_cname(const char* host, std::string& cname);
 void prepare_message(const char* command, unsigned char* headerAndData, size_t datalen);
 
 /********************

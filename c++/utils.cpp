@@ -18,6 +18,8 @@
 	#include <netdb.h>
 	#include <fcntl.h>
 	#include <sys/socket.h>
+	#include <arpa/nameser.h>
+	#include <resolv.h>
 #endif // !WIN32
 
 /***************************
@@ -176,6 +178,51 @@ void prepare_message(const char* command, unsigned char* headerAndData, size_t d
 	unsigned char fullhash[32];
 	double_sha256(headerAndData + sizeof(struct bitcoin_msg_header), fullhash, datalen);
 	memcpy(header->checksum, fullhash, sizeof(header->checksum));
+}
+
+#ifndef WIN32
+static int read_dn_name(unsigned char* answer, unsigned char* answerend, unsigned char*& it, char buf[1024]) {
+	int len = dn_expand(answer, answerend, it, buf, 1024);
+	if (len <= 0)
+		return len;
+	it += len;
+	return len;
+}
+#endif
+
+bool lookup_cname(const char* host, std::string& cname) {
+#ifndef WIN32
+	unsigned char answer[4096];
+	char buf[1024];
+
+	int size = res_search(host, C_IN, T_CNAME, answer, sizeof(answer));
+	if (size <= 2*6)
+		return false;
+	unsigned char *it = answer + 2*6;
+
+	if (read_dn_name(answer, answer + size, it, buf) < 0)
+		return false;
+	it += 4;
+	if (it >= answer + size)
+		return false;
+	if (*(it-4) != 0x00 || *(it-3) != 0x05 || *(it-2) != 0x00 || *(it-1) != 0x01)
+		return false;
+
+	if (read_dn_name(answer, answer + size, it, buf) < 0)
+		return false;
+	it += 4;
+	if (it >= answer + size)
+		return false;
+	if (*(it-4) != 0x00 || *(it-3) != 0x05 || *(it-2) != 0x00 || *(it-1) != 0x01)
+		return false;
+
+	it += 6;
+	if (read_dn_name(answer, answer + size, it, buf) < 0)
+		return false;
+	cname = std::string(buf);
+	return true;
+#endif
+	return false;
 }
 
 /********************
