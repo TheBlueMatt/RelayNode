@@ -139,7 +139,7 @@ private:
 	}
 
 public:
-	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
+	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx, int token) {
 		if (!connected)
 			return;
 
@@ -149,11 +149,11 @@ public:
 
 		auto& msg = *msgptr.get();
 
-		maybe_do_send_bytes((char*)&msg[0], msg.size());
+		maybe_do_send_bytes((char*)&msg[0], msg.size(), token);
 		printf("Sent transaction of size %lu to relay server\n", (unsigned long)tx->size());
 	}
 
-	void receive_block(const std::vector<unsigned char>& block) {
+	void receive_block(const std::vector<unsigned char>& block, int token) {
 		if (!connected)
 			return;
 
@@ -167,9 +167,9 @@ public:
 		}
 		auto compressed_block = std::get<0>(tuple);
 
-		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
+		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size(), token);
 		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-		maybe_do_send_bytes((char*)&header, sizeof(header));
+		maybe_do_send_bytes((char*)&header, sizeof(header), token);
 
 		print_hash(&fullhash[0]);
 		printf(" sent, size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block->size());
@@ -180,8 +180,9 @@ class P2PClient : public P2PRelayer {
 public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
-				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, true)
+				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
+				const std::function<void (void)>& mempools_done_in) :
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, true, mempools_done_in)
 		{ construction_done(); }
 
 private:
@@ -271,14 +272,16 @@ int main(int argc, char** argv) {
 		memcpy(host, argv[3], strlen(argv[3]) + 1);
 	printf("Using server %s\n", host);
 
+	std::atomic_int relayToken(0);
 	RelayNetworkClient* relayClient;
 	P2PClient p2p(argv[1], std::stoul(argv[2]),
-					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes); },
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { relayClient->receive_transaction(bytes); });
+					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes, relayToken); },
+					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { relayClient->receive_transaction(bytes, relayToken); },
+					[&]() { relayClient->release_send_mutex(relayToken); relayToken = 0; });
 	relayClient = new RelayNetworkClient(host,
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { p2p.receive_transaction(bytes); },
-										[&]() { p2p.request_mempool(); });
+										[&]() { relayToken = relayClient->get_send_mutex(); relayClient->do_throttle_outbound(relayToken); p2p.request_mempool(); });
 
 	while (true) { sleep(1000); }
 }
