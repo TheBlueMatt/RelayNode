@@ -22,7 +22,7 @@
 
 void P2PRelayer::send_message(const char* command, unsigned char* headerAndData, size_t datalen) {
 	prepare_message(command, headerAndData, datalen);
-	maybe_do_send_bytes((char*)headerAndData, sizeof(struct bitcoin_msg_header) + datalen, held_send_mutex);
+	maybe_do_send_bytes((char*)headerAndData, sizeof(struct bitcoin_msg_header) + datalen);
 }
 
 void P2PRelayer::on_disconnect() {
@@ -39,11 +39,6 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 	{
 		std::vector<unsigned char> version_msg(generate_version());
 		send_message("version", &version_msg[0], version_msg.size() - sizeof(struct bitcoin_msg_header));
-	}
-
-	if (hold_send_mutex) {
-		held_send_mutex = get_send_mutex();
-		do_throttle_outbound(held_send_mutex);
 	}
 
 	while (true) {

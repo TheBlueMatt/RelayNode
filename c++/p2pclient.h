@@ -28,21 +28,16 @@ private:
 	unsigned int ping_nonce_max = 0;
 	std::set<uint64_t> ping_nonce_set;
 
-	//TODO: Remove this shit
-	bool hold_send_mutex;
-	std::atomic_int held_send_mutex;
-
 public:
 	P2PRelayer(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
 				bool requestAfterSendIn=false,
-				const std::function<void (void)> mempools_done_in = std::function<void(void)>(),
-				bool hold_send_mutex_in=false)
+				const std::function<void (void)> mempools_done_in = std::function<void(void)>())
 			: OutboundPersistentConnection(serverHostIn, serverPortIn),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
-			mempools_done(mempools_done_in), requestAfterSend(requestAfterSendIn), connected(0), hold_send_mutex(hold_send_mutex_in)
+			mempools_done(mempools_done_in), requestAfterSend(requestAfterSendIn), connected(0)
 	{}
 
 protected:

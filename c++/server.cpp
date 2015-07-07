@@ -178,8 +178,8 @@ public:
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
-				bool requestAfterSend=false, bool hold_send_mutex_in=false) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, requestAfterSend, std::function<void (void)>(), hold_send_mutex_in)
+				bool requestAfterSend=false) :
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, requestAfterSend)
 		{ construction_done(); }
 
 private:
@@ -299,7 +299,7 @@ int main(int argc, char** argv) {
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
-					}, true, true);
+					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point& read_start) {
