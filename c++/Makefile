@@ -1,6 +1,6 @@
 # all common objects that need to be build for all targets except for windows version
 common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o connection.o ./crypto/sha2.o
-native_objs := crypto/sha256_code_release/sha256_avx2_rorx2.a crypto/sha256_code_release/sha256_avx1.a crypto/sha256_code_release/sha256_sse4.a
+native_objs :=
 
 MINGW_PREFIX := i686-w64-mingw32
 
@@ -49,12 +49,15 @@ ifeq ($(UNAME_S),Linux)
   LDFLAGS += -Wl,--no-as-needed
   ifneq (,$(findstring avx2,$(shell cat /proc/cpuinfo)))
     NATIVE_CXXFLAGS += -DSHA256=sha256_rorx
+    native_objs += crypto/sha256_code_release/sha256_avx2_rorx2.a
   else
     ifneq (,$(findstring avx,$(shell cat /proc/cpuinfo)))
       NATIVE_CXXFLAGS += -DSHA256=sha256_avx
+      native_objs += crypto/sha256_code_release/sha256_avx1.a
     else
       ifneq (,$(findstring sse4_1,$(shell cat /proc/cpuinfo)))
         NATIVE_CXXFLAGS += -DSHA256=sha256_sse4
+        native_objs += crypto/sha256_code_release/sha256_sse4.a
       endif
     endif
   endif
