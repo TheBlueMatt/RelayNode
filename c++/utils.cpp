@@ -339,7 +339,7 @@ void print_hash(const unsigned char* hash) {
 
 void do_assert(bool flag, const char* file, unsigned long line) {
 	if (!flag) {
-		printf("Assertion failed: %s:%lu\n", file, line);
+		fprintf(stderr, "Assertion failed: %s:%lu\n", file, line);
 		exit(1);
 	}
 }
