@@ -138,7 +138,7 @@ public:
 							conn->send_mutex.unlock();
 						}
 						if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
-							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::milliseconds(20); // Limit outbound to avg 5Mbps worst-case
+							conn->earliest_next_write = std::chrono::steady_clock::now() + conn->throttle_sleep_time; // Limit outbound to avg 5Mbps worst-case
 					}
 				}
 

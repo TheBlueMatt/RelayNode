@@ -44,6 +44,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 	if (hold_send_mutex) {
 		held_send_mutex = get_send_mutex();
 		do_throttle_outbound(held_send_mutex);
+		set_throttle_sleep_time(std::chrono::milliseconds(50));
 	}
 
 	while (true) {
