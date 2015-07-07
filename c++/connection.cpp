@@ -190,7 +190,7 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	total_waiting_size += bytes->size();
 #ifndef WIN32
 	if (total_waiting_size > (ssize_t)bytes->size())
-		write(processor.pipe_write, "1", 1);
+		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
 #endif
 
 	if (!send_mutex_token)
@@ -214,7 +214,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	total_waiting_size += bytes->size();
 #ifndef WIN32
 	if (total_waiting_size > (ssize_t)bytes->size())
-		write(processor.pipe_write, "1", 1);
+		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
 #endif
 
 	if (!send_mutex_token)
@@ -279,7 +279,7 @@ void Connection::do_setup_and_read(Connection* me) {
 		std::lock_guard<std::mutex> lock(processor.fd_map_mutex);
 		processor.fd_map[me->sock] = me;
 #ifndef WIN32
-		write(processor.pipe_write, "1", 1);
+		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
 #endif
 	}
 
@@ -306,7 +306,7 @@ ssize_t Connection::read_all(char *buf, size_t nbyte) {
 #ifndef WIN32
 			// If the old size is >= 64k, we may need to wakeup the select thread to get it to read more
 			if (old_size >= 65536)
-				write(processor.pipe_write, "1", 1);
+				ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
 #endif
 
 			readpos = 0;
