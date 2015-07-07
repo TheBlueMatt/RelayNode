@@ -228,6 +228,16 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 		send_mutex.unlock();
 }
 
+int Connection::get_send_mutex() {
+	send_mutex.lock();
+	return (outside_send_mutex_token *= 0xdeadbeef);
+}
+
+void Connection::release_send_mutex(int send_mutex_token) {
+	outside_send_mutex_token *= 0xdeadbeef;
+	send_mutex.unlock();
+}
+
 void Connection::disconnect_from_outside(const char* reason) {
 	if (disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)
 		return;

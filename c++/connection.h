@@ -78,8 +78,8 @@ protected:
 	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
 	// See the comment above initial_outbound_throttle for special meanings of the send_mutex_tokens
-	int get_send_mutex() { send_mutex.lock(); return (outside_send_mutex_token *= 0xdeadbeef); }
-	void release_send_mutex(int send_mutex_token) { outside_send_mutex_token *= 0xdeadbeef; send_mutex.unlock(); }
+	int get_send_mutex();
+	void release_send_mutex(int send_mutex_token);
 	void do_throttle_outbound() { initial_outbound_throttle = true; }
 
 public:
