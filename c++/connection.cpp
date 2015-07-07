@@ -332,10 +332,26 @@ ssize_t Connection::read_all(char *buf, size_t nbyte) {
 	return nbyte;
 }
 
+int OutboundPersistentConnection::get_send_mutex() {
+	OutboundConnection* conn = (OutboundConnection*)connection.load();
+	if (conn) {
+		mutex_valid = conn->get_send_mutex();
+		return mutex_valid;
+	} else
+		return 0;
+}
+void OutboundPersistentConnection::release_send_mutex(int token) {
+	OutboundConnection* conn = (OutboundConnection*)connection.load();
+	if (conn && mutex_valid.compare_exchange_strong(token, 0))
+		return conn->release_send_mutex(token);
+}
+
 void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
 	OutboundConnection* old = (OutboundConnection*) connection.fetch_and(0);
 	if (old)
 		old->disconnect_from_outside(disconnectReason.c_str());
+
+	mutex_valid = 0;
 
 	on_disconnect();
 
