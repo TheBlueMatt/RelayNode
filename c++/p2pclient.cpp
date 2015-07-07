@@ -26,11 +26,15 @@ void P2PRelayer::send_message(const char* command, unsigned char* headerAndData,
 }
 
 void P2PRelayer::on_disconnect() {
-	connected = 0;
+	connected &= CONNECTED_FLAGS;
+	std::lock_guard<std::mutex> lock(ping_nonce_mutex);
+	if (ping_nonce_set.size())
+		connected |= CONNECTED_FLAG_REQUEST_MEMPOOL;
+	ping_nonce_set.clear();
 }
 
 void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect) {
-	connected = 0;
+	connected &= CONNECTED_FLAGS;
 
 	{
 		std::vector<unsigned char> version_msg(generate_version());
@@ -63,9 +67,9 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 			return disconnect("got invalid message checksum");
 
 		if (!strncmp(header.command, "version", strlen("version"))) {
-			if (connected != 0)
+			if ((connected & ~CONNECTED_FLAGS) != 0)
 				return disconnect("got invalid version");
-			connected = 1;
+			connected |= 1;
 
 			if (header.length < sizeof(struct bitcoin_version_start))
 				return disconnect("got short version");
@@ -77,10 +81,10 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 			printf("Connected to bitcoind with version %u\n", le32toh(their_version->protocol_version));
 			continue;
 		} else if (!strncmp(header.command, "verack", strlen("verack"))) {
-			if (connected != 1)
+			if ((connected & ~CONNECTED_FLAGS) != 1)
 				return disconnect("got invalid verack");
 			printf("Finished connect handshake with bitcoind\n");
-			connected = 2;
+			connected ^= 1 | 2;
 
 			if (provide_headers) {
 				std::vector<unsigned char> msg(sizeof(struct bitcoin_msg_header));
@@ -90,6 +94,8 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 				msg.insert(msg.end(), 64, 0);
 				send_message("getheaders", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
 			}
+			if (connected.fetch_and(~CONNECTED_FLAGS) & CONNECTED_FLAG_REQUEST_MEMPOOL)
+				do_request_mempool();
 			continue;
 		}
 
@@ -100,10 +106,26 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 			std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header) + header.length);
 			resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), msg->begin(), msg->end());
 			send_message("pong", &resp[0], header.length);
+		} else if (!strncmp(header.command, "pong", strlen("pong"))) {
+			if (header.length == 8) {
+				uint64_t nonce;
+				memcpy(&nonce, &(*msg)[0], 8);
+				bool done = false;
+				{
+					std::lock_guard<std::mutex> lock(ping_nonce_mutex);
+					if (ping_nonce_set.erase(nonce) && ping_nonce_set.empty())
+						done = true;
+				}
+				if (done && mempools_done)
+					mempools_done();
+			}
 		} else if (!strncmp(header.command, "inv", strlen("inv"))) {
-			std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header) + header.length);
-			resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), msg->begin(), msg->end());
+			std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header));
+			resp.insert(resp.end(), msg->begin(), msg->end());
 			send_message("getdata", &resp[0], header.length);
+			std::lock_guard<std::mutex> lock(ping_nonce_mutex);
+			if (ping_nonce_set.size())
+				do_send_ping();
 		} else if (!strncmp(header.command, "block", strlen("block"))) {
 			provide_block(*msg, read_start);
 		} else if (!strncmp(header.command, "tx", strlen("tx"))) {
@@ -157,8 +179,27 @@ void P2PRelayer::receive_block(std::vector<unsigned char>& block) {
 }
 
 void P2PRelayer::request_mempool() {
-	if (connected != 2)
+	if ((connected.fetch_or(CONNECTED_FLAG_REQUEST_MEMPOOL) & ~CONNECTED_FLAG_REQUEST_MEMPOOL) != 2)
 		return;
+	else {
+		connected &= ~CONNECTED_FLAG_REQUEST_MEMPOOL;
+		do_request_mempool();
+	}
+}
+
+void P2PRelayer::do_send_ping() {
+	std::vector<unsigned char> msg(sizeof(bitcoin_msg_header) + 8);
+	uint64_t nonce;
+	nonce = 0x1badcafe * (++ping_nonce_max);
+	memcpy(&msg[sizeof(bitcoin_msg_header)], &nonce, sizeof(nonce));
+	ping_nonce_set.insert(nonce);
+
+	send_message("ping", &msg[0], 8);
+}
+
+void P2PRelayer::do_request_mempool() {
 	std::vector<unsigned char> msg(sizeof(bitcoin_msg_header));
 	send_message("mempool", &msg[0], 0);
+	std::lock_guard<std::mutex> lock(ping_nonce_mutex);
+	do_send_ping();
 }
