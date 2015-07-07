@@ -31,7 +31,8 @@ private:
 	//
 	// initial_outbound_bytes is defined as the quantity of bytes sent with send_mutex_token
 	// (not mabye_send, do_send), during initial_outbound_throttle
-	bool initial_outbound_throttle;
+	std::atomic_bool initial_outbound_throttle;
+	std::atomic_flag initial_outbound_throttle_done;
 	int64_t initial_outbound_bytes;
 	std::atomic<int64_t> total_waiting_size;
 	std::chrono::steady_clock::time_point earliest_next_write;
@@ -77,12 +78,12 @@ protected:
 	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
+public:
 	// See the comment above initial_outbound_throttle for special meanings of the send_mutex_tokens
 	int get_send_mutex();
 	void release_send_mutex(int send_mutex_token);
-	void do_throttle_outbound() { initial_outbound_throttle = true; }
+	void do_throttle_outbound() { if (!initial_outbound_throttle_done.test_and_set()) initial_outbound_throttle = true; }
 
-public:
 	void disconnect_from_outside(const char* reason);
 
 private:
