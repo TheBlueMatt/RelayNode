@@ -244,10 +244,6 @@ void Connection::disconnect(const char* reason) {
 	while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
 		read_cv.wait(lock);
 
-	outbound_secondary_queue.clear();
-	outbound_primary_queue.clear();
-	inbound_queue.clear();
-
 	disconnectFlags |= DISCONNECT_COMPLETE;
 
 	if (on_disconnect)
