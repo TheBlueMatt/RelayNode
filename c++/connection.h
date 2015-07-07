@@ -7,7 +7,6 @@
 #include <thread>
 #include <list>
 #include <vector>
-#include <chrono>
 
 #include <assert.h>
 
@@ -52,13 +51,12 @@ private:
 	std::atomic<int> disconnectFlags;
 public:
 	const std::string host;
-	std::chrono::milliseconds throttle_sleep_time;
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
 			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_bytes(0),
 			total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
-			readpos(0), total_inbound_size(0), sock_errno(0), disconnectFlags(0), host(hostIn), throttle_sleep_time(20)
+			readpos(0), total_inbound_size(0), sock_errno(0), disconnectFlags(0), host(hostIn)
 		{}
 
 protected:
@@ -143,7 +141,6 @@ protected:
 	virtual void on_disconnect()=0;
 	virtual void net_process(const std::function<void(const char*)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte); } // Only allowed from within net_process
-	void set_throttle_sleep_time(std::chrono::milliseconds d) { ((OutboundConnection*)connection.load())->throttle_sleep_time = d; }
 
 	void maybe_do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
 		OutboundConnection* conn = (OutboundConnection*)connection.load();
