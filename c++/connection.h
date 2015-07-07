@@ -18,7 +18,7 @@ enum DisconnectFlags {
 class Connection {
 private:
 	const int sock;
-	std::mutex send_mutex;
+	std::mutex send_mutex, send_bytes_mutex;
 	int outside_send_mutex_token;
 
 	std::function<void(void)> on_disconnect;

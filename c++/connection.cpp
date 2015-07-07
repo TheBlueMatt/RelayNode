@@ -101,7 +101,7 @@ public:
 					if (FD_ISSET(e.first, &fd_set_write)) {
 						if (now < conn->earliest_next_write)
 							continue;
-						std::lock_guard<std::mutex> lock(conn->send_mutex);
+						std::lock_guard<std::mutex> lock(conn->send_bytes_mutex);
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
@@ -132,9 +132,12 @@ public:
 								}
 							}
 						}
-						if (!conn->total_waiting_size)
-							conn->initial_outbound_throttle = false;
-						else if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
+						if (conn->send_mutex.try_lock()) {
+							if (!conn->total_waiting_size)
+								conn->initial_outbound_throttle = false;
+							conn->send_mutex.unlock();
+						}
+						if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
 							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::milliseconds(20); // Limit outbound to avg 5Mbps worst-case
 					}
 				}
@@ -177,6 +180,8 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	else
 		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
 
+	std::lock_guard<std::mutex> bytes_lock(send_bytes_mutex);
+
 	if (initial_outbound_throttle && send_mutex_token)
 		initial_outbound_bytes += bytes->size();
 
@@ -203,6 +208,8 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 			return;
 	} else
 		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
+
+	std::lock_guard<std::mutex> bytes_lock(send_bytes_mutex);
 
 	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > 4000000) {
 		if (!send_mutex_token)
