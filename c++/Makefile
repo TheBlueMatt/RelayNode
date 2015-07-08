@@ -13,6 +13,9 @@ UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
 LE := N
+ifeq ($(UNAME_M),amd64)
+  LE := Y
+endif
 ifeq ($(UNAME_M),x86_64)
   LE := Y
 endif
