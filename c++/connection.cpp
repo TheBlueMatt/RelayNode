@@ -300,7 +300,11 @@ void Connection::do_setup_and_read(Connection* me) {
 #endif
 	}
 
-	me->net_process([&](const char* reason) { me->disconnect(reason); });
+	try {
+		me->net_process([&](const char* reason) { me->disconnect(reason); });
+	} catch (std::exception& e) {
+		me->disconnect("net_process threw an exception");
+	}
 }
 
 ssize_t Connection::read_all(char *buf, size_t nbyte) {

@@ -25,7 +25,7 @@ protected:
     size_type nMaxSize;
 
 public:
-    mruset(size_type nMaxSizeIn = 0) { nMaxSize = nMaxSizeIn; }
+    mruset(size_type nMaxSizeIn) { nMaxSize = nMaxSizeIn; }
     iterator begin() const { return set.begin(); }
     iterator end() const { return set.end(); }
     size_type size() const { return set.size(); }
