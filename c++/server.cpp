@@ -136,6 +136,15 @@ private:
 
 				compressor.recv_tx(tx);
 				provide_transaction(this, tx);
+			} else if (header.type == OOB_TRANSACTION_TYPE) {
+				if (message_size > 1000000)
+					return disconnect("got oob transaction too large");
+
+				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
+				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
+					return disconnect("failed to read oob transaction data");
+
+				provide_transaction(this, tx);
 			} else
 				return disconnect("got unknown message type");
 		}
