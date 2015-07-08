@@ -54,8 +54,8 @@ public:
 
 	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
-			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_bytes(0),
-			total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
+			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_throttle_done(false),
+			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
 			readpos(0), total_inbound_size(0), sock_errno(0), disconnectFlags(0), host(hostIn)
 		{}
 
