@@ -238,6 +238,7 @@ int Connection::get_send_mutex() {
 }
 
 void Connection::release_send_mutex(int send_mutex_token) {
+	assert(send_mutex_token == outside_send_mutex_token);
 	outside_send_mutex_token *= 0xdeadbeef;
 	send_mutex.unlock();
 }

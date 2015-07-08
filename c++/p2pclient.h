@@ -65,8 +65,8 @@ public:
 
 private:
 	void maybe_request_mempool();
-	uint64_t do_send_ping();
-	void do_request_mempool();
+	uint64_t do_send_ping(bool track_nonce);
+	void do_request_mempool(bool track_nonce);
 };
 
 #endif

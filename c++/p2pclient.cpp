@@ -95,7 +95,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 				send_message("getheaders", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
 			}
 			if (connected.fetch_and(~CONNECTED_FLAGS) & CONNECTED_FLAG_REQUEST_MEMPOOL)
-				do_request_mempool();
+				do_request_mempool(true);
 			continue;
 		}
 
@@ -139,7 +139,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 			if (mempool_start_ping == 0 && mempool_end_ping != 0)
 				inv_recvd = true;
 			if (ping_nonce_set.size())
-				do_send_ping();
+				do_send_ping(true);
 		} else if (!strncmp(header.command, "block", strlen("block"))) {
 			provide_block(*msg, read_start);
 		} else if (!strncmp(header.command, "tx", strlen("tx"))) {
@@ -201,7 +201,7 @@ void P2PRelayer::maybe_request_mempool() {
 		request = regularly_request_mempool && last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(5) && !mempool_end_ping;
 	}
 	if (request) {
-		do_request_mempool();
+		do_request_mempool(false);
 		last_mempool_request = std::chrono::steady_clock::now();
 	}
 }
@@ -211,30 +211,31 @@ void P2PRelayer::request_mempool() {
 		return;
 	else {
 		connected &= ~CONNECTED_FLAG_REQUEST_MEMPOOL;
-		do_request_mempool();
+		do_request_mempool(true);
 	}
 }
 
-uint64_t P2PRelayer::do_send_ping() {
+uint64_t P2PRelayer::do_send_ping(bool track_nonce) {
 	std::vector<unsigned char> msg(sizeof(bitcoin_msg_header) + 8);
 	uint64_t nonce;
 	nonce = 0x1badcafe * (++ping_nonce_max);
 	memcpy(&msg[sizeof(bitcoin_msg_header)], &nonce, sizeof(nonce));
-	ping_nonce_set.insert(nonce);
+	if (track_nonce)
+		ping_nonce_set.insert(nonce);
 
 	send_message("ping", &msg[0], 8);
 	return nonce;
 }
 
-void P2PRelayer::do_request_mempool() {
+void P2PRelayer::do_request_mempool(bool track_nonce) {
 	std::lock_guard<std::mutex> lock(ping_nonce_mutex);
-	mempool_start_ping = do_send_ping();
+	mempool_start_ping = do_send_ping(track_nonce);
 
 	std::vector<unsigned char> msg(sizeof(bitcoin_msg_header) + 4);
 	uint32_t txn_count = htole32(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS);
 	memcpy(&msg[sizeof(bitcoin_msg_header)], &txn_count, sizeof(txn_count));
 	send_message("blk_txn", &msg[0], 4);
 
-	mempool_end_ping = do_send_ping();
+	mempool_end_ping = do_send_ping(track_nonce);
 	inv_recvd = false;
 }
