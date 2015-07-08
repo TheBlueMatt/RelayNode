@@ -63,6 +63,8 @@ public:
 	bool block_sent(std::vector<unsigned char>& hash);
 	uint32_t blocks_sent();
 
+	bool was_tx_sent(const unsigned char* txhash);
+
 private:
 	bool check_recv_tx(uint32_t tx_size);
 

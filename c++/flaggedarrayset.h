@@ -5,6 +5,7 @@
 #include <thread>
 #include <map>
 #include <unordered_map>
+#include <cstddef>
 
 #include "utils.h"
 
@@ -17,6 +18,7 @@ struct ElemAndFlag {
 	std::shared_ptr<std::vector<unsigned char> > elem, elemHash;
 	std::vector<unsigned char>::const_iterator elemBegin, elemEnd;
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash);
+	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t);
 	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, bool flagIn, bool allowDupsIn);
 	bool operator == (const ElemAndFlag& o) const;
 };
@@ -53,6 +55,7 @@ public:
 	size_t size() const { return backingMap.size() - to_be_removed.size(); }
 	size_t flagCount() const { return flag_count - flags_to_remove; }
 	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e) const;
+	bool contains(const unsigned char* elemHash) const;
 
 	FlaggedArraySet& operator=(const FlaggedArraySet& o) {
 		maxSize = o.maxSize;

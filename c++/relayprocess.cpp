@@ -60,6 +60,11 @@ uint32_t RelayNodeCompressor::blocks_sent() {
 	return blocksAlreadySeen.size();
 }
 
+bool RelayNodeCompressor::was_tx_sent(const unsigned char* txhash) {
+	std::lock_guard<std::mutex> lock(mutex);
+	return send_tx_cache.contains(txhash);
+}
+
 class MerkleTreeBuilder {
 private:
 	std::vector<unsigned char> hashlist;

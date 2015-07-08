@@ -157,14 +157,16 @@ ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& ele
 		double_sha256(&(*elem)[0], &(*elemHash)[0], elem->size());
 	}
 }
+ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t) :
+	elemHash(elemHashIn) {}
 ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, bool flagIn, bool allowDupsIn) :
 	flag(flagIn), allowDups(allowDupsIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
 
 bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
-	if (elem && o.elem) {
-		if (allowDups)
-			return o.elem == elem;
+	if ((elem && o.elem) || (elemHash && o.elemHash)) {
 		bool hashSet = o.elemHash && elemHash;
+		if (allowDups)
+			return (elem && o.elem && o.elem == elem) || (hashSet && o.elemHash == elemHash);
 		return o.elem == elem ||
 			(hashSet && *o.elemHash == *elemHash) ||
 			(!hashSet && *o.elem == *elem);
@@ -278,6 +280,17 @@ bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> 
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
 	return backingMap.count(ElemAndFlag(e, false, allowDups, false));
+}
+
+bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
+	//TODO: Come up with a cheap way to optimize this?
+	std::lock_guard<WaitCountMutex> lock(mutex);
+	cleanup_late_remove();
+	ElemAndFlag e(std::make_shared<std::vector<unsigned char> >(elemHash, elemHash + 32), NULL);
+	for (const std::unordered_map<ElemAndFlag, uint64_t>::iterator& it : indexMap)
+		if (it->first == e)
+			return true;
+	return false;
 }
 
 void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag) {
