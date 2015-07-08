@@ -89,7 +89,7 @@ public:
 						ssize_t count = recv(conn->sock, (char*)buf, 4096, 0);
 
 						std::lock_guard<std::mutex> lock(conn->read_mutex);
-						if (count <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+						if (count <= 0) {
 							remove_set.insert(e.first);
 							conn->sock_errno = errno;
 						} else {
@@ -104,8 +104,9 @@ public:
 						std::lock_guard<std::mutex> lock(conn->send_bytes_mutex);
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
+							assert(msg->size() - conn->primary_writepos > 0);
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
-							if (count <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+							if (count <= 0) {
 								remove_set.insert(e.first);
 								conn->sock_errno = errno;
 							} else {
@@ -119,8 +120,9 @@ public:
 						} else {
 							assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
 							auto& msg = conn->outbound_secondary_queue.front();
+							assert(msg->size() - conn->secondary_writepos > 0);
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
-							if (count <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+							if (count <= 0) {
 								remove_set.insert(e.first);
 								conn->sock_errno = errno;
 							} else {
@@ -147,6 +149,8 @@ public:
 					std::lock_guard<std::mutex> lock(conn->read_mutex);
 					conn->inbound_queue.emplace_back((std::nullptr_t)NULL);
 					conn->read_cv.notify_all();
+					if (conn->sock_errno == EAGAIN || conn->sock_errno == EWOULDBLOCK)
+						conn->sock_errno = ENOTCONN;
 					conn->disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
 					me->fd_map.erase(fd);
 				}
