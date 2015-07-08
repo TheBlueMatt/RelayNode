@@ -63,6 +63,8 @@ struct relay_msg_header {
 #define MAX_RELAY_OVERSIZE_TRANSACTION_BYTES 200000
 #define MAX_EXTRA_OVERSIZE_TRANSACTIONS 25
 
+#define MAX_TXN_IN_FAS 5025
+
 
 #define BITCOIN_MAGIC htonl(0xf9beb4d9)
 struct __attribute__((packed)) bitcoin_msg_header {

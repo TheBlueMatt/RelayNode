@@ -182,7 +182,7 @@ public:
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (void)>& mempools_done_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, true, mempools_done_in)
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, mempools_done_in, false, true)
 		{ construction_done(); }
 
 private:
@@ -280,8 +280,16 @@ int main(int argc, char** argv) {
 					[&]() { relayClient->release_send_mutex(relayToken); relayToken = 0; });
 	relayClient = new RelayNetworkClient(host,
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
-										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { p2p.receive_transaction(bytes); },
-										[&]() { relayToken = relayClient->get_send_mutex(); relayClient->do_throttle_outbound(relayToken); p2p.request_mempool(); });
+										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+											p2p.receive_transaction(bytes);
+											if (!p2p.maybe_supports_mempool())
+												relayClient->receive_transaction(bytes, relayToken);
+										},
+										[&]() {
+											relayToken = relayClient->get_send_mutex();
+											relayClient->do_throttle_outbound(relayToken);
+											p2p.request_mempool();
+										});
 
 	while (true) { sleep(1000); }
 }

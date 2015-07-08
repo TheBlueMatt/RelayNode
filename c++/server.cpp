@@ -177,9 +177,9 @@ public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
-				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
-				bool requestAfterSend=false) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, requestAfterSend)
+				const std::function<void (std::vector<unsigned char>&)> provide_headers_in,
+				bool regularly_request_mempool_in) :
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, NULL, false, regularly_request_mempool_in)
 		{ construction_done(); }
 
 private:
@@ -343,7 +343,7 @@ int main(int argc, char** argv) {
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
-					});
+					}, NULL, false);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {
