@@ -130,9 +130,10 @@ private:
 				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
 					return disconnect("failed to read loose transaction data");
 
+				printf("Received transaction of size %u from relay server\n", message_size);
+
 				compressor.recv_tx(tx);
 				provide_transaction(tx);
-				printf("Received transaction of size %u from relay server\n", message_size);
 			} else
 				return disconnect("got unknown message type");
 		}
