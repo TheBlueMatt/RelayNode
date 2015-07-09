@@ -159,9 +159,9 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 						else if (type != 1)
 							return disconnect("got unexpected inv type");
 					}
-					assert(resp.size() % 36 == 0);
-					std::vector<unsigned char> v = varint(resp.size() / 36);
-					resp.insert(resp.begin(), v.begin(), v.end());
+					assert((resp.size() - sizeof(struct bitcoin_msg_header)) % 36 == 0);
+					std::vector<unsigned char> v = varint((resp.size() - sizeof(struct bitcoin_msg_header)) / 36);
+					resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), v.begin(), v.end());
 				}
 				send_message("getdata", &resp[0], header.length);
 			}
