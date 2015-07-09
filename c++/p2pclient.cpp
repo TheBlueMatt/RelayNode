@@ -211,9 +211,14 @@ void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned 
 	if (connected != 2)
 		return;
 
-	auto msg = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
-	msg.insert(msg.end(), tx->begin(), tx->end());
-	send_message("tx", &msg[0], tx->size());
+	{
+		std::lock_guard<std::mutex> lock(sent_mutex);
+		if (txnAlreadySent.insert(*tx).second) {
+			auto msg = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
+			msg.insert(msg.end(), tx->begin(), tx->end());
+			send_message("tx", &msg[0], tx->size());
+		}
+	}
 
 	maybe_request_mempool();
 }
