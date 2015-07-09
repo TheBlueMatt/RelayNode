@@ -182,7 +182,7 @@ public:
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (void)>& mempools_done_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, mempools_done_in, false, true)
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, NULL, mempools_done_in, NULL, true)
 		{ construction_done(); }
 
 private:

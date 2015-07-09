@@ -32,7 +32,9 @@ private:
 	bool inv_recvd;
 	uint64_t mempool_start_ping = 0, mempool_end_ping = 0;
 
-	const bool accept_loose_txn, regularly_request_mempool;
+	const std::function<bool (const unsigned char*)> fetch_txn;
+
+	const bool regularly_request_mempool;
 	std::chrono::steady_clock::time_point last_mempool_request;
 	mruset<std::vector<unsigned char> > send_txn_set;
 	bool mempool_failed;
@@ -43,10 +45,11 @@ public:
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
 				const std::function<void (void)> mempools_done_in = std::function<void(void)>(),
-				bool accept_loose_txn_in=true, bool regularly_request_mempool_in=false)
+				const std::function<bool (const unsigned char*)> fetch_txn_in = std::function<bool (const unsigned char*)>(),
+				bool regularly_request_mempool_in=false)
 			: OutboundPersistentConnection(serverHostIn, serverPortIn),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
-			mempools_done(mempools_done_in), connected(0), accept_loose_txn(accept_loose_txn_in), regularly_request_mempool(regularly_request_mempool_in),
+			mempools_done(mempools_done_in), connected(0), fetch_txn(fetch_txn_in), regularly_request_mempool(regularly_request_mempool_in),
 			last_mempool_request(std::chrono::steady_clock::time_point::min()), send_txn_set(MAX_TXN_IN_FAS), mempool_failed(false)
 	{}
 

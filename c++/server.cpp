@@ -177,9 +177,10 @@ public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
-				const std::function<void (std::vector<unsigned char>&)> provide_headers_in,
+				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in,
+				const std::function<bool (const unsigned char* txhash)>& fetch_txn_in,
 				bool regularly_request_mempool_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, NULL, false, regularly_request_mempool_in)
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, NULL, fetch_txn_in, regularly_request_mempool_in)
 		{ construction_done(); }
 
 private:
@@ -299,6 +300,9 @@ int main(int argc, char** argv) {
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
+					},
+					[&](const unsigned char* txhash) {
+						return compressor.was_tx_sent(txhash);
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
@@ -343,7 +347,8 @@ int main(int argc, char** argv) {
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
-					}, NULL, false);
+					}, NULL,
+					[&](const unsigned char* txhash) { assert(false); return true; }, false);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {

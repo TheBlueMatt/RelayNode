@@ -129,13 +129,43 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 					mempools_done();
 			}
 		} else if (!strncmp(header.command, "inv", strlen("inv"))) {
-			std::lock_guard<std::mutex> lock(ping_nonce_mutex);
+			bool do_check = true;
+			{
+				std::lock_guard<std::mutex> lock(ping_nonce_mutex);
+				do_check = !regularly_request_mempool || (mempool_start_ping == 0 && mempool_end_ping != 0);
+			}
 
-			if (accept_loose_txn || (mempool_start_ping == 0 && mempool_end_ping != 0)) {
+			if (do_check) {
+				std::vector<unsigned char>::const_iterator it = msg->begin();
+				const std::vector<unsigned char>::const_iterator end = msg->end();
+				uint64_t inv_count = read_varint(it, end);
+				if (inv_count > 50001)
+					return disconnect("got invalid inv message");
+
 				std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header));
-				resp.insert(resp.end(), msg->begin(), msg->end());
+				if (!fetch_txn)
+					resp.insert(resp.end(), msg->begin(), msg->end());
+				else {
+					for (uint64_t i = 0; i < inv_count; i++) {
+						move_forward(it, 36, end);
+						uint32_t type;
+						memcpy(&type, &(*(it-36)), 4);
+						type = le32toh(type);
+
+						if (type == 1 && fetch_txn(&(*(it-32))))
+							resp.insert(resp.end(), it-36, it);
+						else if (type == 2)
+							resp.insert(resp.begin(), it-36, it);
+						else
+							return disconnect("got unexpected inv type");
+					}
+					assert(resp.size() % 36 == 0);
+					std::vector<unsigned char> v = varint(resp.size() / 36);
+					resp.insert(resp.begin(), v.begin(), v.end());
+				}
 				send_message("getdata", &resp[0], header.length);
 			}
+			std::lock_guard<std::mutex> lock(ping_nonce_mutex);
 			if (mempool_start_ping == 0 && mempool_end_ping != 0)
 				inv_recvd = true;
 			if (ping_nonce_set.size())
