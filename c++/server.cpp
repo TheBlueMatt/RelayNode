@@ -207,8 +207,8 @@ private:
 RelayNetworkCompressor compressor;
 
 int main(int argc, char** argv) {
-	if (argc != 3 && argc != 4) {
-		printf("USAGE: %s trusted_host trusted_port [::ffff:whitelisted prefix string]\n", argv[0]);
+	if (argc != 4 && argc != 5) {
+		printf("USAGE: %s trusted_host trusted_port trusted_port_2 [::ffff:whitelisted prefix string]\n", argv[0]);
 		return -1;
 	}
 
@@ -302,7 +302,7 @@ int main(int argc, char** argv) {
 					},
 					[&](const unsigned char* txhash) { return false; }, false);
 
-	P2PClient mempoolTrustedP2P(argv[1], std::stoul(argv[2]),
+	P2PClient mempoolTrustedP2P(argv[1], std::stoul(argv[3]),
 					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) { },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						std::lock_guard<std::mutex> lock(map_mutex);
@@ -426,8 +426,8 @@ int main(int argc, char** argv) {
 
 	std::string droppostfix(".uptimerobot.com");
 	std::string whitelistprefix("NOT AN ADDRESS");
-	if (argc == 4)
-		whitelistprefix = argv[3];
+	if (argc == 5)
+		whitelistprefix = argv[4];
 	socklen_t addr_size = sizeof(addr);
 	while (true) {
 		int new_fd;
