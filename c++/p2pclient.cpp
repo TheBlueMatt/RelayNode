@@ -156,7 +156,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 							resp.insert(resp.end(), it-36, it);
 						else if (type == 2)
 							resp.insert(resp.begin(), it-36, it);
-						else
+						else if (type != 1)
 							return disconnect("got unexpected inv type");
 					}
 					assert(resp.size() % 36 == 0);

@@ -311,7 +311,7 @@ int main(int argc, char** argv) {
 						} catch (read_exception) { }
 					},
 					[&](const unsigned char* txhash) {
-						return compressor.was_tx_sent(txhash);
+						return !compressor.was_tx_sent(txhash);
 					}, true);
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
