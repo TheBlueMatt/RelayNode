@@ -278,6 +278,7 @@ int main(int argc, char** argv) {
 			}
 
 			sprintf(host, relay, min);
+			break;
 		}
 	} else
 		memcpy(host, argv[3], strlen(argv[3]) + 1);
