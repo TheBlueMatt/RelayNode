@@ -155,7 +155,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 						if (type == 1 && fetch_txn(&(*(it-32))))
 							resp.insert(resp.end(), it-36, it);
 						else if (type == 2)
-							resp.insert(resp.begin(), it-36, it);
+							resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), it-36, it);
 						else if (type != 1)
 							return disconnect("got unexpected inv type");
 					}
