@@ -302,6 +302,7 @@ int main(int argc, char** argv) {
 					},
 					[&](const unsigned char* txhash) { return false; }, false);
 
+	//TODO: Switch to RPC, not p2p
 	P2PClient mempoolTrustedP2P(argv[1], std::stoul(argv[3]),
 					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) { },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
@@ -449,6 +450,8 @@ int main(int argc, char** argv) {
 			}
 			close(new_fd);
 		} else {
+			if (clientMap.count(host))
+				host += addr.sin6_port;
 			assert(clientMap.count(host) == 0);
 			clientMap[host] = new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected);
 			fprintf(stderr, "%lld: New connection from %s, have %lu relay clients\n", (long long) time(NULL), host.c_str(), clientMap.size());
