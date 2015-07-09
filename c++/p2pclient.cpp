@@ -132,7 +132,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 			bool do_check = true;
 			{
 				std::lock_guard<std::mutex> lock(ping_nonce_mutex);
-				do_check = !regularly_request_mempool || (mempool_start_ping == 0 && mempool_end_ping != 0);
+				do_check = !regularly_request_mempool_and_dont_fetch_loose_txn || (mempool_start_ping == 0 && mempool_end_ping != 0);
 			}
 
 			if (do_check) {
@@ -228,7 +228,7 @@ void P2PRelayer::maybe_request_mempool() {
 	bool request;
 	{
 		std::lock_guard<std::mutex> lock(ping_nonce_mutex);
-		request = regularly_request_mempool && last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(5) && !mempool_end_ping;
+		request = regularly_request_mempool_and_dont_fetch_loose_txn && last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(5) && !mempool_end_ping;
 	}
 	if (request) {
 		do_request_mempool(false);

@@ -139,18 +139,22 @@ private:
 	}
 
 public:
-	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx, int token) {
+	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx, int token, bool send_oob) {
 		if (!connected)
 			return;
 
-		auto msgptr = compressor.get_relay_transaction(tx);
+		std::shared_ptr<std::vector<unsigned char> > msgptr;
+		if (send_oob)
+			msgptr = compressor.tx_to_msg(tx, true);
+		else
+			msgptr = compressor.get_relay_transaction(tx);
 		if (!msgptr.use_count())
 			return;
 
 		auto& msg = *msgptr.get();
 
 		maybe_do_send_bytes((char*)&msg[0], msg.size(), token);
-		printf("Sent transaction of size %lu to relay server\n", (unsigned long)tx->size());
+		printf("Sent transaction of size %lu%s to relay server\n", (unsigned long)tx->size(), send_oob ? " (out-of-band)" : "");
 	}
 
 	void receive_block(const std::vector<unsigned char>& block, int token) {
@@ -276,14 +280,21 @@ int main(int argc, char** argv) {
 	RelayNetworkClient* relayClient;
 	P2PClient p2p(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes, relayToken); },
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { relayClient->receive_transaction(bytes, relayToken); },
-					[&]() { relayClient->release_send_mutex(relayToken); relayToken = 0; });
+					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+						relayClient->receive_transaction(bytes, relayToken, !p2p.maybe_supports_mempool());
+					},
+					[&]() {
+						relayClient->release_send_mutex(relayToken);
+						relayToken = 0;
+						if (!p2p.maybe_supports_mempool())
+							p2p.regularly_request_mempool_and_dont_fetch_loose_txn = false;
+					});
 	relayClient = new RelayNetworkClient(host,
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 											p2p.receive_transaction(bytes);
 											if (!p2p.maybe_supports_mempool())
-												relayClient->receive_transaction(bytes, relayToken);
+												relayClient->receive_transaction(bytes, relayToken, false);
 										},
 										[&]() {
 											relayToken = relayClient->get_send_mutex();

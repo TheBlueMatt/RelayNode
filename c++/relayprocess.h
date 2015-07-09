@@ -41,11 +41,14 @@ public:
 	}
 	void reset();
 
-	inline std::shared_ptr<std::vector<unsigned char> > tx_to_msg(const std::shared_ptr<std::vector<unsigned char> >& tx) {
+	inline std::shared_ptr<std::vector<unsigned char> > tx_to_msg(const std::shared_ptr<std::vector<unsigned char> >& tx, bool send_oob=false) const {
 		auto msg = std::make_shared<std::vector<unsigned char> > (sizeof(struct relay_msg_header));
 		struct relay_msg_header *header = (struct relay_msg_header*)&(*msg)[0];
 		header->magic = RELAY_MAGIC_BYTES;
-		header->type = TRANSACTION_TYPE;
+		if (send_oob)
+			header->type = OOB_TRANSACTION_TYPE;
+		else
+			header->type = TRANSACTION_TYPE;
 		header->length = htonl(tx->size());
 		msg->insert(msg->end(), tx->begin(), tx->end());
 		return msg;
