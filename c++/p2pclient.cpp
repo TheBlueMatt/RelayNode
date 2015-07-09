@@ -163,7 +163,7 @@ void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect)
 					std::vector<unsigned char> v = varint((resp.size() - sizeof(struct bitcoin_msg_header)) / 36);
 					resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), v.begin(), v.end());
 				}
-				send_message("getdata", &resp[0], header.length);
+				send_message("getdata", &resp[0], resp.size() - sizeof(struct bitcoin_msg_header));
 			}
 			std::lock_guard<std::mutex> lock(ping_nonce_mutex);
 			if (mempool_start_ping == 0 && mempool_end_ping != 0)
