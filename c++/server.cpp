@@ -451,7 +451,7 @@ int main(int argc, char** argv) {
 			close(new_fd);
 		} else {
 			if (clientMap.count(host))
-				host += addr.sin6_port;
+				host += ":" + std::to_string(addr.sin6_port);
 			assert(clientMap.count(host) == 0);
 			clientMap[host] = new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected);
 			fprintf(stderr, "%lld: New connection from %s, have %lu relay clients\n", (long long) time(NULL), host.c_str(), clientMap.size());
