@@ -249,29 +249,36 @@ int main(int argc, char** argv) {
 	const char* relay = "public.%02d.relay.mattcorallo.com";
 	char host[std::max(argc == 3 ? 0 : strlen(argv[3]), strlen(relay))];
 	if (argc == 3) {
-		std::list<std::thread> threads;
-		for (int i = 0; i < HOSTNAMES_TO_TEST; i++)
-			threads.emplace_back(test_node, i);
-		for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
-			threads.front().join();
-			threads.pop_front();
-		}
-
-		int min = 0; std::chrono::milliseconds min_duration(std::chrono::milliseconds::max());
-		for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
-			if (connect_durations[i] != std::chrono::milliseconds::max()) {
-				std::string aka;
-				sprintf(host, relay, i);
-				printf("Server %d (%s) took %lld ms to respond %d times.\n", i, lookup_cname(host, aka) ? aka.c_str() : "", (long long int)connect_durations[i].count(), CONNECT_TESTS);
+		while (true) {
+			std::list<std::thread> threads;
+			for (int i = 0; i < HOSTNAMES_TO_TEST; i++)
+				threads.emplace_back(test_node, i);
+			for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
+				threads.front().join();
+				threads.pop_front();
 			}
-			if (connect_durations[i] < min_duration) {
-				min_duration = connect_durations[i];
-				min = i;
-			}
-		}
 
-		sprintf(host, relay, min);
-		std::this_thread::sleep_for(std::chrono::seconds(10)); // Wait for server to open up our slot again
+			int min = -1; std::chrono::milliseconds min_duration(std::chrono::milliseconds::max());
+			for (int i = 0; i < HOSTNAMES_TO_TEST; i++) {
+				if (connect_durations[i] != std::chrono::milliseconds::max()) {
+					std::string aka;
+					sprintf(host, relay, i);
+					printf("Server %d (%s) took %lld ms to respond %d times.\n", i, lookup_cname(host, aka) ? aka.c_str() : "", (long long int)connect_durations[i].count(), CONNECT_TESTS);
+				}
+				if (connect_durations[i] < min_duration) {
+					min_duration = connect_durations[i];
+					min = i;
+				}
+			}
+
+			std::this_thread::sleep_for(std::chrono::seconds(10)); // Wait for server to open up our slot again
+			if (min == -1) {
+				printf("No servers responded\n");
+				continue;
+			}
+
+			sprintf(host, relay, min);
+		}
 	} else
 		memcpy(host, argv[3], strlen(argv[3]) + 1);
 	printf("Using server %s\n", host);
