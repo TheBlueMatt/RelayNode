@@ -280,17 +280,7 @@ int main(int argc, char** argv) {
 														bytes.size(), bytes_sent, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						std::lock_guard<std::mutex> lock(map_mutex);
-						auto tx = compressor.get_relay_transaction(bytes);
-						if (tx.use_count()) {
-							for (const auto& client : clientMap) {
-								if (!client.second->getDisconnectFlags())
-									client.second->receive_transaction(tx);
-							}
-							localP2P->receive_transaction(bytes);
-						}
-					},
+					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { },
 					[&](std::vector<unsigned char>& headers) {
 						try {
 							std::vector<unsigned char>::const_iterator it = headers.begin();
@@ -310,6 +300,21 @@ int main(int argc, char** argv) {
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
 					},
+					[&](const unsigned char* txhash) { return false; }, false);
+
+	P2PClient mempoolTrustedP2P(argv[1], std::stoul(argv[2]),
+					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) { },
+					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+						std::lock_guard<std::mutex> lock(map_mutex);
+						auto tx = compressor.get_relay_transaction(bytes);
+						if (tx.use_count()) {
+							for (const auto& client : clientMap) {
+								if (!client.second->getDisconnectFlags())
+									client.second->receive_transaction(tx);
+							}
+							localP2P->receive_transaction(bytes);
+						}
+					}, NULL,
 					[&](const unsigned char* txhash) {
 						return !compressor.was_tx_sent(txhash);
 					}, true);
