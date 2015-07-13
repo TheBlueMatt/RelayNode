@@ -142,6 +142,7 @@ void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
 
 void print_hash(const unsigned char *input);
+bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char>& vec);
 
 #define to_millis_double(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
 #define to_millis_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::milliseconds::period> >(t).count())

@@ -337,6 +337,26 @@ void print_hash(const unsigned char* hash) {
 		printf("%02x", hash[i]);
 }
 
+class not_hex : public std::exception {};
+static inline unsigned char h2c(char c) {
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	throw not_hex();
+}
+bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char>& vec) {
+	assert(vec.empty());
+	if (str.length() % 2 != 0)
+		return false;
+	try {
+		for (ssize_t i = str.length() - 2; i >= 0; i -= 2)
+			vec.push_back((h2c(str[i]) << 4) | h2c(str[i + 1]));
+		return true;
+	} catch (const not_hex& e) {
+		return false;
+	}
+}
+
 void do_assert(bool flag, const char* file, unsigned long line) {
 	if (!flag) {
 		fprintf(stderr, "Assertion failed: %s:%lu\n", file, line);
