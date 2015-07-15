@@ -21,6 +21,7 @@
 #include "utils.h"
 #include "p2pclient.h"
 #include "connection.h"
+#include "rpcclient.h"
 
 
 
@@ -239,6 +240,10 @@ int main(int argc, char** argv) {
 	// This is because the things are setup for the relay <-> p2p case (both to optimize
 	// the client and because that is the case we want to optimize for)
 
+	std::mutex txn_mutex;
+	mruset<std::vector<unsigned char> > txnWaitingToBroadcast(MAX_TXN_IN_FAS);
+	std::chrono::steady_clock::time_point last_mempool_request(std::chrono::steady_clock::time_point::min());
+
 	trustedP2P = new P2PClient(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) {
 						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
@@ -279,6 +284,13 @@ int main(int argc, char** argv) {
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+						std::vector<unsigned char> hash(32);
+						double_sha256(&(*bytes)[0], &hash[0], bytes->size());
+						{
+							std::lock_guard<std::mutex> lock(txn_mutex);
+							if (txnWaitingToBroadcast.find(hash) == txnWaitingToBroadcast.end())
+								return;
+						}
 						std::lock_guard<std::mutex> lock(map_mutex);
 						auto tx = compressor.get_relay_transaction(bytes);
 						if (tx.use_count()) {
@@ -307,6 +319,17 @@ int main(int argc, char** argv) {
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
+					});
+
+	RPCClient rpcTrustedP2P(argv[1], std::stoul(argv[3]),
+					[&](std::vector<std::vector<unsigned char> >& txn_list) {
+						std::lock_guard<std::mutex> lock(txn_mutex);
+						for (const std::vector<unsigned char>& txn : txn_list) {
+							if (!compressor.was_tx_sent(&txn[0])) {
+								txnWaitingToBroadcast.insert(txn);
+								trustedP2P->request_transaction(txn);
+							}
+						}
 					});
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
@@ -351,6 +374,11 @@ int main(int argc, char** argv) {
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
+						std::lock_guard<std::mutex> lock(txn_mutex);
+						if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(2)) {
+							rpcTrustedP2P.maybe_get_txn_for_block();
+							last_mempool_request = std::chrono::steady_clock::now();
+						}
 					}, NULL);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
@@ -389,6 +417,11 @@ int main(int argc, char** argv) {
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
 			trustedP2P->receive_transaction(bytes);
+			std::lock_guard<std::mutex> lock(txn_mutex);
+			if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(2)) {
+				rpcTrustedP2P.maybe_get_txn_for_block();
+				last_mempool_request = std::chrono::steady_clock::now();
+			}
 		};
 
 	std::function<void (RelayNetworkClient*, int token)> connected =
