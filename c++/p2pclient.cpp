@@ -148,3 +148,13 @@ void P2PRelayer::receive_block(std::vector<unsigned char>& block) {
 	send_message("block", &block[0], block.size() - sizeof(bitcoin_msg_header));
 }
 
+void P2PRelayer::request_transaction(const std::vector<unsigned char>& tx_hash) {
+	if (connected != 2)
+		return;
+	assert(tx_hash.size() == 32);
+	std::vector<unsigned char> msg(sizeof(struct bitcoin_msg_header) + 5);
+	msg[sizeof(struct bitcoin_msg_header)] = 1;
+	msg[sizeof(struct bitcoin_msg_header) + 1] = 1;
+	msg.insert(msg.end(), tx_hash.begin(), tx_hash.end());
+	send_message("getdata", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
+}

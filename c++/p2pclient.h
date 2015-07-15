@@ -46,6 +46,7 @@ protected:
 public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx);
 	void receive_block(std::vector<unsigned char>& block);
+	void request_transaction(const std::vector<unsigned char>& txhash);
 };
 
 #endif
