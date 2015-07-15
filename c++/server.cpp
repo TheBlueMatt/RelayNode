@@ -186,10 +186,8 @@ public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
-				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in,
-				const std::function<bool (const unsigned char* txhash)>& fetch_txn_in,
-				bool regularly_request_mempool_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, NULL, fetch_txn_in, regularly_request_mempool_in)
+				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in) :
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in)
 		{ construction_done(); }
 
 private:
@@ -280,7 +278,17 @@ int main(int argc, char** argv) {
 														bytes.size(), bytes_sent, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) { },
+					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+						std::lock_guard<std::mutex> lock(map_mutex);
+						auto tx = compressor.get_relay_transaction(bytes);
+						if (tx.use_count()) {
+							for (const auto& client : clientMap) {
+								if (!client.second->getDisconnectFlags())
+									client.second->receive_transaction(tx);
+							}
+							localP2P->receive_transaction(bytes);
+						}
+					},
 					[&](std::vector<unsigned char>& headers) {
 						try {
 							std::vector<unsigned char>::const_iterator it = headers.begin();
@@ -299,26 +307,7 @@ int main(int argc, char** argv) {
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
-					},
-					[&](const unsigned char* txhash) { return false; }, false);
-
-	//TODO: Switch to RPC, not p2p
-	P2PClient mempoolTrustedP2P(argv[1], std::stoul(argv[3]),
-					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) { },
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						std::lock_guard<std::mutex> lock(map_mutex);
-						auto tx = compressor.get_relay_transaction(bytes);
-						if (tx.use_count()) {
-							for (const auto& client : clientMap) {
-								if (!client.second->getDisconnectFlags())
-									client.second->receive_transaction(tx);
-							}
-							localP2P->receive_transaction(bytes);
-						}
-					}, NULL,
-					[&](const unsigned char* txhash) {
-						return !compressor.was_tx_sent(txhash);
-					}, true);
+					});
 
 	localP2P = new P2PClient("127.0.0.1", 8335,
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point& read_start) {
@@ -362,8 +351,7 @@ int main(int argc, char** argv) {
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
-					}, NULL,
-					[&](const unsigned char* txhash) { assert(false); return true; }, false);
+					}, NULL);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {
