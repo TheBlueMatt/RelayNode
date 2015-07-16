@@ -121,6 +121,10 @@ private:
 					printf("%s peer sent us a MAX_VERSION message\n", host.c_str());
 				else
 					return disconnect("got MAX_VERSION of same version as us");
+			} else if (header.type == SPONSOR_TYPE) {
+				char data[message_size];
+				if (read_all(data, message_size) < (int64_t)(message_size))
+					return disconnect("failed to read sponsor string");
 			} else if (header.type == BLOCK_TYPE) {
 				std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
 				std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return read_all(buf, count); };
