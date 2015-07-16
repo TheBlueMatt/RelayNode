@@ -101,6 +101,7 @@ public:
 					if (FD_ISSET(e.first, &fd_set_write)) {
 						if (now < conn->earliest_next_write)
 							continue;
+						bool got_send_mutex = conn->send_mutex.try_lock();
 						std::lock_guard<std::mutex> lock(conn->send_bytes_mutex);
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
@@ -134,7 +135,7 @@ public:
 								}
 							}
 						}
-						if (conn->send_mutex.try_lock()) {
+						if (got_send_mutex) {
 							if (!conn->total_waiting_size)
 								conn->initial_outbound_throttle = false;
 							conn->send_mutex.unlock();
