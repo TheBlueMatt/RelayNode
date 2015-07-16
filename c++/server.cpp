@@ -59,12 +59,12 @@ public:
 	{ construction_done(); }
 
 private:
-	void send_sponsor() {
+	void send_sponsor(int token=0) {
 		if (!sendSponsor || tx_sent != 0)
 			return;
 		relay_msg_header sponsor_header = { RELAY_MAGIC_BYTES, SPONSOR_TYPE, htonl(strlen(HOST_SPONSOR)) };
-		do_send_bytes((char*)&sponsor_header, sizeof(sponsor_header));
-		do_send_bytes(HOST_SPONSOR, strlen(HOST_SPONSOR));
+		do_send_bytes((char*)&sponsor_header, sizeof(sponsor_header), token);
+		do_send_bytes(HOST_SPONSOR, strlen(HOST_SPONSOR), token);
 	}
 
 	void net_process(const std::function<void(std::string)>& disconnect) {
@@ -171,7 +171,7 @@ public:
 
 		do_send_bytes(tx, token);
 		tx_sent++;
-		send_sponsor();
+		send_sponsor(token);
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
