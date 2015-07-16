@@ -145,6 +145,7 @@ void print_hash(const unsigned char *input);
 bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char>& vec);
 std::string asciifyString(const std::string& str);
 
+#define millis_lu_type std::chrono::duration<long unsigned, std::chrono::milliseconds::period>
 #define to_millis_double(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
 #define to_millis_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::milliseconds::period> >(t).count())
 #define to_micros_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::microseconds::period> >(t).count())

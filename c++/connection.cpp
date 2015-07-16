@@ -308,12 +308,20 @@ void Connection::do_setup_and_read(Connection* me) {
 	}
 }
 
-ssize_t Connection::read_all(char *buf, size_t nbyte) {
+ssize_t Connection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
 	size_t total = 0;
+	std::chrono::steady_clock::time_point stop_time;
+	if (max_sleep == millis_lu_type::max())
+		stop_time = std::chrono::steady_clock::time_point::max();
+	else
+		stop_time = std::chrono::steady_clock::now() + max_sleep;
 	while (total < nbyte) {
 		std::unique_lock<std::mutex> lock(read_mutex);
-		while (!inbound_queue.size())
-			read_cv.wait(lock);
+		while (!inbound_queue.size() || std::chrono::steady_clock::now() < stop_time)
+			read_cv.wait_until(lock, stop_time);
+
+		if (std::chrono::steady_clock::now() >= stop_time)
+			return total;
 
 		if (!inbound_queue.front())
 			return -1;

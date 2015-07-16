@@ -7,8 +7,9 @@
 #include <thread>
 #include <list>
 #include <vector>
-
 #include <assert.h>
+
+#include "utils.h"
 
 enum DisconnectFlags {
 	DISCONNECT_STARTED = 1,
@@ -71,7 +72,7 @@ public:
 
 protected:
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
-	ssize_t read_all(char *buf, size_t nbyte);
+	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max());
 
 	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
 		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
@@ -108,7 +109,7 @@ private:
 				parent(parentIn)
 			{ }
 
-		ssize_t read_all(char *buf, size_t nbyte) { return Connection::read_all(buf, nbyte); }
+		ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) { return Connection::read_all(buf, nbyte, max_sleep); }
 		void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token) { return Connection::do_send_bytes(buf, nbyte, send_mutex_token); }
 		void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) { return Connection::do_send_bytes(bytes, send_mutex_token); }
 		void construction_done() { Connection::construction_done(); }
@@ -140,7 +141,7 @@ protected:
 
 	virtual void on_disconnect()=0;
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
-	ssize_t read_all(char *buf, size_t nbyte) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte); } // Only allowed from within net_process
+	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte, max_sleep); } // Only allowed from within net_process
 
 	void maybe_do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
 		OutboundConnection* conn = (OutboundConnection*)connection.load();

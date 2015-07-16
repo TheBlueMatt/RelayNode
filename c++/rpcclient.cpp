@@ -42,7 +42,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 				else
 					max_read = 2;
 
-				if (read_all(buf, max_read) != max_read)
+				if (read_all(buf, max_read, std::chrono::seconds(10)) != max_read)
 					return disconnect("Failed to read server response");
 				line.append(buf, buf + max_read);
 
