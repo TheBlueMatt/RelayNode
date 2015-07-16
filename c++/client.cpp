@@ -91,6 +91,12 @@ private:
 					return disconnect("unknown version string");
 				else
 					printf("Connected to relay node with protocol version %s\n", VERSION_STRING);
+			} else if (header.type == SPONSOR_TYPE) {
+				char data[message_size];
+				if (read_all(data, message_size) < (int64_t)(message_size))
+					return disconnect("failed to read sponsor string");
+
+				printf("This node sponsored by: %s\n", asciifyString(std::string(data, data + message_size)).c_str());
 			} else if (header.type == MAX_VERSION_TYPE) {
 				char data[message_size];
 				if (read_all(data, message_size) < (int64_t)(message_size))

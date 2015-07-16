@@ -357,6 +357,16 @@ bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char
 	}
 }
 
+std::string asciifyString(const std::string& str) {
+	std::string res;
+	res.reserve(str.length());
+	for (size_t i = 0; i < str.length(); i++) {
+		if (str[i] >= 0x20 && str[i] <= 0x7e)
+			res.push_back(str[i]);
+	}
+	return res;
+}
+
 void do_assert(bool flag, const char* file, unsigned long line) {
 	if (!flag) {
 		fprintf(stderr, "Assertion failed: %s:%lu\n", file, line);

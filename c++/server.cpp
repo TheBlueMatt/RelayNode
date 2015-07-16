@@ -26,6 +26,8 @@
 
 
 
+static char* HOST_SPONSOR;
+
 
 /***********************************************
  **** Relay network client processing class ****
@@ -33,6 +35,8 @@
 class RelayNetworkClient : public Connection {
 private:
 	std::atomic_int connected;
+	bool sendSponsor = false;
+	uint8_t tx_sent = 0;
 
 	const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
@@ -55,6 +59,14 @@ public:
 	{ construction_done(); }
 
 private:
+	void send_sponsor() {
+		if (!sendSponsor || tx_sent != 0)
+			return;
+		relay_msg_header sponsor_header = { RELAY_MAGIC_BYTES, SPONSOR_TYPE, htonl(strlen(HOST_SPONSOR)) };
+		do_send_bytes((char*)&sponsor_header, sizeof(sponsor_header));
+		do_send_bytes(HOST_SPONSOR, strlen(HOST_SPONSOR));
+	}
+
 	void net_process(const std::function<void(std::string)>& disconnect) {
 		compressor.reset();
 
@@ -83,9 +95,10 @@ private:
 
 					if (!strncmp("toucan twink", data, std::min(sizeof("toucan twink"), size_t(message_size))))
 						compressor = RelayNodeCompressor(true);
-					else
+					else if (strncmp("the blocksize", data, std::min(sizeof("the blocksize"), size_t(message_size))))
 						return disconnect("unknown version string");
-				}
+				} else
+					sendSponsor = true;
 
 				relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(message_size) };
 				do_send_bytes((char*)&version_header, sizeof(version_header));
@@ -157,6 +170,8 @@ public:
 			return;
 
 		do_send_bytes(tx, token);
+		tx_sent++;
+		send_sponsor();
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
@@ -206,10 +221,12 @@ private:
 RelayNetworkCompressor compressor;
 
 int main(int argc, char** argv) {
-	if (argc != 4 && argc != 5) {
-		printf("USAGE: %s trusted_host trusted_port trusted_port_2 [::ffff:whitelisted prefix string]\n", argv[0]);
+	if (argc != 5 && argc != 6) {
+		printf("USAGE: %s trusted_host trusted_port trusted_port_2 \"Sponsor String\" [::ffff:whitelisted prefix string]\n", argv[0]);
 		return -1;
 	}
+
+	HOST_SPONSOR = argv[4];
 
 	int listen_fd;
 	struct sockaddr_in6 addr;
@@ -448,8 +465,8 @@ int main(int argc, char** argv) {
 
 	std::string droppostfix(".uptimerobot.com");
 	std::string whitelistprefix("NOT AN ADDRESS");
-	if (argc == 5)
-		whitelistprefix = argv[4];
+	if (argc == 6)
+		whitelistprefix = argv[5];
 	socklen_t addr_size = sizeof(addr);
 	while (true) {
 		int new_fd;

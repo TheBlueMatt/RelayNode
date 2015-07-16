@@ -58,7 +58,7 @@ struct relay_msg_header {
 };
 
 #define RELAY_MAGIC_BYTES htonl(0xF2BEEF42)
-#define VERSION_STRING "the blocksize"
+#define VERSION_STRING "sponsor printer"
 #define MAX_RELAY_TRANSACTION_BYTES 10000
 #define MAX_RELAY_OVERSIZE_TRANSACTION_BYTES 200000
 #define MAX_EXTRA_OVERSIZE_TRANSACTIONS 25
@@ -143,6 +143,7 @@ void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigne
 
 void print_hash(const unsigned char *input);
 bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char>& vec);
+std::string asciifyString(const std::string& str);
 
 #define to_millis_double(t) (std::chrono::duration_cast<std::chrono::duration<double, std::chrono::milliseconds::period> >(t).count())
 #define to_millis_lu(t) (std::chrono::duration_cast<std::chrono::duration<long unsigned, std::chrono::milliseconds::period> >(t).count())

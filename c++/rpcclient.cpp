@@ -13,16 +13,6 @@ void RPCClient::on_disconnect() {
 	awaiting_response = false;
 }
 
-static std::string asciifyString(const std::string& str) {
-	std::string res;
-	res.reserve(str.length());
-	for (size_t i = 0; i < str.length(); i++) {
-		if (str[i] >= 0x20 && str[i] <= 0x7e)
-			res.push_back(str[i]);
-	}
-	return res;
-}
-
 struct CTxMemPoolEntry {
 	double feePerKb;
 	uint32_t size;
