@@ -54,7 +54,7 @@ public:
 	{ construction_done(); }
 
 private:
-	void net_process(const std::function<void(const char*)>& disconnect) {
+	void net_process(const std::function<void(std::string)>& disconnect) {
 		compressor.reset();
 
 		while (true) {

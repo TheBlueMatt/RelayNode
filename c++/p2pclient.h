@@ -64,7 +64,7 @@ protected:
 	virtual std::vector<unsigned char> generate_version() =0;
 
 	void on_disconnect();
-	void net_process(const std::function<void(const char*)>& disconnect);
+	void net_process(const std::function<void(std::string)>& disconnect);
 	void send_message(const char* command, unsigned char* headerAndData, size_t datalen);
 
 public:

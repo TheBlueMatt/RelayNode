@@ -251,12 +251,12 @@ void Connection::disconnect_from_outside(const char* reason) {
 	shutdown(sock, SHUT_RDWR);
 }
 
-void Connection::disconnect(const char* reason) {
+void Connection::disconnect(std::string reason) {
 	if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED)
 		return;
 
 	if (!(disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)) {
-		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(sock_errno));
+		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason.c_str(), strerror(sock_errno));
 		shutdown(sock, SHUT_RDWR);
 	}
 
@@ -302,7 +302,7 @@ void Connection::do_setup_and_read(Connection* me) {
 	}
 
 	try {
-		me->net_process([&](const char* reason) { me->disconnect(reason); });
+		me->net_process([&](std::string reason) { me->disconnect(reason); });
 	} catch (std::exception& e) {
 		me->disconnect("net_process threw an exception");
 	}

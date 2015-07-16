@@ -33,7 +33,7 @@ void P2PRelayer::on_disconnect() {
 	ping_nonce_set.clear();
 }
 
-void P2PRelayer::net_process(const std::function<void(const char*)>& disconnect) {
+void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect) {
 	connected &= CONNECTED_FLAGS;
 
 	{

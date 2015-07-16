@@ -70,7 +70,7 @@ public:
 	int getDisconnectFlags() { return disconnectFlags; }
 
 protected:
-	virtual void net_process(const std::function<void(const char*)>& disconnect)=0;
+	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte);
 
 	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
@@ -89,7 +89,7 @@ public:
 	void disconnect_from_outside(const char* reason);
 
 private:
-	void disconnect(const char* reason);
+	void disconnect(std::string reason);
 	static void do_setup_and_read(Connection* me);
 
 	friend class GlobalNetProcess;
@@ -100,7 +100,7 @@ private:
 	class OutboundConnection : public Connection {
 	private:
 		OutboundPersistentConnection *parent;
-		void net_process(const std::function<void(const char*)>& disconnect) { parent->net_process(disconnect); }
+		void net_process(const std::function<void(std::string)>& disconnect) { parent->net_process(disconnect); }
 
 	public:
 		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
@@ -114,17 +114,17 @@ private:
 		void construction_done() { Connection::construction_done(); }
 	};
 
-	const std::string serverHost;
-	const uint16_t serverPort;
-
 	std::atomic<unsigned long> connection;
 	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
 
 	std::atomic_int mutex_valid;
 
 public:
+	const std::string serverHost;
+	const uint16_t serverPort;
+
 	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn) :
-			serverHost(serverHostIn), serverPort(serverPortIn), connection(0), mutex_valid(false)
+			connection(0), mutex_valid(false), serverHost(serverHostIn), serverPort(serverPortIn)
 		{}
 
 	int get_send_mutex();
@@ -139,7 +139,7 @@ protected:
 	void construction_done() { std::thread(do_connect, this).detach(); }
 
 	virtual void on_disconnect()=0;
-	virtual void net_process(const std::function<void(const char*)>& disconnect)=0;
+	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte); } // Only allowed from within net_process
 
 	void maybe_do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {

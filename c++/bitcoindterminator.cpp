@@ -47,7 +47,7 @@ public:
 		{ construction_done(); }
 
 private:
-	void net_process(const std::function<void(const char*)>& disconnect) {
+	void net_process(const std::function<void(std::string)>& disconnect) {
 		while (true) {
 			struct bitcoin_msg_header header;
 			if (read_all((char*)&header, sizeof(header)) != sizeof(header))

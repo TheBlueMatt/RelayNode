@@ -63,7 +63,7 @@ private:
 		connected = false;
 	}
 
-	void net_process(const std::function<void(const char*)>& disconnect) {
+	void net_process(const std::function<void(std::string)>& disconnect) {
 		compressor.reset();
 
 		relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
