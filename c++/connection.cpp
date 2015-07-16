@@ -190,7 +190,7 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	if (initial_outbound_throttle && send_mutex_token)
 		initial_outbound_bytes += bytes->size();
 
-	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > 4000000) {
+	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > max_outbound_buffer_size) {
 		if (!send_mutex_token)
 			send_mutex.unlock();
 		return disconnect_from_outside("total_waiting_size blew up :(");
@@ -216,7 +216,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 
 	std::lock_guard<std::mutex> bytes_lock(send_bytes_mutex);
 
-	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > 4000000) {
+	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > max_outbound_buffer_size) {
 		if (!send_mutex_token)
 			send_mutex.unlock();
 		return disconnect_from_outside("total_waiting_size blew up :(");

@@ -31,7 +31,7 @@ public:
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>())
-			: OutboundPersistentConnection(serverHostIn, serverPortIn),
+			: OutboundPersistentConnection(serverHostIn, serverPortIn, 10000000),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
 			connected(0), txnAlreadySent(2000)
 	{}

@@ -39,6 +39,7 @@ private:
 	int64_t initial_outbound_bytes;
 	std::atomic<int64_t> total_waiting_size;
 	std::chrono::steady_clock::time_point earliest_next_write;
+	uint32_t max_outbound_buffer_size;
 
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
@@ -53,11 +54,12 @@ private:
 public:
 	const std::string host;
 
-	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in) :
+	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=4000000) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
 			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_throttle_done(false),
 			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
-			readpos(0), total_inbound_size(0), sock_errno(0), disconnectFlags(0), host(hostIn)
+			max_outbound_buffer_size(max_outbound_buffer_size_in), readpos(0), total_inbound_size(0), sock_errno(0),
+			disconnectFlags(0), host(hostIn)
 		{}
 
 protected:
@@ -98,6 +100,9 @@ private:
 
 class OutboundPersistentConnection {
 private:
+	std::atomic_int mutex_valid;
+	uint32_t max_outbound_buffer_size;
+
 	class OutboundConnection : public Connection {
 	private:
 		OutboundPersistentConnection *parent;
@@ -105,7 +110,7 @@ private:
 
 	public:
 		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
-				Connection(sockIn, parentIn->serverHost, [&](void) { parent->reconnect("THIS SHOULD NEVER PRINT"); }),
+				Connection(sockIn, parentIn->serverHost, [&](void) { parent->reconnect("THIS SHOULD NEVER PRINT"); }, parentIn->max_outbound_buffer_size),
 				parent(parentIn)
 			{ }
 
@@ -118,14 +123,12 @@ private:
 	std::atomic<unsigned long> connection;
 	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
 
-	std::atomic_int mutex_valid;
-
 public:
 	const std::string serverHost;
 	const uint16_t serverPort;
 
-	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn) :
-			connection(0), mutex_valid(false), serverHost(serverHostIn), serverPort(serverPortIn)
+	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, uint32_t max_outbound_buffer_size_in=4000000) :
+			mutex_valid(false), max_outbound_buffer_size(max_outbound_buffer_size_in), connection(0), serverHost(serverHostIn), serverPort(serverPortIn)
 		{}
 
 	int get_send_mutex();
