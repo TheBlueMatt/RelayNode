@@ -54,7 +54,7 @@ private:
 public:
 	const std::string host;
 
-	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=4000000) :
+	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=10000000) :
 			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
 			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_throttle_done(false),
 			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
@@ -127,7 +127,7 @@ public:
 	const std::string serverHost;
 	const uint16_t serverPort;
 
-	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, uint32_t max_outbound_buffer_size_in=4000000) :
+	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, uint32_t max_outbound_buffer_size_in=10000000) :
 			mutex_valid(false), max_outbound_buffer_size(max_outbound_buffer_size_in), connection(0), serverHost(serverHostIn), serverPort(serverPortIn)
 		{}
 
