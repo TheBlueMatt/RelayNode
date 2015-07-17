@@ -175,7 +175,8 @@ public:
 
 		do_send_bytes(tx, token);
 		tx_sent++;
-		send_sponsor(token);
+		if (!token)
+			send_sponsor(token);
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
@@ -196,7 +197,8 @@ public:
 
 	void relay_node_connected(RelayNetworkClient* client, int token) {
 		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
-			client->receive_transaction(tx_to_msg(tx), token);
+			client->receive_transaction(tx_to_msg(tx, false, false), token);
+			client->receive_transaction(tx, token);
 		});
 	}
 };
