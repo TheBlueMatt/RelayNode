@@ -23,8 +23,9 @@ private:
 
 	std::atomic<uint8_t> connected;
 
-	std::mutex sent_mutex;
-	mruset<std::vector<unsigned char> > txnAlreadySent;
+	std::mutex seen_mutex;
+	mruset<std::vector<unsigned char> > txnAlreadySeen;
+	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 
 public:
 	P2PRelayer(const char* serverHostIn, uint16_t serverPortIn,
@@ -33,7 +34,7 @@ public:
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>())
 			: OutboundPersistentConnection(serverHostIn, serverPortIn, 10000000),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
-			connected(0), txnAlreadySent(2000)
+			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100)
 	{}
 
 protected:

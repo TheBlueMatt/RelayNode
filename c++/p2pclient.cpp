@@ -101,8 +101,34 @@ void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect)
 			resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), msg->begin(), msg->end());
 			send_message("pong", &resp[0], header.length);
 		} else if (!strncmp(header.command, "inv", strlen("inv"))) {
+			std::vector<unsigned char>::const_iterator it = msg->begin();
+			const std::vector<unsigned char>::const_iterator end = msg->end();
+			uint64_t inv_count = read_varint(it, end);
+			if (inv_count > 50001)
+				return disconnect("got invalid inv message");
+
+			static const uint32_t MSG_TX = htole32(1);
+			static const uint32_t MSG_BLOCK = htole32(2);
+
 			std::vector<unsigned char> resp(sizeof(struct bitcoin_msg_header));
-			resp.insert(resp.end(), msg->begin(), msg->end());
+			{
+				std::lock_guard<std::mutex> lock(seen_mutex);
+				for (uint64_t i = 0; i < inv_count; i++) {
+					move_forward(it, 36, end);
+					uint32_t type;
+					memcpy(&type, &(*(it-36)), 4);
+
+					if (type == MSG_TX && txnAlreadySeen.insert(std::vector<unsigned char>(it-32, it)).second)
+						resp.insert(resp.end(), it-36, it);
+					else if (type == MSG_BLOCK && blocksAlreadySeen.insert(std::vector<unsigned char>(it-32, it)).second)
+						resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), it-36, it);
+					else if (type != MSG_TX && type != MSG_BLOCK)
+						return disconnect("got unexpected inv type");
+				}
+			}
+			assert((resp.size() - sizeof(struct bitcoin_msg_header)) % 36 == 0);
+			std::vector<unsigned char> v = varint((resp.size() - sizeof(struct bitcoin_msg_header)) / 36);
+			resp.insert(resp.begin() + sizeof(struct bitcoin_msg_header), v.begin(), v.end());
 			send_message("getdata", &resp[0], resp.size() - sizeof(struct bitcoin_msg_header));
 		} else if (!strncmp(header.command, "block", strlen("block"))) {
 			provide_block(*msg, read_start);
@@ -132,20 +158,32 @@ void P2PRelayer::receive_transaction(const std::shared_ptr<std::vector<unsigned 
 	if (connected != 2)
 		return;
 
+	bool seen;
 	{
-		std::lock_guard<std::mutex> lock(sent_mutex);
-		if (txnAlreadySent.insert(*tx).second) {
-			auto msg = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
-			msg.insert(msg.end(), tx->begin(), tx->end());
-			send_message("tx", &msg[0], tx->size());
-		}
+		std::lock_guard<std::mutex> lock(seen_mutex);
+		std::vector<unsigned char> hash(32);
+		double_sha256(&(*tx)[0], &hash[0], tx->size());
+		seen = !txnAlreadySeen.insert(hash).second;
+	}
+	if (!seen) {
+		auto msg = std::vector<unsigned char>(sizeof(struct bitcoin_msg_header));
+		msg.insert(msg.end(), tx->begin(), tx->end());
+		send_message("tx", &msg[0], tx->size());
 	}
 }
 
 void P2PRelayer::receive_block(std::vector<unsigned char>& block) {
 	if (connected != 2)
 		return;
-	send_message("block", &block[0], block.size() - sizeof(bitcoin_msg_header));
+	bool seen;
+	{
+		std::lock_guard<std::mutex> lock(seen_mutex);
+		std::vector<unsigned char> hash(32);
+		getblockhash(hash, block, sizeof(bitcoin_msg_header));
+		seen = !blocksAlreadySeen.insert(hash).second;
+	}
+	if (!seen)
+		send_message("block", &block[0], block.size() - sizeof(bitcoin_msg_header));
 }
 
 void P2PRelayer::request_transaction(const std::vector<unsigned char>& tx_hash) {
