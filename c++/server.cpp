@@ -499,7 +499,7 @@ int main(int argc, char** argv) {
 			}
 			close(new_fd);
 		} else {
-			if (clientMap.count(host))
+			if (host.compare(0, whitelistprefix.length(), whitelistprefix) == 0)
 				host += ":" + std::to_string(addr.sin6_port);
 			assert(clientMap.count(host) == 0);
 			clientMap[host] = new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected);
