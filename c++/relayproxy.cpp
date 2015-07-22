@@ -2,6 +2,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <chrono>
 
 #include <assert.h>
 #include <string.h>
@@ -107,6 +108,15 @@ private:
 		char msg[message_size];
 		if (read_all(sock, (char*)msg, message_size) < (int64_t)(message_size))
 			return reconnect("failed to read message data");
+
+		struct sockaddr_in6 addr;
+		socklen_t len = sizeof(addr);
+		if (getsockname(sock, (struct sockaddr*)&addr, &len) != 0)
+			return reconnect("failed to get bound host/port");
+		if (len != sizeof(addr))
+			return reconnect("getsockname didnt return a sockaddr_in6?");
+
+		printf("Connected to %s : %d at %lu\n", server_host, addr.sin6_port, epoch_millis_lu(std::chrono::system_clock::now()));
 
 		provide_sock(sock);
 		return reconnect("provide_sock returned");
