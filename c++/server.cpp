@@ -346,12 +346,17 @@ int main(int argc, char** argv) {
 
 	RPCClient rpcTrustedP2P(argv[1], std::stoul(argv[3]),
 					[&](std::vector<std::vector<unsigned char> >& txn_list) {
+						int txn_gathered = 0;
 						std::lock_guard<std::mutex> lock(txn_mutex);
 						for (const std::vector<unsigned char>& txn : txn_list) {
 							if (!compressor.was_tx_sent(&txn[0])) {
 								txnWaitingToBroadcast.insert(txn);
 								trustedP2P->request_transaction(txn);
+								txn_gathered++;
 							}
+							// 100 txn @ 10k/tx every 2 sec == 500Kbps
+							if (txn_gathered >= 100)
+								return;
 						}
 					});
 
