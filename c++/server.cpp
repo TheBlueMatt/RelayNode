@@ -208,8 +208,9 @@ public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
-				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in)
+				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in,
+				bool check_block_msghash_in) :
+			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, check_block_msghash_in)
 		{ construction_done(); }
 
 private:
@@ -342,7 +343,7 @@ int main(int argc, char** argv) {
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
 						} catch (read_exception) { }
-					});
+					}, true);
 
 	RPCClient rpcTrustedP2P(argv[1], std::stoul(argv[3]),
 					[&](std::vector<std::vector<unsigned char> >& txn_list) {
@@ -407,7 +408,7 @@ int main(int argc, char** argv) {
 							rpcTrustedP2P.maybe_get_txn_for_block();
 							last_mempool_request = std::chrono::steady_clock::now();
 						}
-					}, NULL);
+					}, NULL, false);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {
