@@ -324,7 +324,69 @@ void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char
 	SHA256(data, state, 1);
 	sha256_done(res, state);
 #endif
+}
 
+void double_sha256_init(uint32_t state[8]) {
+#ifndef SHA256
+	CSHA256 hash;
+	for (uint8_t i = 0; i < 8; i++)
+		state[i] = hash.s[i];
+#else
+	sha256_init(state);
+#endif
+}
+
+void double_sha256_step(const unsigned char* input, uint64_t byte_count, uint32_t state[8]) {
+	assert(byte_count % 64 == 0);
+#ifndef SHA256
+	if (byte_count) {
+		CSHA256 hash;
+		for (uint8_t i = 0; i < 8; i++)
+			hash.s[i] = state[i];
+		hash.Write(input, byte_count);
+		for (uint8_t i = 0; i < 8; i++)
+			state[i] = hash.s[i];
+	}
+#else
+	SHA256(const_cast<unsigned char*>(input), state, byte_count / 64);
+#endif
+}
+
+void double_sha256_done(const unsigned char* input, uint64_t byte_count, uint64_t total_byte_count, uint32_t state[8]) {
+	assert((total_byte_count - byte_count) % 64 == 0);
+#ifndef SHA256
+	CSHA256 hash;
+	if ((total_byte_count - byte_count) != 0) {
+		for (uint8_t i = 0; i < 8; i++)
+			hash.s[i] = state[i];
+		hash.bytes = total_byte_count - byte_count;
+	}
+	if (byte_count)
+		hash.Write(input, byte_count);
+	hash.Finalize((unsigned char*)state);
+	hash.Reset().Write((unsigned char*)state, 32).Finalize((unsigned char*)state);
+#else
+	uint64_t pad_count = 1 + ((119 - (total_byte_count % 64)) % 64);
+	assert(1 + ((119 - (byte_count % 64)) % 64) == pad_count);
+	unsigned char data[byte_count + pad_count + 8];
+
+	memcpy(data, input, byte_count);
+	data[byte_count] = 0x80;
+	memset(&data[byte_count+1], 0, pad_count-1);
+	WriteBE64(&data[byte_count + pad_count], total_byte_count << 3);
+
+	assert((byte_count + pad_count + 8) % 64 == 0);
+	SHA256(&data[0], state, (byte_count + pad_count + 8) / 64);
+	sha256_done(&data[0], state);
+
+	data[32] = 0x80;
+	memset(&data[32 + 1], 0, 32 - 8 - 1);
+	WriteBE64(&data[64 - 8], 32 << 3);
+	sha256_init(state);
+
+	SHA256(&data[0], state, 1);
+	sha256_done((unsigned char*)state, state);
+#endif
 }
 
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset) {

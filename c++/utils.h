@@ -134,13 +134,20 @@ bool lookup_address(const char* addr, struct sockaddr_in6* res);
 bool lookup_cname(const char* host, std::string& cname);
 void prepare_message(const char* command, unsigned char* headerAndData, size_t datalen);
 
-/********************
- *** Random stuff ***
- ********************/
+/*********************
+ *** Hashing utils ***
+ *********************/
 void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte_count);
 void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char* input2, unsigned char* res);
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
 
+void double_sha256_init(uint32_t state[8]);
+void double_sha256_step(const unsigned char* input, uint64_t byte_count, uint32_t state[8]);
+void double_sha256_done(const unsigned char* input, uint64_t byte_count, uint64_t total_byte_count, uint32_t state[8]);
+
+/********************
+ *** Random stuff ***
+ ********************/
 void print_hash(const unsigned char *input);
 bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char>& vec);
 std::string asciifyString(const std::string& str);

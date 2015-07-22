@@ -54,13 +54,26 @@ void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect)
 		std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
 
 		auto msg = std::make_shared<std::vector<unsigned char> > (prependedHeaderSize + uint32_t(header.length));
-		if (read_all((char*)&(*msg)[prependedHeaderSize], header.length) != int(header.length))
-			return disconnect("failed to read message");
+		{
+			uint32_t hash[8];
+			double_sha256_init(hash);
 
-		unsigned char fullhash[32];
-		double_sha256(&(*msg)[prependedHeaderSize], fullhash, header.length);
-		if (memcmp((char*)fullhash, header.checksum, sizeof(header.checksum)))
-			return disconnect("got invalid message checksum");
+			uint32_t steps = header.length / 64;
+			for (uint32_t i = 0; i < steps; i++) {
+				unsigned char* writepos = &((*msg)[prependedHeaderSize + i*64]);
+				if (read_all((char*)writepos, 64) != 64)
+					return disconnect("failed to read message");
+				double_sha256_step(writepos, 64, hash);
+			}
+
+			unsigned char* writepos = &((*msg)[prependedHeaderSize + steps*64]);
+			if (read_all((char*)writepos, header.length - steps*64) != ssize_t(header.length - steps*64))
+				return disconnect("failed to read message");
+			double_sha256_done(writepos, header.length - steps*64, header.length, hash);
+
+			if (memcmp((char*)hash, header.checksum, sizeof(header.checksum)))
+				return disconnect("got invalid message checksum");
+		}
 
 		if (!strncmp(header.command, "version", strlen("version"))) {
 			if (connected != 0)
