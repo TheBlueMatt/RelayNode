@@ -394,11 +394,6 @@ void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigne
 	return double_sha256(&block[offset], &hashRes[0], 80);
 }
 
-void print_hash(const unsigned char* hash) {
-	for (int i = 31; i >= 0; i--)
-		printf("%02x", hash[i]);
-}
-
 class not_hex : public std::exception {};
 static inline unsigned char h2c(char c) {
 	if (c >= '0' && c <= '9') return c - '0';

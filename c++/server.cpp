@@ -138,8 +138,8 @@ private:
 				std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
 
 				if (bytes_sent) {
-					print_hash(&fullhash[0]);
-					printf(" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", epoch_millis_lu(read_finish), host.c_str(),
+					printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]),
+													epoch_millis_lu(read_finish), host.c_str(),
 													(unsigned)std::get<0>(res), bytes_sent, (unsigned)std::get<1>(res)->size(),
 													to_millis_double(read_finish - read_start), to_millis_double(send_queued - read_finish));
 				}
@@ -302,8 +302,7 @@ int main(int argc, char** argv) {
 							localP2P->receive_block(bytes);
 
 						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
-						print_hash(&fullhash[0]);
-						printf(" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_millis_lu(send_start), argv[1],
+						printf(HASH_FORMAT" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]), epoch_millis_lu(send_start), argv[1],
 														bytes.size(), bytes_sent, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
@@ -387,8 +386,7 @@ int main(int argc, char** argv) {
 							}
 						}
 						if (insane) {
-							print_hash(&fullhash[0]);
-							printf(" INSANE %s LOCALP2P\n", insane);
+							printf(HASH_FORMAT" INSANE %s LOCALP2P\n", HASH_PRINT(&fullhash[0]), insane);
 							return;
 						} else
 							localP2P->receive_block(bytes);
@@ -396,8 +394,8 @@ int main(int argc, char** argv) {
 						trustedP2P->receive_block(bytes);
 
 						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
-						print_hash(&fullhash[0]);
-						printf(" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", epoch_millis_lu(send_start), "127.0.0.1",
+						printf(HASH_FORMAT" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]),
+														epoch_millis_lu(send_start), "127.0.0.1",
 														bytes.size(), bytes_sent, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
@@ -432,8 +430,7 @@ int main(int argc, char** argv) {
 				}
 			}
 			if (insane) {
-				print_hash(&fullhash[0]);
-				printf(" INSANE %s UNTRUSTEDRELAY %s\n", insane, from->host.c_str());
+				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&fullhash[0]), insane, from->host.c_str());
 				return bytes_sent;
 			} else
 				localP2P->receive_block(*bytes);

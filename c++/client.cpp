@@ -177,8 +177,7 @@ public:
 		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
 		maybe_do_send_bytes((char*)&header, sizeof(header));
 
-		print_hash(&fullhash[0]);
-		printf(" sent, size %lu with %lu bytes on the wire\n", (unsigned long)block.size(), (unsigned long)compressed_block->size());
+		printf(HASH_FORMAT" sent, size %lu with %lu bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)block.size(), (unsigned long)compressed_block->size());
 	}
 };
 
