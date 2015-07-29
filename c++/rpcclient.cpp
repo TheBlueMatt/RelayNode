@@ -8,11 +8,6 @@
 
 #include "utils.h"
 
-void RPCClient::on_disconnect() {
-	connected = false;
-	awaiting_response = false;
-}
-
 struct CTxMemPoolEntry {
 	double feePerKb;
 	uint32_t size;
@@ -24,8 +19,10 @@ struct CTxMemPoolEntry {
 	}
 };
 
-void RPCClient::net_process(const std::function<void(std::string)>& disconnect) {
-	connected = true;
+void RPCClient_net_process(std::function<ssize_t(char*, size_t, millis_lu_type max_sleep)>& read_all,
+							const std::function<void(std::string)>& disconnect,
+							std::function<void (std::vector<std::vector<unsigned char> >& txhashes)> txn_for_block_func,
+							std::atomic_bool& awaiting_response) {
 
 	while (true) {
 		int content_length = -2;
@@ -89,14 +86,14 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 		static const std::string expected_start("{\"result\":{");
 		{
 			char resp[expected_start.length()];
-			if (read_all(resp, expected_start.length()) != (ssize_t)expected_start.length())
+			if (read_all(resp, expected_start.length(), millis_lu_type::max()) != (ssize_t)expected_start.length())
 				return disconnect("Failed to read response");
 			if (memcmp(resp, &expected_start[0], expected_start.length()) != 0)
 				return disconnect("Got result which was not an object");
 		}
 
 		std::vector<unsigned char> resp(content_length - expected_start.length());
-		if (read_all((char*)&resp[0], content_length - expected_start.length()) != content_length - (ssize_t)expected_start.length())
+		if (read_all((char*)&resp[0], content_length - expected_start.length(), millis_lu_type::max()) != content_length - (ssize_t)expected_start.length())
 			return disconnect("Failed to read response");
 		auto it = resp.begin();
 
@@ -326,10 +323,7 @@ static std::string EncodeBase64(const std::string& str)
 	return strRet;
 }
 
-void RPCClient::maybe_get_txn_for_block() {
-	if (!connected || awaiting_response.exchange(true))
-		return;
-
+std::string RPCClient_get_request_string() {
 	std::ostringstream obj;
 	obj << "{"
 		<< "\"method\": \"getrawmempool\","
@@ -340,7 +334,7 @@ void RPCClient::maybe_get_txn_for_block() {
 	std::ostringstream req;
 	req << "POST / HTTP/1.1\r\n"
 		<< "User-Agent: RelayNetworkServer/42\r\n"
-		<< "Host: " << serverHost << "\r\n"
+		<< "Host: localhost\r\n"
 		<< "Content-Type: application/json\r\n"
 		<< "Content-Length: " << obj.str().length() << "\r\n"
 		<< "Connection: keep-alive\r\n"
@@ -348,6 +342,7 @@ void RPCClient::maybe_get_txn_for_block() {
 		<< "Authorization: Basic " << EncodeBase64(std::string(getenv("RPC_USER")) + ":" + getenv("RPC_PASS"))
 		<< "\r\n\r\n"
 		<< obj.str();
-	std::string bytes(req.str());
-	maybe_do_send_bytes(bytes.c_str(), bytes.length());
+
+	std::string res(req.str());
+	return res;
 }
