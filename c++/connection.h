@@ -74,7 +74,12 @@ public:
 
 protected:
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
+
+private:
+	ssize_t internal_read(char *buf, size_t nbyte, millis_lu_type max_sleep, bool require_full);
+protected:
 	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max());
+	ssize_t maybe_read(char *buf, size_t maxbyte, millis_lu_type max_sleep = millis_lu_type::max());
 
 	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
 		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
