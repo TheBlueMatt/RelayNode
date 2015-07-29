@@ -142,6 +142,7 @@ public:
 						}
 						if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
 							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::milliseconds(10); // Limit outbound to avg ~500Kbps worst-case
+						conn->send_cv.notify_all();
 					}
 				}
 
@@ -153,6 +154,7 @@ public:
 					if (conn->sock_errno == EAGAIN || conn->sock_errno == EWOULDBLOCK)
 						conn->sock_errno = ENOTCONN;
 					conn->disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
+					conn->send_cv.notify_all();
 					me->fd_map.erase(fd);
 				}
 			}
@@ -179,21 +181,25 @@ Connection::~Connection() {
 }
 
 
-void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) {
+void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token, bool block) {
 	if (!send_mutex_token)
 		send_mutex.lock();
 	else
 		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
 
-	std::lock_guard<std::mutex> bytes_lock(send_bytes_mutex);
+	std::unique_lock<std::mutex> bytes_lock(send_bytes_mutex);
 
 	if (initial_outbound_throttle && send_mutex_token)
 		initial_outbound_bytes += bytes->size();
 
-	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > max_outbound_buffer_size) {
-		if (!send_mutex_token)
-			send_mutex.unlock();
-		return disconnect_from_outside("total_waiting_size blew up :(");
+	while ((disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE) == 0 &&
+			total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > max_outbound_buffer_size) {
+		if (!block) {
+			if (!send_mutex_token)
+				send_mutex.unlock();
+			return disconnect_from_outside("total_waiting_size blew up :(");
+		}
+		send_cv.wait(bytes_lock);
 	}
 
 	outbound_primary_queue.push_back(bytes);

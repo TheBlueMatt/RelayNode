@@ -38,6 +38,7 @@ private:
 	std::atomic_flag initial_outbound_throttle_done;
 	int64_t initial_outbound_bytes;
 	std::atomic<int64_t> total_waiting_size;
+	std::condition_variable send_cv;
 	std::chrono::steady_clock::time_point earliest_next_write;
 	uint32_t max_outbound_buffer_size;
 
@@ -81,11 +82,11 @@ protected:
 	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max());
 	ssize_t maybe_read(char *buf, size_t maxbyte, millis_lu_type max_sleep = millis_lu_type::max());
 
-	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
-		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
+	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0, bool block=false) {
+		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token, block);
 	}
 
-	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
+	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0, bool block=false);
 	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
 public:
