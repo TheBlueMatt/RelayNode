@@ -346,16 +346,18 @@ int main(int argc, char** argv) {
 
 	RPCClient rpcTrustedP2P(argv[1], std::stoul(argv[3]),
 					[&](std::vector<std::vector<unsigned char> >& txn_list) {
-						int txn_gathered = 0;
 						std::lock_guard<std::mutex> lock(txn_mutex);
+						// 50 txn @ 10k/tx per sec == 500Kbps
+						int txn_gathered = 0, txn_to_gather = 50*to_millis_lu(std::chrono::steady_clock::now() - last_mempool_request)/1000;
+						last_mempool_request = std::chrono::steady_clock::now();
+
 						for (const std::vector<unsigned char>& txn : txn_list) {
 							if (!compressor.was_tx_sent(&txn[0])) {
 								txnWaitingToBroadcast.insert(txn);
 								trustedP2P->request_transaction(txn);
 								txn_gathered++;
 							}
-							// 100 txn @ 10k/tx every 2 sec == 500Kbps
-							if (txn_gathered >= 100)
+							if (txn_gathered >= txn_to_gather)
 								return;
 						}
 					});
@@ -402,10 +404,8 @@ int main(int argc, char** argv) {
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
 						std::lock_guard<std::mutex> lock(txn_mutex);
-						if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(2)) {
+						if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::milliseconds(500))
 							rpcTrustedP2P.maybe_get_txn_for_block();
-							last_mempool_request = std::chrono::steady_clock::now();
-						}
 					}, NULL, false);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
@@ -444,10 +444,8 @@ int main(int argc, char** argv) {
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
 			trustedP2P->receive_transaction(bytes);
 			std::lock_guard<std::mutex> lock(txn_mutex);
-			if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::seconds(2)) {
+			if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::milliseconds(500))
 				rpcTrustedP2P.maybe_get_txn_for_block();
-				last_mempool_request = std::chrono::steady_clock::now();
-			}
 		};
 
 	std::function<void (RelayNetworkClient*, int token)> connected =
