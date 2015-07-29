@@ -57,20 +57,10 @@ private:
 			me->net_thread->join();
 		me->net_thread = me->new_thread;
 
-		me->sock = socket(AF_INET6, SOCK_STREAM, 0);
+		std::string error;
+		me->sock = create_connect_socket(me->server_host, 8336, error);
 		if (me->sock <= 0)
-			return me->reconnect("unable to create socket", true);
-
-		sockaddr_in6 addr;
-		if (!lookup_address(me->server_host, &addr))
-			return me->reconnect("unable to lookup host", true);
-
-		int v6only = 0;
-		setsockopt(me->sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
-
-		addr.sin6_port = htons(8336);
-		if (connect(me->sock, (struct sockaddr*)&addr, sizeof(addr)))
-			return me->reconnect("failed to connect()", true);
+			return me->reconnect(error, true);
 
 		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) & ~O_NONBLOCK);
 

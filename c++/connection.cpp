@@ -384,24 +384,10 @@ void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
 }
 
 void OutboundPersistentConnection::do_connect(OutboundPersistentConnection* me) {
-	int sock = socket(AF_INET6, SOCK_STREAM, 0);
+	std::string error;
+	int sock = create_connect_socket(me->serverHost, me->serverPort, error);
 	if (sock <= 0)
-		return me->reconnect("unable to create socket");
-
-	sockaddr_in6 addr;
-	if (!lookup_address(me->serverHost.c_str(), &addr)) {
-		close(sock);
-		return me->reconnect("unable to lookup host");
-	}
-
-	int v6only = 0;
-	setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
-
-	addr.sin6_port = htons(me->serverPort);
-	if (connect(sock, (struct sockaddr*)&addr, sizeof(addr))) {
-		close(sock);
-		return me->reconnect("failed to connect()");
-	}
+		return me->reconnect(error);
 
 	OutboundConnection* new_conn = new OutboundConnection(sock, me);
 #ifndef NDEBUG

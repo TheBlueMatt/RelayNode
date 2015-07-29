@@ -225,6 +225,33 @@ bool lookup_cname(const char* host, std::string& cname) {
 	return false;
 }
 
+int create_connect_socket(const std::string& serverHost, const uint16_t serverPort, std::string& error) {
+	int sock = socket(AF_INET6, SOCK_STREAM, 0);
+	if (sock <= 0) {
+		error = "unable to create socket";
+		return sock;
+	}
+
+	sockaddr_in6 addr;
+	if (!lookup_address(serverHost.c_str(), &addr)) {
+		close(sock);
+		error = "unable to lookup host";
+		return -1;
+	}
+
+	int v6only = 0;
+	setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char *)&v6only, sizeof(v6only));
+
+	addr.sin6_port = htons(serverPort);
+	if (connect(sock, (struct sockaddr*)&addr, sizeof(addr))) {
+		close(sock);
+		error = "failed to connect()";
+		return -1;
+	}
+
+	return sock;
+}
+
 /********************
  *** Random stuff ***
  ********************/
