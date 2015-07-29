@@ -205,7 +205,7 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	outbound_primary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 #ifndef WIN32
-	if (total_waiting_size > (ssize_t)bytes->size())
+	if (total_waiting_size == (ssize_t)bytes->size())
 		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
 #endif
 
@@ -231,7 +231,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	outbound_secondary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 #ifndef WIN32
-	if (total_waiting_size > (ssize_t)bytes->size())
+	if (total_waiting_size == (ssize_t)bytes->size())
 		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
 #endif
 
