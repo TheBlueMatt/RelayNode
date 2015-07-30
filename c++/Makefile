@@ -1,6 +1,5 @@
 # all common objects that need to be build for all targets except for windows version
 common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o connection.o rpcclient.o ./crypto/sha2.o
-lzma_objs := lzmaconnection.o
 native_objs :=
 
 MINGW_PREFIX := i686-w64-mingw32
@@ -87,7 +86,7 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS)
 LDFLAGS += -pthread -lresolv
 
 # list of all targets
-NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server lzmaserver test)
+NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server test)
 WINDOWS_TARGETS = relaynetworkclient.exe
 
 %.a: %.asm
@@ -104,8 +103,7 @@ relaynetworkclient: $(native_objs) $(common_objs) client.o
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
-relaynetworkserver: $(native_objs) $(lzma_objs) $(common_objs) server.o
-	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -llzma -o $@
+relaynetworkserver: $(native_objs) $(common_objs) server.o
 
 relaynetworkterminator: $(native_objs) $(common_objs) bitcoindterminator.o
 
@@ -114,9 +112,6 @@ relaynetworkproxy: $(native_objs) $(common_objs) relayproxy.o
 relaynetworkoutbound: $(native_objs) $(common_objs) p2poutbound.o
 
 relaynetworktest: $(native_objs) $(common_objs) test.o
-
-relaynetworklzmaserver: $(native_objs) $(lzma_objs) $(common_objs) lzmaserver.o
-	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -llzma -o $@
 
 relaynetwork%:
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@

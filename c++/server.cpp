@@ -21,7 +21,6 @@
 #include "utils.h"
 #include "p2pclient.h"
 #include "connection.h"
-#include "lzmaconnection.h"
 #include "rpcclient.h"
 
 
@@ -345,7 +344,7 @@ int main(int argc, char** argv) {
 						} catch (read_exception) { }
 					}, true);
 
-	RPCClient<LZMAOutboundPersistentConnection> rpcTrustedP2P(argv[1], std::stoul(argv[3]),
+	RPCClient<OutboundPersistentConnection> rpcTrustedP2P(argv[1], std::stoul(argv[3]),
 					[&](std::vector<std::vector<unsigned char> >& txn_list) {
 						std::lock_guard<std::mutex> lock(txn_mutex);
 						// 50 txn @ 10k/tx per sec == 500Kbps
