@@ -67,9 +67,6 @@ private:
 
 	std::function<void(void)> on_disconnect;
 
-	// This is a workaround for old GCCs
-	void workaround_maybe_do_send_bytes(const char* buf, size_t nbyte) { OutboundPersistentConnection::maybe_do_send_bytes(buf, nbyte); }
-
 public:
 	LZMAOutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, std::function<void(void)> on_disconnect_in);
 	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()); // Only allowed from within net_process
