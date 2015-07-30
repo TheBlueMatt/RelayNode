@@ -121,7 +121,6 @@ private:
 			{ }
 
 		ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) { return Connection::read_all(buf, nbyte, max_sleep); }
-		ssize_t maybe_read(char *buf, size_t nbyte, millis_lu_type max_sleep) { return Connection::maybe_read(buf, nbyte, max_sleep); }
 		void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token) { return Connection::do_send_bytes(buf, nbyte, send_mutex_token); }
 		void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) { return Connection::do_send_bytes(bytes, send_mutex_token); }
 		void construction_done() { Connection::construction_done(); }
@@ -152,7 +151,6 @@ protected:
 	virtual void on_disconnect()=0;
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte, max_sleep); } // Only allowed from within net_process
-	ssize_t maybe_read(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return ((OutboundConnection*)connection.load())->maybe_read(buf, nbyte, max_sleep); } // Only allowed from within net_process
 
 	void maybe_do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
 		OutboundConnection* conn = (OutboundConnection*)connection.load();
@@ -167,12 +165,6 @@ protected:
 			assert(!mutex_valid || send_mutex_token == mutex_valid);
 			conn->do_send_bytes(bytes, mutex_valid == send_mutex_token ? send_mutex_token : 0);
 		}
-	}
-
-	void disconnect(std::string disconnectReason) {
-		OutboundConnection* conn = (OutboundConnection*)connection.load();
-		if (conn)
-			conn->disconnect_from_outside(disconnectReason.c_str());
 	}
 
 private:
