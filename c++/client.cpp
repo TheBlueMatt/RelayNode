@@ -50,12 +50,16 @@ public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: OutboundPersistentConnection(serverHostIn, 8336, [&]() { connected = false; }), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
+			: OutboundPersistentConnection(serverHostIn, 8336), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected(false), compressor(false) {
 		construction_done();
 	}
 
 private:
+	void on_disconnect() {
+		connected = false;
+	}
+
 	void net_process(const std::function<void(std::string)>& disconnect) {
 		compressor.reset();
 

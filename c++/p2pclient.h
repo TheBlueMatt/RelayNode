@@ -35,7 +35,7 @@ public:
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
 				bool check_block_msghash_in=true)
-			: OutboundPersistentConnection(serverHostIn, serverPortIn, [&]() { connected = 0; }, 10000000),
+			: OutboundPersistentConnection(serverHostIn, serverPortIn, 10000000),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
 			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100), check_block_msghash(check_block_msghash_in)
 	{}
@@ -43,6 +43,7 @@ public:
 protected:
 	virtual std::vector<unsigned char> generate_version() =0;
 
+	void on_disconnect();
 	void net_process(const std::function<void(std::string)>& disconnect);
 	void send_message(const char* command, unsigned char* headerAndData, size_t datalen);
 

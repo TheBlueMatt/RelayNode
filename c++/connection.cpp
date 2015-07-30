@@ -388,8 +388,7 @@ void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
 
 	mutex_valid = 0;
 
-	if (on_disconnect)
-		on_disconnect();
+	on_disconnect();
 
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	while (old && !(old->getDisconnectFlags() & DISCONNECT_COMPLETE)) {
