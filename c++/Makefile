@@ -51,17 +51,19 @@ ifeq ($(UNAME_S),Linux)
     COMMON_CXXFLAGS += -flto
   endif
   LDFLAGS += -Wl,--no-as-needed
-  ifneq (,$(findstring avx2,$(shell cat /proc/cpuinfo)))
-    NATIVE_CXXFLAGS += -DSHA256=sha256_rorx
-    native_objs += crypto/sha256_code_release/sha256_avx2_rorx2.a
-  else
-    ifneq (,$(findstring avx,$(shell cat /proc/cpuinfo)))
-      NATIVE_CXXFLAGS += -DSHA256=sha256_avx
-      native_objs += crypto/sha256_code_release/sha256_avx1.a
+  ifneq ($(variant),generic)
+    ifneq (,$(findstring avx2,$(shell cat /proc/cpuinfo)))
+      NATIVE_CXXFLAGS += -DSHA256=sha256_rorx
+      native_objs += crypto/sha256_code_release/sha256_avx2_rorx2.a
     else
-      ifneq (,$(findstring sse4_1,$(shell cat /proc/cpuinfo)))
-        NATIVE_CXXFLAGS += -DSHA256=sha256_sse4
-        native_objs += crypto/sha256_code_release/sha256_sse4.a
+      ifneq (,$(findstring avx,$(shell cat /proc/cpuinfo)))
+        NATIVE_CXXFLAGS += -DSHA256=sha256_avx
+        native_objs += crypto/sha256_code_release/sha256_avx1.a
+      else
+        ifneq (,$(findstring sse4_1,$(shell cat /proc/cpuinfo)))
+          NATIVE_CXXFLAGS += -DSHA256=sha256_sse4
+          native_objs += crypto/sha256_code_release/sha256_sse4.a
+        endif
       endif
     endif
   endif
