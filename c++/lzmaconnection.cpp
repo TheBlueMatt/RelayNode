@@ -13,6 +13,16 @@ LZMACompressor::~LZMACompressor() {
 }
 
 void LZMACompressor::reset() {
+	if (write_stream.next_out) {
+		lzma_end(&write_stream);
+		write_stream = LZMA_STREAM_INIT;
+	}
+	if (read_stream.next_out) {
+		lzma_end(&read_stream);
+		read_stream = LZMA_STREAM_INIT;
+	}
+
+
 	ALWAYS_ASSERT(lzma_easy_encoder(&write_stream, 6, LZMA_CHECK_CRC64) == LZMA_OK);
 	ALWAYS_ASSERT(lzma_stream_decoder(&read_stream, UINT64_MAX, 0) == LZMA_OK);
 
@@ -127,7 +137,14 @@ LZMAConnection::LZMAConnection(int inSock, std::string host, int outSock) :
 }
 
 LZMAOutboundPersistentConnection::LZMAOutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, std::function<void(void)> on_disconnect_in) :
-	OutboundPersistentConnection(serverHostIn, serverPortIn, [&]() { compressor.reset(); if (on_disconnect) on_disconnect(); }),
+	OutboundPersistentConnection(serverHostIn, serverPortIn, [&]() {
+		compressor.reset();
+		pending_reads.clear();
+		pending_total = 0;
+		pending_read_pos = 0;
+		if (on_disconnect)
+			on_disconnect();
+	}),
 	compressor([&](const char* buf, size_t size) {
 				// Newer GCCs let us call maybe_do_send_bytes directly, but we work around it for older ones
 				workaround_maybe_do_send_bytes(buf, size);
