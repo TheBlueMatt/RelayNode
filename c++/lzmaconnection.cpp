@@ -129,7 +129,8 @@ LZMAConnection::LZMAConnection(int inSock, std::string host, int outSock) :
 LZMAOutboundPersistentConnection::LZMAOutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, std::function<void(void)> on_disconnect_in) :
 	OutboundPersistentConnection(serverHostIn, serverPortIn, [&]() { compressor.reset(); if (on_disconnect) on_disconnect(); }),
 	compressor([&](const char* buf, size_t size) {
-				OutboundPersistentConnection::maybe_do_send_bytes(buf, size);
+				// Newer GCCs let us call maybe_do_send_bytes directly, but we work around it for older ones
+				workaround_maybe_do_send_bytes(buf, size);
 			}, [&](const char* buf, size_t size) {
 				pending_reads.emplace_back(buf, buf + size);
 				pending_total += size;
