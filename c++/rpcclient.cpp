@@ -250,7 +250,7 @@ void RPCClient_net_process(std::function<ssize_t(char*, size_t, millis_lu_type m
 
 		std::vector<std::vector<unsigned char> > txn_selected;
 		std::make_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
-		while (txn_selected.size() < MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS && vectorToSort.size()) {
+		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS)/10 && vectorToSort.size()) {
 			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
 			CTxMemPoolEntry* e = vectorToSort.back();
 			vectorToSort.pop_back();
