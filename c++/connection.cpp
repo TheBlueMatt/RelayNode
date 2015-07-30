@@ -309,14 +309,13 @@ void Connection::do_setup_and_read(Connection* me) {
 	}
 }
 
-ssize_t Connection::internal_read(char *buf, size_t nbyte, millis_lu_type max_sleep, bool require_full) {
+ssize_t Connection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
 	size_t total = 0;
 	std::chrono::system_clock::time_point stop_time;
 	if (max_sleep == millis_lu_type::max())
 		stop_time = std::chrono::system_clock::time_point::max();
 	else
 		stop_time = std::chrono::system_clock::now() + max_sleep;
-
 	while (total < nbyte) {
 		std::unique_lock<std::mutex> lock(read_mutex);
 		while (!inbound_queue.size() && std::chrono::system_clock::now() < stop_time)
@@ -346,19 +345,9 @@ ssize_t Connection::internal_read(char *buf, size_t nbyte, millis_lu_type max_sl
 		} else
 			readpos += readamt;
 		total += readamt;
-
-		if (!require_full && !inbound_queue.size())
-			break;
 	}
-	return total;
-}
-
-ssize_t Connection::maybe_read(char *buf, size_t maxbyte, millis_lu_type max_sleep) {
-	return internal_read(buf, maxbyte, max_sleep, false);
-}
-
-ssize_t Connection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
-	return internal_read(buf, nbyte, max_sleep, true);
+	assert(total == nbyte);
+	return nbyte;
 }
 
 int OutboundPersistentConnection::get_send_mutex() {
