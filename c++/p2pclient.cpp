@@ -25,10 +25,6 @@ void P2PRelayer::send_message(const char* command, unsigned char* headerAndData,
 	maybe_do_send_bytes((char*)headerAndData, sizeof(struct bitcoin_msg_header) + datalen);
 }
 
-void P2PRelayer::on_disconnect() {
-	connected = 0;
-}
-
 void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect) {
 	connected = 0;
 

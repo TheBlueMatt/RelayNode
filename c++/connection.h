@@ -130,12 +130,14 @@ private:
 	std::atomic<unsigned long> connection;
 	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
 
+	const std::function<void(void)> on_disconnect;
+
 public:
 	const std::string serverHost;
 	const uint16_t serverPort;
 
-	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, uint32_t max_outbound_buffer_size_in=10000000) :
-			mutex_valid(false), max_outbound_buffer_size(max_outbound_buffer_size_in), connection(0), serverHost(serverHostIn), serverPort(serverPortIn)
+	OutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=10000000) :
+			mutex_valid(false), max_outbound_buffer_size(max_outbound_buffer_size_in), connection(0), on_disconnect(on_disconnect_in), serverHost(serverHostIn), serverPort(serverPortIn)
 		{}
 
 	int get_send_mutex();
@@ -149,7 +151,6 @@ public:
 protected:
 	void construction_done() { std::thread(do_connect, this).detach(); }
 
-	virtual void on_disconnect()=0;
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte, max_sleep); } // Only allowed from within net_process
 	ssize_t maybe_read(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return ((OutboundConnection*)connection.load())->maybe_read(buf, nbyte, max_sleep); } // Only allowed from within net_process

@@ -24,7 +24,8 @@ private:
 
 public:
 	RPCClient(std::string hostIn, int16_t portIn, const std::function<void (std::vector<std::vector<unsigned char> >& txhashes)>& txn_for_block_func_in)
-		: Conn(hostIn, portIn), txn_for_block_func(txn_for_block_func_in) { on_disconnect(); this->construction_done(); }
+		: Conn(hostIn, portIn, [&]() { on_disconnect(); }), txn_for_block_func(txn_for_block_func_in)
+		{ on_disconnect(); this->construction_done(); }
 
 	void maybe_get_txn_for_block() {
 		if (!connected || awaiting_response.exchange(true))
