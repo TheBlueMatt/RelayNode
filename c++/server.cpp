@@ -227,7 +227,7 @@ private:
 	std::function<void(std::vector<unsigned char>)> on_hash;
 public:
 	MempoolClient(std::string serverHostIn, uint16_t serverPortIn, std::function<void(std::vector<unsigned char>)> on_hash_in)
-		: OutboundPersistentConnection(serverHostIn, serverPortIn), on_hash(on_hash_in) {}
+		: OutboundPersistentConnection(serverHostIn, serverPortIn), on_hash(on_hash_in) { construction_done(); }
 
 	void on_disconnect() {}
 
