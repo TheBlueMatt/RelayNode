@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
 									txn_gathered++;
 								}
 								if (txn_gathered >= txn_to_gather)
-									return;
+									break;
 							}
 						}
 
