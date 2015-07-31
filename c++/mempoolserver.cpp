@@ -21,10 +21,10 @@
 class MempoolClient : public Connection {
 public:
 	MempoolClient(int fd_in, std::string hostIn) : Connection(fd_in, hostIn, NULL) { construction_done(); }
-	void send_pool(std::set<std::vector<unsigned char> >::const_iterator mempool_begin, const std::set<std::vector<unsigned char> >::const_iterator mempool_end) {
+	void send_pool(std::set<std::vector<unsigned char> >::const_iterator mempool_begin, const std::set<std::vector<unsigned char> >::const_iterator mempool_end, int send_mutex=0) {
 		while (mempool_begin != mempool_end) {
 			assert(mempool_begin->size() == 32);
-			do_send_bytes((const char*) &(*mempool_begin)[0], 32);
+			do_send_bytes((const char*) &(*mempool_begin)[0], 32, send_mutex);
 			mempool_begin++;
 		}
 	}
@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
 						}
 
 						std::lock_guard<std::mutex> lock(map_mutex);
-						for (auto it = clientMap.begin(); it != clientMap.end();) {
+						for (auto it = clientMap.begin(); it != clientMap.end(); it++) {
 							if (!it->second->getDisconnectFlags())
 								it->second->send_pool(new_txn.begin(), new_txn.end());
 						}
@@ -148,10 +148,12 @@ int main(int argc, char** argv) {
 			clientMap[host] = client;
 			fprintf(stderr, "%lld: New connection from %s, have %lu relay clients\n", (long long) time(NULL), host.c_str(), clientMap.size());
 
+			int send_mutex = client->get_send_mutex();
 			{
 				std::lock_guard<std::mutex> lock(mempool_mutex);
-				client->send_pool(mempool.begin(), mempool.end());
+				client->send_pool(mempool.begin(), mempool.end(), send_mutex);
 			}
+			client->release_send_mutex(send_mutex);
 		}
 	}
 }
