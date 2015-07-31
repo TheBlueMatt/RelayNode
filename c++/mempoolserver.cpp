@@ -20,7 +20,7 @@
 
 class MempoolClient : public Connection {
 public:
-	MempoolClient(int fd_in, std::string hostIn) : Connection(fd_in, hostIn, NULL) {}
+	MempoolClient(int fd_in, std::string hostIn) : Connection(fd_in, hostIn, NULL) { construction_done(); }
 	void send_pool(std::set<std::vector<unsigned char> >::const_iterator mempool_begin, const std::set<std::vector<unsigned char> >::const_iterator mempool_end) {
 		while (mempool_begin != mempool_end) {
 			assert(mempool_begin->size() == 32);
@@ -75,7 +75,6 @@ int main(int argc, char** argv) {
 
 	RPCClient rpcTrustedP2P("127.0.0.1", std::stoul(argv[2]),
 					[&](std::vector<std::vector<unsigned char> >& txn_list) {
-
 						std::set<std::vector<unsigned char> > new_txn;
 						{
 							std::lock_guard<std::mutex> lock(mempool_mutex);
