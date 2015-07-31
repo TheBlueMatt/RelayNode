@@ -222,6 +222,25 @@ private:
 	}
 };
 
+class MempoolClient : public OutboundPersistentConnection {
+private:
+	std::function<void(std::vector<unsigned char>)> on_hash;
+public:
+	MempoolClient(std::string serverHostIn, uint16_t serverPortIn, std::function<void(std::vector<unsigned char>)> on_hash_in)
+		: OutboundPersistentConnection(serverHostIn, serverPortIn), on_hash(on_hash_in) {}
+
+	void on_disconnect() {}
+
+	void net_process(const std::function<void(std::string)>& disconnect) {
+		while (true) {
+			std::vector<unsigned char> hash(32);
+			if (read_all((char*)&hash[0], 32) != 32)
+				return disconnect("Failed to read next hash");
+			on_hash(hash);
+		}
+	}
+};
+
 
 
 
@@ -266,7 +285,6 @@ int main(int argc, char** argv) {
 
 	std::mutex txn_mutex;
 	mruset<std::vector<unsigned char> > txnWaitingToBroadcast(MAX_TXN_IN_FAS);
-	std::chrono::steady_clock::time_point last_mempool_request(std::chrono::steady_clock::time_point::min());
 
 	trustedP2P = new P2PClient(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) {
@@ -344,21 +362,13 @@ int main(int argc, char** argv) {
 						} catch (read_exception) { }
 					}, true);
 
-	RPCClient rpcTrustedP2P(argv[1], std::stoul(argv[3]),
-					[&](std::vector<std::vector<unsigned char> >& txn_list) {
-						std::lock_guard<std::mutex> lock(txn_mutex);
-						// 50 txn @ 10k/tx per sec == 500Kbps
-						int txn_gathered = 0, txn_to_gather = 50*to_millis_lu(std::chrono::steady_clock::now() - last_mempool_request)/1000;
-						last_mempool_request = std::chrono::steady_clock::now();
-
-						for (const std::vector<unsigned char>& txn : txn_list) {
-							if (!compressor.was_tx_sent(&txn[0])) {
-								txnWaitingToBroadcast.insert(txn);
-								trustedP2P->request_transaction(txn);
-								txn_gathered++;
-							}
-							if (txn_gathered >= txn_to_gather)
-								return;
+	MempoolClient mempoolClient(argv[1], std::stoul(argv[3]),
+					[&](std::vector<unsigned char> txn) {
+						std::lock_guard<std::mutex> lock(map_mutex);
+						if (!compressor.was_tx_sent(&txn[0])) {
+							std::lock_guard<std::mutex> lock(txn_mutex);
+							txnWaitingToBroadcast.insert(txn);
+							trustedP2P->request_transaction(txn);
 						}
 					});
 
@@ -403,9 +413,6 @@ int main(int argc, char** argv) {
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						trustedP2P->receive_transaction(bytes);
-						std::lock_guard<std::mutex> lock(txn_mutex);
-						if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::milliseconds(500))
-							rpcTrustedP2P.maybe_get_txn_for_block();
 					}, NULL, false);
 
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
@@ -443,9 +450,6 @@ int main(int argc, char** argv) {
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes) {
 			trustedP2P->receive_transaction(bytes);
-			std::lock_guard<std::mutex> lock(txn_mutex);
-			if (last_mempool_request < std::chrono::steady_clock::now() - std::chrono::milliseconds(500))
-				rpcTrustedP2P.maybe_get_txn_for_block();
 		};
 
 	std::function<void (RelayNetworkClient*, int token)> connected =

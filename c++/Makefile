@@ -86,7 +86,7 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS)
 LDFLAGS += -pthread -lresolv
 
 # list of all targets
-NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server test)
+NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server mempoolserver test)
 WINDOWS_TARGETS = relaynetworkclient.exe
 
 %.a: %.asm
@@ -104,6 +104,8 @@ relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
 relaynetworkserver: $(native_objs) $(common_objs) server.o
+
+relaynetworkmempoolserver: $(native_objs) $(common_objs) mempoolserver.o
 
 relaynetworkterminator: $(native_objs) $(common_objs) bitcoindterminator.o
 
