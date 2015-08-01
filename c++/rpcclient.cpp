@@ -13,17 +13,6 @@ void RPCClient::on_disconnect() {
 	awaiting_response = false;
 }
 
-struct CTxMemPoolEntry {
-	double feePerKb;
-	uint32_t size;
-	uint32_t reqCount;
-	std::string hexHash;
-	std::unordered_set<CTxMemPoolEntry*> setDeps;
-	CTxMemPoolEntry(double feeIn, uint32_t sizeIn, std::string hexHashIn, uint32_t reqCountIn) : feePerKb(feeIn / sizeIn), size(sizeIn), reqCount(reqCountIn), hexHash(hexHashIn) {
-		//TODO: Parse hash?
-	}
-};
-
 void RPCClient::net_process(const std::function<void(std::string)>& disconnect) {
 	connected = true;
 
@@ -86,191 +75,111 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 			return disconnect("Got unreasonably large response size");
 
 		//Dumb JSON parser that mostly assumes valid (minimal-size) JSON...
-		static const std::string expected_start("{\"result\":{");
+		static const std::string expected_start("{\"result\":{\"capabilities\":[\"proposal\"],\"version\":3,\"previousblockhash\":\"");
+		static const std::string expected_second_start("\",\"transactions\":[");
+		static const uint32_t total_expected_start = expected_start.length() + 64 + expected_second_start.length();
 		{
-			char resp[expected_start.length()];
+			char resp[expected_start.length() + 1];
 			if (read_all(resp, expected_start.length()) != (ssize_t)expected_start.length())
 				return disconnect("Failed to read response");
 			if (memcmp(resp, &expected_start[0], expected_start.length()) != 0)
 				return disconnect("Got result which was not an object");
+
+			if (read_all(resp, 64) != 64)
+				return disconnect("Failed to read response");
+
+			if (read_all(resp, expected_second_start.length()) != (ssize_t)expected_second_start.length())
+				return disconnect("Failed to read response");
+			if (memcmp(resp, &expected_second_start[0], expected_second_start.length()) != 0)
+				return disconnect("Got result which was not an object");
 		}
 
-		std::vector<unsigned char> resp(content_length - expected_start.length());
-		if (read_all((char*)&resp[0], content_length - expected_start.length()) != content_length - (ssize_t)expected_start.length())
+		std::vector<unsigned char> resp(content_length - total_expected_start);
+		if (read_all((char*)&resp[0], content_length - total_expected_start) != content_length - total_expected_start)
 			return disconnect("Failed to read response");
 		auto it = resp.begin();
 
-		//These do not move
-		std::list<CTxMemPoolEntry> txn;
-		//These index into txn
-		std::vector<CTxMemPoolEntry*> vectorToSort;
-		std::unordered_map<std::string, CTxMemPoolEntry*> hashToEntry;
-		std::unordered_multimap<std::string, CTxMemPoolEntry*> txnWaitingOnDeps;
+		std::vector<std::vector<unsigned char> > txn_hashes;
 
-		// These are values/flags about the current status of the parser
-		int32_t stringStart = -1, fieldValueStart = -1;
-		std::string txHash, fieldString;
-		long tx_size = -1; double tx_fee = -1;
-		bool inTx = false, inFieldString = false, inFieldValue = false;
-		std::unordered_set<std::string> txDeps;
+		bool inTx = false, done = false, inFieldString = false, inFieldValue = false;
+		int32_t stringStart = -1;
+		std::string fieldString;
 
-		static const std::string expected_end("},\"error\":null,\"id\":1}\n");
-		while (it < resp.end() - expected_end.length()) {
-			while ((*it == ' ') && it < resp.end() - 1) it++;
+		while (it < resp.end() && !done) {
 			switch(*it) {
+			case '{':
+				if (stringStart != -1)
+					return disconnect("Got { in a string (all strings should have been hex");
+				if (!inTx) {
+					inTx = true;
+					inFieldString = true;
+				} else
+					return disconnect("Got unexpected { token");
+				break;
+			case '}':
+				if (stringStart != -1)
+					return disconnect("Got } in a string (all strings should have been hex");
+				if (inTx)
+					inTx = false;
+				else
+					return disconnect("Got unexpected } token");
+				break;
+
+			case '[':
+				return disconnect("Got unexpected [ token");
+			case ']':
+				done = true;
+				break;
+
 			case '"':
 				if (stringStart != -1) {
 					if (!inTx)
-						txHash = std::string(resp.begin() + stringStart, it);
+						return disconnect("Got unexpected \" token");
 					else if (inFieldString)
 						fieldString = std::string(resp.begin() + stringStart, it);
-					else if (inFieldValue)
-						return disconnect("got string as a field value");
+					else if (inFieldValue && fieldString == "hash") {
+						std::vector<unsigned char> hash;
+						if (!hex_str_to_reverse_vector(std::string(resp.begin() + stringStart, it), hash) || hash.size() != 32)
+							return disconnect("got bad hash");
+						txn_hashes.push_back(hash);
+					}
 					stringStart = -1;
 				} else
 					stringStart = it - resp.begin() + 1;
 				break;
+
 			case ':':
 				if (stringStart != -1)
 					return disconnect("Got : in a string (all strings should have been hex");
 				if (inFieldString) {
-					inFieldValue = true;
 					inFieldString = false;
-					fieldValueStart = it - resp.begin() + 1;
+					inFieldValue = true;
+					if (fieldString == "depends") {
+						it++;
+						if (*it != '[')
+							return disconnect("Missing [ token");
+						while (it < resp.end() && *it != ']')
+							it++;
+						if (*it != ']')
+							return disconnect("Missing ] token");
+					}
 				} else if (inFieldValue)
-					return disconnect("Got : in an unexpected place");
+					return disconnect("Got unexpected : token");
 				break;
+
 			case ',':
 				if (stringStart != -1)
 					return disconnect("Got , in a string (all strings should have been hex");
 				if (inFieldValue) {
 					inFieldValue = false;
 					inFieldString = true;
-					if (fieldString == "size") {
-						try {
-							tx_size = std::stol(std::string(resp.begin() + fieldValueStart, it));
-						} catch (std::exception& e) {
-							return disconnect("transaction size could not be parsed");
-						}
-					} else if (fieldString == "fee") {
-						try {
-							tx_fee = std::stod(std::string(resp.begin() + fieldValueStart, it));
-						} catch (std::exception& e) {
-							return disconnect("transaction value could not be parsed");
-						}
-					}
 				} else if (inTx)
-					return disconnect("Got unexpected ,");
-				break;
-			case '[':
-			{
-				it++;
-				int32_t depStringStart = -1;
-				while (*it != ']' && it < resp.end() - 1) {
-					if (*it == '"') {
-						if (depStringStart != -1) {
-							txDeps.insert(std::string(resp.begin() + depStringStart, it));
-							depStringStart = -1;
-						} else
-							depStringStart = it - resp.begin() + 1;
-					}
-					it++;
-				}
-				if (*it != ']' || depStringStart != -1)
-					return disconnect("Missing array end character (])");
-				break;
-			}
-			case '{':
-				if (stringStart != -1)
-					return disconnect("Got { in a string (all strings should have been hex");
-				else if (!inTx) {
-					inTx = true;
-					inFieldString = true;
-				} else
-					return disconnect("Got JSON object start when we weren't expecting one");
-				break;
-			case '}':
-				if (inTx) {
-					if (inFieldValue) {
-						inFieldValue = false;
-						if (fieldString == "size") {
-							try {
-								tx_size = std::stol(std::string(resp.begin() + fieldValueStart, it));
-							} catch (std::exception& e) {
-								return disconnect("transaction size could not be parsed");
-							}
-						} else if (fieldString == "fee") {
-							try {
-								tx_fee = std::stod(std::string(resp.begin() + fieldValueStart, it));
-							} catch (std::exception& e) {
-								return disconnect("transaction value could not be parsed");
-							}
-						}
-					} else
-						return disconnect("Got unepxecpted }");
-
-					if (tx_size < 0)
-						return disconnect("Did not get transaction size");
-					else if (tx_fee < 0)
-						return disconnect("Did not get transaction fee");
-
-					txn.emplace_back(tx_fee, tx_size, txHash, txDeps.size());
-					if (!hashToEntry.insert(std::make_pair(txHash, &txn.back())).second)
-						return disconnect("Duplicate transaction");
-
-					if (txDeps.empty())
-						vectorToSort.push_back(&txn.back());
-					else {
-						for (const std::string& dep : txDeps) {
-							auto depIt = hashToEntry.find(dep);
-							if (depIt == hashToEntry.end())
-								txnWaitingOnDeps.insert(std::make_pair(dep, &txn.back()));
-							else
-								depIt->second->setDeps.insert(&txn.back());
-						}
-					}
-
-					auto waitingIts = txnWaitingOnDeps.equal_range(txHash);
-					for (auto waitingIt = waitingIts.first; waitingIt != waitingIts.second; waitingIt++)
-						txn.back().setDeps.insert(waitingIt->second);
-					txnWaitingOnDeps.erase(txHash);
-
-					inTx = false;
-					tx_size = -1;
-					tx_fee = -1;
-					txDeps.clear();
-				} else
-					return disconnect("Global JSON object closed before the end");
-				break;
+					return disconnect("Got unexpected , token");
 			}
 			it++;
 		}
-		if (it != resp.end() - expected_end.length() || memcmp(&(*it), &expected_end[0], expected_end.length()) != 0)
-			return disconnect("JSON object was not closed at the end");
 
-		if (!txnWaitingOnDeps.empty())
-			return disconnect("Tx depended on another one which did not exist");
-
-		std::vector<std::vector<unsigned char> > txn_selected;
-		std::make_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
-		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS)/10 && vectorToSort.size()) {
-			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
-			CTxMemPoolEntry* e = vectorToSort.back();
-			vectorToSort.pop_back();
-			if (e->size <= MAX_RELAY_OVERSIZE_TRANSACTION_BYTES) {
-				for (CTxMemPoolEntry* dep : e->setDeps)
-					if ((--dep->reqCount) == 0) {
-						vectorToSort.push_back(dep);
-						std::push_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
-					}
-				std::vector<unsigned char> hash;
-				if (!hex_str_to_reverse_vector(e->hexHash, hash) || hash.size() != 32)
-					return disconnect("got bad hash");
-				txn_selected.push_back(hash);
-			}
-		}
-
-		txn_for_block_func(txn_selected);
+		txn_for_block_func(txn_hashes);
 		awaiting_response = false;
 
 		if (close_after_read)
@@ -332,8 +241,8 @@ void RPCClient::maybe_get_txn_for_block() {
 
 	std::ostringstream obj;
 	obj << "{"
-		<< "\"method\": \"getrawmempool\","
-		<< "\"params\": [ true ],"
+		<< "\"method\": \"getblocktemplate\","
+		<< "\"params\": [ ],"
 		<< "\"id\": 1"
 		<< "}";
 
