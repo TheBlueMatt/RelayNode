@@ -101,7 +101,7 @@ server-targets: $(NATIVE_TARGETS)
 relaynetworkclient: $(native_objs) $(common_objs) client.o
 
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
-	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
+	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -DFD_SETSIZE=1024 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
 
 relaynetworkserver: $(native_objs) $(common_objs) server.o
 

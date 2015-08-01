@@ -55,7 +55,7 @@ public:
 			int max = pipefd[0];
 			FD_SET(pipefd[0], &fd_set_read);
 #else
-			int max = 0;
+			int max = -1;
 #endif
 			auto now = std::chrono::steady_clock::now();
 			{
@@ -75,7 +75,10 @@ public:
 				}
 			}
 
-			ALWAYS_ASSERT(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
+			if (max < 0)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			else
+				ALWAYS_ASSERT(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
 
 			now = std::chrono::steady_clock::now();
 			unsigned char buf[4096];

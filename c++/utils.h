@@ -17,6 +17,8 @@
 #ifdef WIN32
 	#undef errno
 	#define errno WSAGetLastError()
+	#undef close
+	#define close closesocket
 #endif
 
 #if defined(WIN32) || (defined(__APPLE__) && defined(__MACH__) && defined(FORCE_LE))
