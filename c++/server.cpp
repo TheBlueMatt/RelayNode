@@ -234,7 +234,7 @@ public:
 	void net_process(const std::function<void(std::string)>& disconnect) {
 		while (true) {
 			std::vector<unsigned char> hash(32);
-			if (read_all((char*)&hash[0], 32) != 32)
+			if (read_all((char*)&hash[0], 32, std::chrono::seconds(10)) != 32)
 				return disconnect("Failed to read next hash");
 			on_hash(hash);
 		}
