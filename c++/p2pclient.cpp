@@ -54,7 +54,7 @@ void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect)
 		std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
 
 		auto msg = std::make_shared<std::vector<unsigned char> > (prependedHeaderSize + uint32_t(header.length));
-		if (check_block_msghash || strncmp(header.command, "block", strlen("block"))) {
+		if (check_block_msghash && strncmp(header.command, "block", strlen("block"))) {
 			uint32_t hash[8];
 			double_sha256_init(hash);
 
