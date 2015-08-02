@@ -26,7 +26,7 @@
 
 
 
-static char* HOST_SPONSOR;
+static const char* HOST_SPONSOR;
 
 
 /***********************************************
@@ -246,9 +246,9 @@ public:
 
 RelayNetworkCompressor compressor;
 
-int main(int argc, char** argv) {
-	if (argc != 5 && argc != 6) {
-		printf("USAGE: %s trusted_host trusted_port trusted_port_2 \"Sponsor String\" [::ffff:whitelisted prefix string]\n", argv[0]);
+int main(const int argc, const char** argv) {
+	if (argc < 5) {
+		printf("USAGE: %s trusted_host trusted_port trusted_port_2 \"Sponsor String\" (::ffff:whitelisted prefix string)*\n", argv[0]);
 		return -1;
 	}
 
@@ -475,9 +475,9 @@ int main(int argc, char** argv) {
 	}).detach();
 
 	std::string droppostfix(".uptimerobot.com");
-	std::string whitelistprefix("NOT AN ADDRESS");
-	if (argc == 6)
-		whitelistprefix = argv[5];
+	std::vector<std::string> whitelistprefix;
+	for (int i = 5; i < argc; i++)
+		whitelistprefix.push_back(argv[i]);
 	socklen_t addr_size = sizeof(addr);
 	while (true) {
 		int new_fd;
@@ -488,7 +488,13 @@ int main(int argc, char** argv) {
 
 		std::string host = gethostname(&addr);
 		std::lock_guard<std::mutex> lock(map_mutex);
-		if ((clientMap.count(host) && host.compare(0, whitelistprefix.length(), whitelistprefix) != 0) ||
+
+		bool whitelist = false;
+		for (const std::string& s : whitelistprefix)
+			if (host.compare(0, s.length(), s) == 0)
+				whitelist = true;
+
+		if ((clientMap.count(host) && !whitelist) ||
 				(host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix))) {
 			if (clientMap.count(host)) {
 				const auto& client = clientMap[host];
@@ -499,7 +505,7 @@ int main(int argc, char** argv) {
 			}
 			close(new_fd);
 		} else {
-			if (host.compare(0, whitelistprefix.length(), whitelistprefix) == 0)
+			if (whitelist)
 				host += ":" + std::to_string(addr.sin6_port);
 			assert(clientMap.count(host) == 0);
 			clientMap[host] = new RelayNetworkClient(new_fd, host, relayBlock, relayTx, connected);
