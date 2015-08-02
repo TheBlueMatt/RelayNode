@@ -14,12 +14,12 @@ void RPCClient::on_disconnect() {
 }
 
 struct CTxMemPoolEntry {
-	double feePerKb;
+	uint64_t feePerKb;
 	uint32_t size;
 	uint32_t reqCount;
 	std::string hexHash;
 	std::unordered_set<CTxMemPoolEntry*> setDeps;
-	CTxMemPoolEntry(double feeIn, uint32_t sizeIn, std::string hexHashIn, uint32_t reqCountIn) : feePerKb(feeIn / sizeIn), size(sizeIn), reqCount(reqCountIn), hexHash(hexHashIn) {
+	CTxMemPoolEntry(uint64_t feeIn, uint32_t sizeIn, std::string hexHashIn, uint32_t reqCountIn) : feePerKb(feeIn * 1000 / sizeIn), size(sizeIn), reqCount(reqCountIn), hexHash(hexHashIn) {
 		//TODO: Parse hash?
 	}
 };
@@ -110,7 +110,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 		// These are values/flags about the current status of the parser
 		int32_t stringStart = -1, fieldValueStart = -1;
 		std::string txHash, fieldString;
-		long tx_size = -1; double tx_fee = -1;
+		long tx_size = -1; uint64_t tx_fee = -1;
 		bool inTx = false, inFieldString = false, inFieldValue = false;
 		std::unordered_set<std::string> txDeps;
 
@@ -154,7 +154,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 						}
 					} else if (fieldString == "fee") {
 						try {
-							tx_fee = std::stod(std::string(resp.begin() + fieldValueStart, it));
+							tx_fee = uint64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
 						} catch (std::exception& e) {
 							return disconnect("transaction value could not be parsed");
 						}
@@ -252,16 +252,19 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 			return disconnect("Tx depended on another one which did not exist");
 
 		std::vector<std::vector<unsigned char> > txn_selected;
-		std::make_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
+		std::function<bool (const CTxMemPoolEntry* a, const CTxMemPoolEntry* b)> comp = [](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) {
+			return a->feePerKb < b->feePerKb || a->hexHash < b->hexHash;
+		};
+		std::make_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS)/10 && vectorToSort.size()) {
-			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
+			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 			CTxMemPoolEntry* e = vectorToSort.back();
 			vectorToSort.pop_back();
 			if (e->size <= MAX_RELAY_OVERSIZE_TRANSACTION_BYTES) {
 				for (CTxMemPoolEntry* dep : e->setDeps)
 					if ((--dep->reqCount) == 0) {
 						vectorToSort.push_back(dep);
-						std::push_heap(vectorToSort.begin(), vectorToSort.end(), [&](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) { return a->feePerKb < b->feePerKb; });
+						std::push_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 					}
 				std::vector<unsigned char> hash;
 				if (!hex_str_to_reverse_vector(e->hexHash, hash) || hash.size() != 32)
