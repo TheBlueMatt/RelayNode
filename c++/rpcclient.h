@@ -20,8 +20,6 @@ public:
 	void maybe_get_txn_for_block();
 
 private:
-	void send_request(const std::string& call, const std::vector<std::string>& params, int id);
-
 	void on_disconnect();
 	void net_process(const std::function<void(std::string)>& disconnect);
 };
