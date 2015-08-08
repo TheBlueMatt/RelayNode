@@ -288,7 +288,7 @@ int main(int argc, char** argv) {
 	P2PClient p2p(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						relayClient->receive_transaction(bytes, true);
+						//TODO: Re-enable (see issue #11): relayClient->receive_transaction(bytes, true);
 					});
 	relayClient = new RelayNetworkClient(host,
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
