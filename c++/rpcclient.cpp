@@ -253,7 +253,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 
 		std::vector<std::vector<unsigned char> > txn_selected;
 		std::function<bool (const CTxMemPoolEntry* a, const CTxMemPoolEntry* b)> comp = [](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) {
-			return a->feePerKb < b->feePerKb || a->hexHash < b->hexHash;
+			return a->feePerKb < b->feePerKb || (a->feePerKb == b->feePerKb && a->hexHash < b->hexHash);
 		};
 		std::make_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS)/10 && vectorToSort.size()) {
