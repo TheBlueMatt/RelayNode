@@ -251,7 +251,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 		if (!txnWaitingOnDeps.empty())
 			return disconnect("Tx depended on another one which did not exist");
 
-		std::vector<std::vector<unsigned char> > txn_selected;
+		std::vector<std::pair<std::vector<unsigned char>, size_t> > txn_selected;
 		std::function<bool (const CTxMemPoolEntry* a, const CTxMemPoolEntry* b)> comp = [](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) {
 			return a->feePerKb < b->feePerKb || (a->feePerKb == b->feePerKb && a->hexHash < b->hexHash);
 		};
@@ -269,7 +269,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 				std::vector<unsigned char> hash;
 				if (!hex_str_to_reverse_vector(e->hexHash, hash) || hash.size() != 32)
 					return disconnect("got bad hash");
-				txn_selected.push_back(hash);
+				txn_selected.push_back(std::make_pair(hash, e->size));
 			}
 		}
 
