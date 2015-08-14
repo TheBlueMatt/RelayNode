@@ -273,7 +273,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 			}
 		}
 
-		txn_for_block_func(txn_selected);
+		txn_for_block_func(txn_selected, txn.size());
 		awaiting_response = false;
 
 		if (close_after_read)

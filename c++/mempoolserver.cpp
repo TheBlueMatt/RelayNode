@@ -73,14 +73,16 @@ int main(int argc, char** argv) {
 	std::chrono::steady_clock::time_point last_mempool_request(std::chrono::steady_clock::time_point::min());
 	mruset<std::vector<unsigned char> > mempool(MAX_TXN_IN_FAS);
 
+	uint8_t i = 0;
+	uint32_t total_sent = 0;
 	RPCClient rpcTrustedP2P("127.0.0.1", std::stoul(argv[2]),
-					[&](std::vector<std::vector<unsigned char> >& txn_list) {
+					[&](std::vector<std::vector<unsigned char> >& txn_list, size_t total_mempool_size) {
 						std::set<std::vector<unsigned char> > new_txn;
 						{
 							std::lock_guard<std::mutex> lock(mempool_mutex);
 
 							// 50 txn @ 10k/tx per sec == 500Kbps
-							int txn_gathered = 0, txn_to_gather = 50*to_millis_lu(std::chrono::steady_clock::now() - last_mempool_request)/1000;
+							unsigned int txn_gathered = 0, txn_to_gather = 50*to_millis_lu(std::chrono::steady_clock::now() - last_mempool_request)/1000;
 							last_mempool_request = std::chrono::steady_clock::now();
 
 							for (const std::vector<unsigned char>& txn : txn_list) {
@@ -91,6 +93,12 @@ int main(int argc, char** argv) {
 								if (txn_gathered >= txn_to_gather)
 									break;
 							}
+							total_sent += txn_gathered;
+						}
+
+						if (i++ == 0) {
+							printf("Sent %u txn over the past 256 time slots, current total mempool size %lu\n", total_sent, total_mempool_size);
+							total_sent = 0;
 						}
 
 						std::lock_guard<std::mutex> lock(map_mutex);
