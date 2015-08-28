@@ -34,7 +34,7 @@ private:
 		while (true) {
 			ssize_t res = read_all(buf, 42);
 			if (res != 42)
-				disconnect("Socket error reading bytes from mempool client");
+				return disconnect("Socket error reading bytes from mempool client");
 		}
 	}
 };
