@@ -239,6 +239,11 @@ public:
 			on_hash(hash);
 		}
 	}
+
+	void keep_alive_ping() {
+		char byte = 0x42;
+		maybe_do_send_bytes(&byte, 1);
+	}
 };
 
 
@@ -471,6 +476,7 @@ int main(const int argc, const char** argv) {
 						it++;
 				}
 			}
+			mempoolClient.keep_alive_ping();
 		}
 	}).detach();
 

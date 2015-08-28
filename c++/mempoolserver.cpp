@@ -30,12 +30,12 @@ public:
 	}
 private:
 	void net_process(const std::function<void(std::string)>& disconnect) {
-		char buf[1];
-		ssize_t res = read_all(buf, 1);
-		if (res == 1)
-			disconnect("Read bytes from mempool client?");
-		else
-			disconnect("Socket error reading bytes from mempool client");
+		char buf[42];
+		while (true) {
+			ssize_t res = read_all(buf, 42);
+			if (res != 42)
+				disconnect("Socket error reading bytes from mempool client");
+		}
 	}
 };
 
