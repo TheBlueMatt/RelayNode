@@ -148,10 +148,17 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 			move_forward(readit, 4, block.end());
 
+			int index = send_tx_cache.remove(txstart, readit);
+
+			__builtin_prefetch(&(*readit), 0);
+			__builtin_prefetch(&(*readit) + 64, 0);
+			__builtin_prefetch(&(*readit) + 128, 0);
+			__builtin_prefetch(&(*readit) + 196, 0);
+			__builtin_prefetch(&(*readit) + 256, 0);
+
 			if (check_merkle)
 				double_sha256(&(*txstart), merkleTree.getTxHashLoc(i), readit - txstart);
 
-			int index = send_tx_cache.remove(txstart, readit);
 			if (index < 0) {
 				compressed_block->push_back(0xff);
 				compressed_block->push_back(0xff);
