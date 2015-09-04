@@ -29,13 +29,13 @@ endif
 
 variant ?= production
 ifeq ($(variant),test)
-  COMMON_CXXFLAGS += -DFOR_TEST
+  COMMON_CXXFLAGS += -DFOR_TEST -DTEST_DATA
 else
   ifeq ($(variant),bench)
-    COMMON_CXXFLAGS += -DBENCH
+    COMMON_CXXFLAGS += -DBENCH -DTEST_DATA
   else
     ifeq ($(variant),precise_bench)
-      COMMON_CXXFLAGS += -DBENCH -DPRECISE_BENCH
+      COMMON_CXXFLAGS += -DBENCH -DPRECISE_BENCH -DTEST_DATA
     endif
   endif
   COMMON_CXXFLAGS += -DNDEBUG -O3
