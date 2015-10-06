@@ -27,6 +27,10 @@ private:
 	mruset<std::vector<unsigned char> > txnAlreadySeen;
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 
+	std::mutex ping_mutex;
+	std::set<uint64_t> ping_nonces_waiting;
+	uint64_t next_nonce;
+
 	const bool check_block_msghash;
 
 public:
@@ -37,7 +41,7 @@ public:
 				bool check_block_msghash_in=true)
 			: OutboundPersistentConnection(serverHostIn, serverPortIn, 10000000),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
-			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100), check_block_msghash(check_block_msghash_in)
+			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100), next_nonce(0xDEADBEEF), check_block_msghash(check_block_msghash_in)
 	{}
 
 protected:
@@ -51,6 +55,9 @@ public:
 	void receive_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx);
 	void receive_block(std::vector<unsigned char>& block);
 	void request_transaction(const std::vector<unsigned char>& txhash);
+
+	void send_ping();
+	bool check_all_pings_received();
 };
 
 #endif

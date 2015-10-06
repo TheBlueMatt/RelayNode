@@ -139,6 +139,12 @@ public:
 			conn->do_throttle_outbound();
 	}
 
+	void disconnect_from_outside(const char* reason) {
+		OutboundConnection* conn = (OutboundConnection*)connection.load();
+		if (conn)
+			conn->disconnect_from_outside(reason);
+	}
+
 protected:
 	void construction_done() { std::thread(do_connect, this).detach(); }
 

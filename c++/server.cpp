@@ -476,6 +476,10 @@ int main(const int argc, const char** argv) {
 						it++;
 				}
 			}
+			if (!trustedP2P->check_all_pings_received())
+				trustedP2P->disconnect_from_outside("Failed to receive pong");
+			else
+				trustedP2P->send_ping();
 			mempoolClient.keep_alive_ping();
 		}
 	}).detach();

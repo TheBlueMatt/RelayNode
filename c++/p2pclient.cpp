@@ -27,10 +27,16 @@ void P2PRelayer::send_message(const char* command, unsigned char* headerAndData,
 
 void P2PRelayer::on_disconnect() {
 	connected = 0;
+	std::lock_guard<std::mutex> lock(ping_mutex);
+	ping_nonces_waiting.clear();
 }
 
 void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect) {
 	connected = 0;
+	{
+		std::lock_guard<std::mutex> lock(ping_mutex);
+		ping_nonces_waiting.clear();
+	}
 
 	{
 		std::vector<unsigned char> version_msg(generate_version());
@@ -210,4 +216,17 @@ void P2PRelayer::request_transaction(const std::vector<unsigned char>& tx_hash) 
 	msg[sizeof(struct bitcoin_msg_header) + 1] = 1;
 	msg.insert(msg.end(), tx_hash.begin(), tx_hash.end());
 	send_message("getdata", &msg[0], msg.size() - sizeof(struct bitcoin_msg_header));
+}
+
+void P2PRelayer::send_ping() {
+	std::lock_guard<std::mutex> lock(ping_mutex);
+	next_nonce *= 0xDEADBEEF * (42 + ping_nonces_waiting.size());
+	std::vector<unsigned char> msg(sizeof(struct bitcoin_msg_header) + 8);
+	memcpy(&msg[sizeof(struct bitcoin_msg_header)], &next_nonce, 8);
+	send_message("ping", &msg[0], 8);
+}
+
+bool P2PRelayer::check_all_pings_received() {
+	std::lock_guard<std::mutex> lock(ping_mutex);
+	return ping_nonces_waiting.empty();
 }
