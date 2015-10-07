@@ -27,6 +27,7 @@ struct CTxMemPoolEntry {
 void RPCClient::net_process(const std::function<void(std::string)>& disconnect) {
 	connected = true;
 
+	uint8_t count = 0;
 	while (true) {
 		int content_length = -2;
 		bool close_after_read = false;
@@ -256,6 +257,9 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 			return a->feePerKb < b->feePerKb || (a->feePerKb == b->feePerKb && a->hexHash < b->hexHash);
 		};
 		std::make_heap(vectorToSort.begin(), vectorToSort.end(), comp);
+
+		uint64_t minFeePerKbSelected = 4000000000;
+		unsigned minFeePerKbTxnCount = 0;
 		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS)/10 && vectorToSort.size()) {
 			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 			CTxMemPoolEntry* e = vectorToSort.back();
@@ -270,8 +274,27 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 				if (!hex_str_to_reverse_vector(e->hexHash, hash) || hash.size() != 32)
 					return disconnect("got bad hash");
 				txn_selected.push_back(std::make_pair(hash, e->size));
+				if (e->feePerKb == minFeePerKbSelected)
+					minFeePerKbTxnCount++;
+				else if (e->feePerKb < minFeePerKbSelected) {
+					minFeePerKbSelected = e->feePerKb;
+					minFeePerKbTxnCount = 1;
+				}
 			}
 		}
+
+		unsigned minFeePerKbTxnSkipped = 0;
+		while (vectorToSort.size()) {
+			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), comp);
+			CTxMemPoolEntry* e = vectorToSort.back();
+			vectorToSort.pop_back();
+			if (e->feePerKb != minFeePerKbSelected)
+				break;
+			minFeePerKbTxnSkipped++;
+		}
+
+		if (++count == 0 && minFeePerKbTxnSkipped > 1 && minFeePerKbTxnCount > 1)
+			printf("WARNING: Skipped %u txn while accepting %u identical-fee txn\n", minFeePerKbTxnSkipped, minFeePerKbTxnCount);
 
 		txn_for_block_func(txn_selected, txn.size());
 		awaiting_response = false;
