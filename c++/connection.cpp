@@ -14,17 +14,18 @@
 #endif // !WIN32
 
 #include <unordered_map>
+#include <map>
 #include <set>
 
 #include "connection.h"
 
 #include "utils.h"
 
-
 class GlobalNetProcess {
 public:
 	std::mutex fd_map_mutex;
 	std::unordered_map<int, Connection*> fd_map;
+	std::map<uint64_t, std::function<void (void)> > actions_map;
 #ifndef WIN32
 	int pipe_write;
 #endif
@@ -44,7 +45,7 @@ public:
 		while (true) {
 #ifndef WIN32
 			timeout.tv_sec = 86400;
-			timeout.tv_usec = 20 * 1000;
+			timeout.tv_usec = 999999;
 #else
 			timeout.tv_sec = 0;
 			timeout.tv_usec = 1000;
@@ -72,6 +73,19 @@ public:
 							FD_SET(e.first, &fd_set_write);
 					}
 					max = std::max(e.first, max);
+				}
+
+				if (me->actions_map.size()) {
+					uint64_t now = epoch_millis_lu(std::chrono::steady_clock::now());
+					while (me->actions_map.size() && me->actions_map.begin()->first < now + 5) {
+						me->actions_map.begin()->second();
+						me->actions_map.erase(me->actions_map.begin());
+					}
+					if (me->actions_map.size()) {
+						uint64_t msec_out = me->actions_map.begin()->first - now;
+						timeout.tv_sec = std::min<long unsigned>(timeout.tv_sec, msec_out / 1000);
+						timeout.tv_usec = std::min<long unsigned>(timeout.tv_usec, (msec_out % 1000) * 1000);
+					}
 				}
 			}
 
@@ -378,6 +392,7 @@ void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
 
 	mutex_valid = 0;
 
+	on_disconnect_keepalive();
 	on_disconnect();
 
 	std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -403,4 +418,61 @@ void OutboundPersistentConnection::do_connect(OutboundPersistentConnection* me) 
 		me->connection.exchange((unsigned long)new_conn);
 	assert(old_val == 0);
 	new_conn->construction_done();
+}
+
+
+KeepaliveOutboundPersistentConnection::KeepaliveOutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn,
+		uint32_t ping_interval_msec_in, uint32_t max_outbound_buffer_size_in) :
+	OutboundPersistentConnection(serverHostIn, serverPortIn, max_outbound_buffer_size_in),
+	connected(false), next_nonce(0xDEADBEEF), ping_interval_msec(ping_interval_msec_in), scheduled(false) { }
+
+void KeepaliveOutboundPersistentConnection::schedule(bool needLock) {
+	uint64_t time = epoch_millis_lu(std::chrono::steady_clock::now()) + ping_interval_msec;
+
+	std::unique_lock<std::mutex> lock(processor.fd_map_mutex, std::defer_lock);
+	if (needLock)
+		lock.lock();
+
+	while (processor.actions_map.count(time))
+		time++;
+
+	processor.actions_map[time] = [&]() {
+		schedule(false);
+
+		{
+			std::lock_guard<std::mutex> lock2(ping_mutex);
+			if (!connected)
+				return;
+
+			if (ping_nonces_waiting.size())
+				return disconnect_from_outside("Remote host failed to respond to ping within required time");
+
+			next_nonce *= 0xDEADBEEF * (42 + ping_nonces_waiting.size());
+			ping_nonces_waiting.insert(next_nonce);
+		}
+		send_ping(next_nonce);
+	};
+}
+
+void KeepaliveOutboundPersistentConnection::on_connect_keepalive() {
+	std::lock_guard<std::mutex> lock(ping_mutex);
+	if (scheduled)
+		return;
+
+	scheduled = true;
+	connected = true;
+	ping_nonces_waiting.clear();
+
+	schedule(true);
+}
+
+void KeepaliveOutboundPersistentConnection::on_disconnect_keepalive() {
+	std::lock_guard<std::mutex> lock(ping_mutex);
+	connected = false;
+	ping_nonces_waiting.clear();
+}
+
+void KeepaliveOutboundPersistentConnection::pong_received(uint64_t nonce) {
+	std::lock_guard<std::mutex> lock(ping_mutex);
+	ping_nonces_waiting.erase(nonce);
 }

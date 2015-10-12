@@ -7,6 +7,7 @@
 #include <thread>
 #include <list>
 #include <vector>
+#include <set>
 #include <assert.h>
 
 #include "utils.h"
@@ -107,7 +108,7 @@ private:
 	class OutboundConnection : public Connection {
 	private:
 		OutboundPersistentConnection *parent;
-		void net_process(const std::function<void(std::string)>& disconnect) { parent->net_process(disconnect); }
+		void net_process(const std::function<void(std::string)>& disconnect) { parent->on_connect_keepalive(); parent->net_process(disconnect); }
 
 	public:
 		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
@@ -171,6 +172,34 @@ protected:
 private:
 	void reconnect(std::string disconnectReason); // Called only after DISCONNECT_COMPLETE in Connection, or before Connection::construction_done()
 	static void do_connect(OutboundPersistentConnection* me);
+
+	virtual void on_disconnect_keepalive() {}
+	virtual void on_connect_keepalive() {}
+	friend class KeepaliveOutboundPersistentConnection;
+};
+
+class KeepaliveOutboundPersistentConnection : public OutboundPersistentConnection {
+private:
+	std::mutex ping_mutex;
+	bool connected;
+	std::set<uint64_t> ping_nonces_waiting;
+	uint64_t next_nonce;
+
+	uint32_t ping_interval_msec;
+	bool scheduled;
+
+	void schedule(bool needLock);
+
+	void on_disconnect_keepalive();
+	void on_connect_keepalive();
+
+protected:
+	virtual void send_ping(uint64_t nonce)=0;
+	void pong_received(uint64_t nonce);
+
+public:
+	KeepaliveOutboundPersistentConnection(std::string serverHostIn, uint16_t serverPortIn,
+			uint32_t ping_interval_msec, uint32_t max_outbound_buffer_size_in=10000000);
 };
 
 #endif
