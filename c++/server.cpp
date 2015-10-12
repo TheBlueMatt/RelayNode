@@ -210,7 +210,7 @@ public:
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in,
 				bool check_block_msghash_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in, provide_headers_in, check_block_msghash_in)
+			P2PRelayer(serverHostIn, serverPortIn, 10000, provide_block_in, provide_transaction_in, provide_headers_in, check_block_msghash_in)
 		{ construction_done(); }
 
 private:
@@ -476,10 +476,6 @@ int main(const int argc, const char** argv) {
 						it++;
 				}
 			}
-			if (!trustedP2P->check_all_pings_received())
-				trustedP2P->disconnect_from_outside("Failed to receive pong");
-			else
-				trustedP2P->send_ping();
 			mempoolClient.keep_alive_ping();
 		}
 	}).detach();

@@ -32,7 +32,7 @@ public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in) :
-			P2PRelayer(serverHostIn, serverPortIn, provide_block_in, provide_transaction_in)
+			P2PRelayer(serverHostIn, serverPortIn, 30000, provide_block_in, provide_transaction_in)
 		{ construction_done(); }
 
 private:
