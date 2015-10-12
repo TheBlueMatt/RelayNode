@@ -1,5 +1,5 @@
 # all common objects that need to be build for all targets except for windows version
-common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o connection.o rpcclient.o ./crypto/sha2.o
+common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o connection.o ./crypto/sha2.o
 native_objs :=
 
 MINGW_PREFIX := i686-w64-mingw32
@@ -105,7 +105,7 @@ relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 
 relaynetworkserver: $(native_objs) $(common_objs) server.o
 
-relaynetworkmempoolserver: $(native_objs) $(common_objs) mempoolserver.o
+relaynetworkmempoolserver: $(native_objs) $(common_objs) rpcclient.o mempoolserver.o
 
 relaynetworkterminator: $(native_objs) $(common_objs) bitcoindterminator.o
 
