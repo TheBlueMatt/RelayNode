@@ -35,7 +35,7 @@
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
-class RelayNetworkClient : public OutboundPersistentConnection {
+class RelayNetworkClient : public KeepaliveOutboundPersistentConnection {
 private:
 	RELAY_DECLARE_CLASS_VARS
 
@@ -50,7 +50,8 @@ public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: OutboundPersistentConnection(serverHostIn, 8336), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
+		// Ping time(out) is ~ 10 seconds (5000*10*2 msec) - first ping will only happen, at the quickest, at half that
+			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_TXN_IN_FAS * OUTBOUND_THROTTLE_TIME_BETWEEN_MESSAGES * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected(false), compressor(false) {
 		construction_done();
 	}
@@ -143,9 +144,24 @@ private:
 				relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PONG_TYPE, htonl(8) };
 				memcpy(data, &pong_msg_header, sizeof(pong_msg_header));
 				maybe_do_send_bytes(data, 8 + sizeof(relay_msg_header));
+			} else if (header.type == PONG_TYPE) {
+				uint64_t nonce;
+				if (message_size != 8 || read_all((char*)&nonce, 8) < 8)
+					return disconnect("failed to read 8 byte ping message");
+
+				pong_received(nonce);
 			} else
 				return disconnect("got unknown message type");
 		}
+	}
+
+protected:
+	void send_ping(uint64_t nonce) {
+		relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PING_TYPE, htonl(8) };
+		std::vector<unsigned char> *msg = new std::vector<unsigned char>((unsigned char*)&pong_msg_header, ((unsigned char*)&pong_msg_header) + sizeof(pong_msg_header));
+		msg->resize(msg->size() + 8);
+		memcpy(&(*msg)[sizeof(pong_msg_header)], &nonce, 8);
+		maybe_do_send_bytes(std::shared_ptr<std::vector<unsigned char> >(msg));
 	}
 
 public:
