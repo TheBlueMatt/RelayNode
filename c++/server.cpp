@@ -163,6 +163,17 @@ private:
 					return disconnect("failed to read oob transaction data");
 
 				provide_transaction(this, tx);
+			} else if (header.type == PING_TYPE) {
+				char data[8];
+				if (message_size != 8 || read_all(data, 8) < 8)
+					return disconnect("failed to read 8 byte ping message");
+
+				relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PONG_TYPE, htonl(8) };
+
+				int token = get_send_mutex();
+				do_send_bytes((char*)&pong_msg_header, sizeof(pong_msg_header), token);
+				do_send_bytes(data, 8, token);
+				release_send_mutex(token);
 			} else
 				return disconnect("got unknown message type");
 		}

@@ -135,6 +135,14 @@ private:
 
 				compressor.recv_tx(tx);
 				provide_transaction(tx);
+			} else if (header.type == PING_TYPE) {
+				char data[8 + sizeof(relay_msg_header)];
+				if (message_size != 8 || read_all(&data[sizeof(relay_msg_header)], 8) < 8)
+					return disconnect("failed to read 8 byte ping message");
+
+				relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PONG_TYPE, htonl(8) };
+				memcpy(data, &pong_msg_header, sizeof(pong_msg_header));
+				maybe_do_send_bytes(data, 8 + sizeof(relay_msg_header));
 			} else
 				return disconnect("got unknown message type");
 		}
@@ -173,9 +181,10 @@ public:
 		}
 		auto compressed_block = std::get<0>(tuple);
 
-		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
 		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-		maybe_do_send_bytes((char*)&header, sizeof(header));
+		compressed_block->resize(compressed_block->size() + sizeof(header));
+		memcpy(&(*compressed_block)[compressed_block->size() - sizeof(header)], &header, sizeof(header));
+		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
 
 		printf(HASH_FORMAT" sent, size %lu with %lu bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)block.size(), (unsigned long)compressed_block->size());
 	}
