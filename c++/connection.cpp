@@ -62,7 +62,7 @@ public:
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					if (e.second->total_inbound_size < 65536)
+					if (e.second->total_inbound_size < 65536 || e.second->disconnectFlags & DISCONNECT_READS_DONE)
 						FD_SET(e.first, &fd_set_read);
 					if (e.second->total_waiting_size > 0) {
 						if (now < e.second->earliest_next_write) {
@@ -95,7 +95,7 @@ public:
 						if (count <= 0) {
 							remove_set.insert(e.first);
 							conn->sock_errno = errno;
-						} else {
+						} else if (!(conn->disconnectFlags & DISCONNECT_READS_DONE)) {
 							conn->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
 							conn->total_inbound_size += count;
 							conn->read_cv.notify_all();
@@ -256,6 +256,8 @@ void Connection::disconnect_from_outside(const char* reason) {
 }
 
 void Connection::disconnect(std::string reason) {
+	assert(std::this_thread::get_id() == user_thread->get_id());
+
 	if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED)
 		return;
 
@@ -264,7 +266,7 @@ void Connection::disconnect(std::string reason) {
 		shutdown(sock, SHUT_RDWR);
 	}
 
-	assert(std::this_thread::get_id() == user_thread->get_id());
+	disconnectFlags |= DISCONNECT_READS_DONE;
 
 	std::unique_lock<std::mutex> lock(read_mutex);
 	while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
@@ -313,6 +315,8 @@ void Connection::do_setup_and_read(Connection* me) {
 }
 
 ssize_t Connection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
+	assert(std::this_thread::get_id() == user_thread->get_id());
+
 	size_t total = 0;
 	std::chrono::system_clock::time_point stop_time;
 	if (max_sleep == millis_lu_type::max())

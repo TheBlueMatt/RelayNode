@@ -14,8 +14,9 @@
 enum DisconnectFlags {
 	DISCONNECT_STARTED = 1,
 	DISCONNECT_PRINT_AND_CLOSE = 2,
-	DISCONNECT_GLOBAL_THREAD_DONE = 4,
-	DISCONNECT_COMPLETE = 8,
+	DISCONNECT_READS_DONE = 4,
+	DISCONNECT_GLOBAL_THREAD_DONE = 8,
+	DISCONNECT_COMPLETE = 16,
 };
 
 class Connection {
@@ -74,7 +75,7 @@ public:
 
 protected:
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
-	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max());
+	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()); // Only allowed from within net_process
 
 	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
 		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
