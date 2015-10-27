@@ -18,9 +18,9 @@ struct CTxMemPoolEntry {
 	uint32_t size;
 	double prio;
 	uint32_t reqCount;
-	std::string hexHash;
+	std::vector<unsigned char> hash;
 	std::unordered_set<CTxMemPoolEntry*> setDeps;
-	CTxMemPoolEntry(uint64_t feeIn, uint32_t sizeIn, double prioIn, std::string hexHashIn, uint32_t reqCountIn) : feePerKb(feeIn * 1000 / sizeIn), size(sizeIn), prio(prioIn), reqCount(reqCountIn), hexHash(hexHashIn) {
+	CTxMemPoolEntry(uint64_t feeIn, uint32_t sizeIn, double prioIn, std::vector<unsigned char> hashIn, uint32_t reqCountIn) : feePerKb(feeIn * 1000 / sizeIn), size(sizeIn), prio(prioIn), reqCount(reqCountIn), hash(hashIn) {
 		//TODO: Parse hash?
 	}
 };
@@ -230,7 +230,11 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 					else if (tx_prio < 0)
 						return disconnect("Did not get transaction prio");
 
-					txn.emplace_back(tx_fee, tx_size, tx_prio, txHash, txDeps.size());
+					std::vector<unsigned char> hash;
+					if (!hex_str_to_reverse_vector(txHash, hash) || hash.size() != 32)
+						return disconnect("got bad hash");
+
+					txn.emplace_back(tx_fee, tx_size, tx_prio, hash, txDeps.size());
 					if (!hashToEntry.insert(std::make_pair(txHash, &txn.back())).second)
 						return disconnect("Duplicate transaction");
 
@@ -285,10 +289,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 						vectorToSort.push_back(dep);
 						std::push_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 					}
-				std::vector<unsigned char> hash;
-				if (!hex_str_to_reverse_vector(e->hexHash, hash) || hash.size() != 32)
-					return disconnect("got bad hash");
-				txn_selected.push_back(std::make_pair(hash, e->size));
+				txn_selected.push_back(std::make_pair(e->hash, e->size));
 				if (e->feePerKb == minFeePerKbSelected)
 					minFeePerKbTxnCount++;
 				else if (e->feePerKb < minFeePerKbSelected) {
