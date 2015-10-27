@@ -202,7 +202,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 							}
 						} else if (fieldString == "fee") {
 							try {
-								tx_fee = std::stod(std::string(resp.begin() + fieldValueStart, it));
+								tx_fee = uint64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
 							} catch (std::exception& e) {
 								return disconnect("transaction value could not be parsed");
 							}
