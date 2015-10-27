@@ -16,10 +16,11 @@ void RPCClient::on_disconnect() {
 struct CTxMemPoolEntry {
 	uint64_t feePerKb;
 	uint32_t size;
+	double prio;
 	uint32_t reqCount;
 	std::string hexHash;
 	std::unordered_set<CTxMemPoolEntry*> setDeps;
-	CTxMemPoolEntry(uint64_t feeIn, uint32_t sizeIn, std::string hexHashIn, uint32_t reqCountIn) : feePerKb(feeIn * 1000 / sizeIn), size(sizeIn), reqCount(reqCountIn), hexHash(hexHashIn) {
+	CTxMemPoolEntry(uint64_t feeIn, uint32_t sizeIn, double prioIn, std::string hexHashIn, uint32_t reqCountIn) : feePerKb(feeIn * 1000 / sizeIn), size(sizeIn), prio(prioIn), reqCount(reqCountIn), hexHash(hexHashIn) {
 		//TODO: Parse hash?
 	}
 };
@@ -111,7 +112,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 		// These are values/flags about the current status of the parser
 		int32_t stringStart = -1, fieldValueStart = -1;
 		std::string txHash, fieldString;
-		long tx_size = -1; uint64_t tx_fee = -1;
+		long tx_size = -1; uint64_t tx_fee = -1; double tx_prio = -1;
 		bool inTx = false, inFieldString = false, inFieldValue = false;
 		std::unordered_set<std::string> txDeps;
 
@@ -158,6 +159,12 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 							tx_fee = uint64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
 						} catch (std::exception& e) {
 							return disconnect("transaction value could not be parsed");
+						}
+					} else if (fieldString == "currentpriority") {
+						try {
+							tx_prio = std::stod(std::string(resp.begin() + fieldValueStart, it));
+						} catch (std::exception& e) {
+							return disconnect("transaction prio could not be parsed");
 						}
 					}
 				} else if (inTx)
@@ -206,6 +213,12 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 							} catch (std::exception& e) {
 								return disconnect("transaction value could not be parsed");
 							}
+						} else if (fieldString == "currentpriority") {
+							try {
+								tx_prio = std::stod(std::string(resp.begin() + fieldValueStart, it));
+							} catch (std::exception& e) {
+								return disconnect("transaction prio could not be parsed");
+							}
 						}
 					} else
 						return disconnect("Got unepxecpted }");
@@ -214,8 +227,10 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 						return disconnect("Did not get transaction size");
 					else if (tx_fee < 0)
 						return disconnect("Did not get transaction fee");
+					else if (tx_prio < 0)
+						return disconnect("Did not get transaction prio");
 
-					txn.emplace_back(tx_fee, tx_size, txHash, txDeps.size());
+					txn.emplace_back(tx_fee, tx_size, tx_prio, txHash, txDeps.size());
 					if (!hashToEntry.insert(std::make_pair(txHash, &txn.back())).second)
 						return disconnect("Duplicate transaction");
 
@@ -254,7 +269,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 
 		std::vector<std::pair<std::vector<unsigned char>, size_t> > txn_selected;
 		std::function<bool (const CTxMemPoolEntry* a, const CTxMemPoolEntry* b)> comp = [](const CTxMemPoolEntry* a, const CTxMemPoolEntry* b) {
-			return a->feePerKb < b->feePerKb || (a->feePerKb == b->feePerKb && a->hexHash < b->hexHash);
+			return a->feePerKb < b->feePerKb || (a->feePerKb == b->feePerKb && a->prio < b->prio);
 		};
 		std::make_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 
