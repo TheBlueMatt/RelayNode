@@ -328,9 +328,7 @@ int main(const int argc, const char** argv) {
 							}
 						}
 						if (insane) {
-							for (unsigned int i = 0; i < fullhash.size(); i++)
-								printf("%02x", fullhash[fullhash.size() - i - 1]);
-							printf(" INSANE %s TRUSTEDP2P\n", insane);
+							printf(HASH_FORMAT" INSANE %s TRUSTEDP2P\n", HASH_PRINT(&fullhash[0]), insane);
 							return;
 						} else
 							localP2P->receive_block(bytes);
