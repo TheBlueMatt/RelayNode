@@ -50,7 +50,7 @@ public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-		// Ping time(out) is ~ 10 seconds (5000*10*2 msec) - first ping will only happen, at the quickest, at half that
+		// Ping time(out) is 20 seconds (5000*20*2 msec) - first ping will only happen, at the quickest, at half that
 			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_TXN_IN_FAS * OUTBOUND_THROTTLE_TIME_BETWEEN_MESSAGES * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected(false), compressor(false) {
 		construction_done();
@@ -120,9 +120,7 @@ private:
 				time_t now = time(NULL);
 				gmtime_r(&now, &tm);
 				printf("[%d-%02d-%02d %02d:%02d:%02d+00] ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-				for (unsigned int i = 0; i < fullhash.size(); i++)
-					printf("%02x", fullhash[fullhash.size() - i - 1]);
-				printf(" recv'd, size %lu with %u bytes on the wire\n", (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
+				printf(HASH_FORMAT" recv'd, size %lu with %u bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
 				if (!compressor.maybe_recv_tx_of_size(message_size, true))
