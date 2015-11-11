@@ -55,8 +55,6 @@ public:
 					{
 						std::lock_guard<std::mutex> lock(dedup_mutex);
 						for (FlaggedArraySet* fas : allArraySets) {
-							if (fas->allowDups)
-								continue;
 							if (!fas->mutex.try_lock())
 								continue;
 							std::lock_guard<WaitCountMutex> lock(fas->mutex, std::adopt_lock);
@@ -83,8 +81,6 @@ public:
 					{
 						std::lock_guard<std::mutex> lock(dedup_mutex);
 						for (FlaggedArraySet* fas : allArraySets) {
-							if (fas->allowDups)
-								continue;
 							if (!fas->mutex.try_lock())
 								continue;
 							std::lock_guard<WaitCountMutex> lock(fas->mutex, std::adopt_lock);
@@ -135,8 +131,8 @@ public:
 
 static Deduper* deduper;
 
-FlaggedArraySet::FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn) :
-		maxSize(maxSizeIn), backingMap(maxSize), allowDups(allowDupsIn) {
+FlaggedArraySet::FlaggedArraySet(unsigned int maxSizeIn) :
+		maxSize(maxSizeIn), backingMap(maxSize) {
 	clear();
 	if (!deduper)
 		deduper = new Deduper();
@@ -149,8 +145,8 @@ FlaggedArraySet::~FlaggedArraySet() {
 }
 
 
-ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash) :
-	flag(flagIn), allowDups(allowDupsIn), elem(elemIn)
+ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool setHash) :
+	flag(flagIn), elem(elemIn)
 {
 	if (setHash) {
 		elemHash = std::make_shared<std::vector<unsigned char> >(32);
@@ -159,14 +155,12 @@ ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& ele
 }
 ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t) :
 	elemHash(elemHashIn) {}
-ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, bool flagIn, bool allowDupsIn) :
-	flag(flagIn), allowDups(allowDupsIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
+ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, bool flagIn) :
+	flag(flagIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
 
 bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
 	if ((elem && o.elem) || (elemHash && o.elemHash)) {
 		bool hashSet = o.elemHash && elemHash;
-		if (allowDups)
-			return (elem && o.elem && o.elem == elem) || (hashSet && o.elemHash == elemHash);
 		return o.elem == elem ||
 			(hashSet && *o.elemHash == *elemHash) ||
 			(!hashSet && *o.elem == *elem);
@@ -279,7 +273,7 @@ inline void FlaggedArraySet::cleanup_late_remove() const {
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
-	return backingMap.count(ElemAndFlag(e, false, allowDups, false));
+	return backingMap.count(ElemAndFlag(e, false, false));
 }
 
 bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
@@ -294,7 +288,7 @@ bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
 }
 
 void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag) {
-	ElemAndFlag elem(e, flag, allowDups, true);
+	ElemAndFlag elem(e, flag, true);
 
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
@@ -319,7 +313,7 @@ int FlaggedArraySet::remove(const std::vector<unsigned char>::const_iterator& st
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
 
-	auto it = backingMap.find(ElemAndFlag(start, end, false, allowDups));
+	auto it = backingMap.find(ElemAndFlag(start, end, false));
 	if (it == backingMap.end())
 		return -1;
 

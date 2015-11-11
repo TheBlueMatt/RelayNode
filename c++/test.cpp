@@ -137,11 +137,10 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	}
 
 	unsigned int i = 0;
-	unsigned int oversize_txn = 0;
 	sender.for_each_sent_tx([&](std::shared_ptr<std::vector<unsigned char> > tx) {
-		ssize_t index = std::max((ssize_t)0, (ssize_t)txVectors.size() - 5025) + i++;
-		if (txVectors[index]->size() > MAX_RELAY_OVERSIZE_TRANSACTION_BYTES || (txVectors[index]->size() > MAX_RELAY_TRANSACTION_BYTES && oversize_txn++ >= MAX_EXTRA_OVERSIZE_TRANSACTIONS))
-			index = std::max((ssize_t)0, (ssize_t)txVectors.size() - 5025) + i++;
+		ssize_t index = std::max((ssize_t)0, (ssize_t)txVectors.size() - MAX_TXN_IN_FAS) + i++;
+		if (txVectors[index]->size() > MAX_RELAY_TRANSACTION_BYTES)
+			index = std::max((ssize_t)0, (ssize_t)txVectors.size() - MAX_TXN_IN_FAS) + i++;
 		if (*tx != *txVectors[index]) {
 			printf("for_each_sent_tx was not in order!\n");
 			exit(6);

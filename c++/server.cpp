@@ -29,6 +29,9 @@
 static const char* HOST_SPONSOR;
 
 
+static const std::map<std::string, int16_t> compressor_types = {{std::string("sponsor printer"), 1}, {std::string("spammy memeater"), 0}, {std::string("the blocksize"), 1}};
+
+
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
@@ -48,6 +51,7 @@ private:
 
 public:
 	time_t lastDupConnect = 0;
+	std::atomic<int16_t> compressor_type;
 
 	RelayNetworkClient(int sockIn, std::string hostIn,
 						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
@@ -55,7 +59,7 @@ public:
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
 			: Connection(sockIn, hostIn, NULL), connected(0),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
-			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false) // compressor may be exchanged if "toucan twink"
+			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }
 
 private:
@@ -84,20 +88,35 @@ private:
 				return disconnect("got message too large");
 
 			if (header.type == VERSION_TYPE) {
-				char data[message_size];
+				char data[message_size + 1];
 				if (read_all(data, message_size) < (int64_t)(message_size))
 					return disconnect("failed to read version message");
 
-				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size)))) {
+				for (uint32_t i = 0; i < message_size; i++)
+					if (data[i] > 'z' && data[i] < 'a' && data[i] != ' ')
+						return disconnect("bogus version string");
+				data[message_size] = 0;
+
+				std::string their_version(data);
+
+				if (their_version != VERSION_STRING) {
 					relay_msg_header version_header = { RELAY_MAGIC_BYTES, MAX_VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
 					do_send_bytes((char*)&version_header, sizeof(version_header));
 					do_send_bytes(VERSION_STRING, strlen(VERSION_STRING));
+				}
 
-					if (!strncmp("toucan twink", data, std::min(sizeof("toucan twink"), size_t(message_size))))
-						compressor = RelayNodeCompressor(true);
-					else if (strncmp("the blocksize", data, std::min(sizeof("the blocksize"), size_t(message_size))))
-						return disconnect("unknown version string");
-				} else
+				std::map<std::string, int16_t>::const_iterator it = compressor_types.find(their_version);
+				if (it == compressor_types.end())
+					return disconnect("unknown version string");
+
+				compressor_type = it->second;
+
+				if (their_version == "spammy memeater")
+					compressor = RelayNodeCompressor(false);
+				else
+					compressor = RelayNodeCompressor(true);
+
+				if (their_version != "the blocksize")
 					sendSponsor = true;
 
 				relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(message_size) };
@@ -202,18 +221,6 @@ public:
 	}
 };
 
-class RelayNetworkCompressor : public RelayNodeCompressor {
-public:
-	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
-
-	void relay_node_connected(RelayNetworkClient* client, int token) {
-		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
-			client->receive_transaction(tx_to_msg(tx, false, false), token);
-			client->receive_transaction(tx, token);
-		});
-	}
-};
-
 class P2PClient : public P2PRelayer {
 public:
 	P2PClient(const char* serverHostIn, uint16_t serverPortIn,
@@ -232,6 +239,32 @@ private:
 		return std::vector<unsigned char>((unsigned char*)&version_msg, (unsigned char*)&version_msg + sizeof(version_msg));
 	}
 };
+
+
+class RelayNetworkCompressor : public RelayNodeCompressor {
+public:
+	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
+	RelayNetworkCompressor(bool useFlagsAndSmallerMax) : RelayNodeCompressor(useFlagsAndSmallerMax) {}
+
+	void relay_node_connected(RelayNetworkClient* client, int token) {
+		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
+			client->receive_transaction(tx_to_msg(tx, false, false), token);
+			client->receive_transaction(tx, token);
+		});
+	}
+};
+
+#define COMPRESSOR_TYPES 2
+static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
+class CompressorInit {
+public:
+	CompressorInit() {
+		compressors[0] = RelayNetworkCompressor(false);
+		compressors[1] = RelayNetworkCompressor(true);
+	}
+};
+static CompressorInit init;
+
 
 class MempoolClient : public OutboundPersistentConnection {
 private:
@@ -260,7 +293,6 @@ public:
 
 
 
-RelayNetworkCompressor compressor;
 
 int main(const int argc, const char** argv) {
 	if (argc < 5) {
@@ -302,6 +334,27 @@ int main(const int argc, const char** argv) {
 	std::mutex txn_mutex;
 	mruset<std::vector<unsigned char> > txnWaitingToBroadcast(MAX_TXN_IN_FAS);
 
+	const std::function<std::pair<const char*, size_t> (const std::vector<unsigned char>&, const std::vector<unsigned char>&, bool)> do_relay =
+		[&](const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& bytes, bool checkMerkle) {
+			std::lock_guard<std::mutex> lock(map_mutex);
+			size_t ret;
+			for (uint16_t i = 0; i < COMPRESSOR_TYPES; i++) {
+				auto tuple = compressors[i].maybe_compress_block(fullhash, bytes, checkMerkle);
+				const char* insane = std::get<1>(tuple);
+				if (!insane) {
+					auto block = std::get<0>(tuple);
+					for (const auto& client : clientMap) {
+						if (!client.second->getDisconnectFlags() && client.second->compressor_type == i)
+							client.second->receive_block(block);
+					}
+					if (i == 0)
+						ret = block->size();
+				} else
+					return std::make_pair(insane, (size_t)0);
+			}
+			return std::make_pair((const char*)0, ret);
+		};
+
 	trustedP2P = new P2PClient(argv[1], std::stoul(argv[2]),
 					[&](std::vector<unsigned char>& bytes,  const std::chrono::system_clock::time_point& read_start) {
 						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
@@ -312,30 +365,16 @@ int main(const int argc, const char** argv) {
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
-						const char* insane;
-						size_t bytes_sent = 0;
-						{
-							std::lock_guard<std::mutex> lock(map_mutex);
-							auto tuple = compressor.maybe_compress_block(fullhash, bytes, false);
-							insane = std::get<1>(tuple);
-							if (!insane) {
-								auto block = std::get<0>(tuple);
-								for (const auto& client : clientMap) {
-									if (!client.second->getDisconnectFlags())
-										client.second->receive_block(block);
-								}
-								bytes_sent = block->size();
-							}
-						}
-						if (insane) {
-							printf(HASH_FORMAT" INSANE %s TRUSTEDP2P\n", HASH_PRINT(&fullhash[0]), insane);
+						std::pair<const char*, size_t> relay_res = do_relay(fullhash, bytes, false);
+						if (relay_res.first) {
+							printf(HASH_FORMAT" INSANE %s TRUSTEDP2P\n", HASH_PRINT(&fullhash[0]), relay_res.first);
 							return;
 						} else
 							localP2P->receive_block(bytes);
 
 						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
 						printf(HASH_FORMAT" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]), epoch_millis_lu(send_start), argv[1],
-														bytes.size(), bytes_sent, bytes.size(),
+														bytes.size(), relay_res.second, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
@@ -347,13 +386,19 @@ int main(const int argc, const char** argv) {
 								return;
 						}
 						std::lock_guard<std::mutex> lock(map_mutex);
-						auto tx = compressor.get_relay_transaction(bytes);
-						if (tx.use_count()) {
-							for (const auto& client : clientMap) {
-								if (!client.second->getDisconnectFlags())
-									client.second->receive_transaction(tx);
+						bool sentToLocal = false;
+						for (uint16_t i = 0; i < COMPRESSOR_TYPES; i++) {
+							auto tx = compressors[i].get_relay_transaction(bytes);
+							if (tx.use_count()) {
+								for (const auto& client : clientMap) {
+									if (!client.second->getDisconnectFlags() && client.second->compressor_type == i)
+										client.second->receive_transaction(tx);
+								}
+								if (!sentToLocal) {
+									localP2P->receive_transaction(bytes);
+									sentToLocal = true;
+								}
 							}
-							localP2P->receive_transaction(bytes);
 						}
 					},
 					[&](std::vector<unsigned char>& headers) {
@@ -369,17 +414,17 @@ int main(const int argc, const char** argv) {
 
 								std::vector<unsigned char> fullhash(32);
 								getblockhash(fullhash, headers, it - 81 - headers.begin());
-								compressor.block_sent(fullhash);
+								compressors[0].block_sent(fullhash);
 							}
 
-							printf("Added headers from trusted peers, seen %u blocks\n", compressor.blocks_sent());
+							printf("Added headers from trusted peers, seen %u blocks\n", compressors[0].blocks_sent());
 						} catch (read_exception) { }
 					}, true);
 
 	MempoolClient mempoolClient(argv[1], std::stoul(argv[3]),
 					[&](std::vector<unsigned char> txn) {
 						std::lock_guard<std::mutex> lock(map_mutex);
-						if (!compressor.was_tx_sent(&txn[0])) {
+						if (!compressors[0].was_tx_sent(&txn[0])) {
 							std::lock_guard<std::mutex> lock(txn_mutex);
 							txnWaitingToBroadcast.insert(txn);
 							trustedP2P->request_transaction(txn);
@@ -396,23 +441,9 @@ int main(const int argc, const char** argv) {
 						std::vector<unsigned char> fullhash(32);
 						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
 
-						const char* insane;
-						size_t bytes_sent = 0;
-						{
-							std::lock_guard<std::mutex> lock(map_mutex);
-							auto tuple = compressor.maybe_compress_block(fullhash, bytes, true);
-							insane = std::get<1>(tuple);
-							if (!insane) {
-								auto block = std::get<0>(tuple);
-								for (const auto& client : clientMap) {
-									if (!client.second->getDisconnectFlags())
-										client.second->receive_block(block);
-								}
-								bytes_sent = block->size();
-							}
-						}
-						if (insane) {
-							printf(HASH_FORMAT" INSANE %s LOCALP2P\n", HASH_PRINT(&fullhash[0]), insane);
+						std::pair<const char*, size_t> relay_res = do_relay(fullhash, bytes, true);
+						if (relay_res.first) {
+							printf(HASH_FORMAT" INSANE %s LOCALP2P\n", HASH_PRINT(&fullhash[0]), relay_res.first);
 							return;
 						} else
 							localP2P->receive_block(bytes);
@@ -422,7 +453,7 @@ int main(const int argc, const char** argv) {
 						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
 						printf(HASH_FORMAT" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]),
 														epoch_millis_lu(send_start), "127.0.0.1",
-														bytes.size(), bytes_sent, bytes.size(),
+														bytes.size(), relay_res.second, bytes.size(),
 														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
 					},
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
@@ -434,31 +465,16 @@ int main(const int argc, const char** argv) {
 			if (bytes->size() < sizeof(struct bitcoin_msg_header) + 80)
 				return (size_t)0;
 
-			const char* insane;
-			size_t bytes_sent = 0;
-			{
-				std::lock_guard<std::mutex> lock(map_mutex);
-				// Merkle tree checking was already done in decompress_relay_block
-				auto tuple = compressor.maybe_compress_block(fullhash, *bytes, false);
-				insane = std::get<1>(tuple);
-				if (!insane) {
-					auto block = std::get<0>(tuple);
-					for (const auto& client : clientMap) {
-						if (!client.second->getDisconnectFlags())
-							client.second->receive_block(block);
-					}
-					bytes_sent = block->size();
-				}
-			}
-			if (insane) {
-				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&fullhash[0]), insane, from->host.c_str());
-				return bytes_sent;
+			std::pair<const char*, size_t> relay_res = do_relay(fullhash, *bytes, false);
+			if (relay_res.first) {
+				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&fullhash[0]), relay_res.first, from->host.c_str());
+				return relay_res.second;
 			} else
 				localP2P->receive_block(*bytes);
 
 			trustedP2P->receive_block(*bytes);
 
-			return bytes_sent;
+			return relay_res.second;
 		};
 
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
@@ -468,7 +484,8 @@ int main(const int argc, const char** argv) {
 
 	std::function<void (RelayNetworkClient*, int token)> connected =
 		[&](RelayNetworkClient* client, int token) {
-			compressor.relay_node_connected(client, token);
+			assert(client->compressor_type >= 0 && client->compressor_type < COMPRESSOR_TYPES);
+			compressors[client->compressor_type].relay_node_connected(client, token);
 		};
 
 	std::thread([&](void) {

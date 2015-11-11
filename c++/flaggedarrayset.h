@@ -14,12 +14,11 @@
  ******************************/
 struct ElemAndFlag {
 	bool flag;
-	bool allowDups;
 	std::shared_ptr<std::vector<unsigned char> > elem, elemHash;
 	std::vector<unsigned char>::const_iterator elemBegin, elemEnd;
-	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool allowDupsIn, bool setHash);
+	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool setHash);
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t);
-	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, bool flagIn, bool allowDupsIn);
+	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, bool flagIn);
 	bool operator == (const ElemAndFlag& o) const;
 };
 namespace std {
@@ -36,7 +35,6 @@ private:
 	uint64_t offset;
 	std::unordered_map<ElemAndFlag, uint64_t> backingMap;
 	std::vector<std::unordered_map<ElemAndFlag, uint64_t>::iterator> indexMap;
-	bool allowDups;
 
 	// The mutex is only used by memory deduper, FlaggedArraySet is not thread-safe
 	// It is taken by changes to backingMap, any touches to backingMap in the deduper thread, or any touches to elem
@@ -49,7 +47,7 @@ private:
 
 public:
 	void clear();
-	FlaggedArraySet(unsigned int maxSizeIn, bool allowDupsIn);
+	FlaggedArraySet(unsigned int maxSizeIn);
 	~FlaggedArraySet();
 
 	size_t size() const { return backingMap.size() - to_be_removed.size(); }
@@ -63,7 +61,6 @@ public:
 		offset = o.offset;
 		backingMap = o.backingMap;
 		indexMap = o.indexMap;
-		allowDups = o.allowDups;
 		return *this;
 	}
 

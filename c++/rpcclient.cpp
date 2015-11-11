@@ -279,11 +279,11 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 
 		uint64_t minFeePerKbSelected = 4000000000;
 		unsigned minFeePerKbTxnCount = 0;
-		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS - MAX_EXTRA_OVERSIZE_TRANSACTIONS)/10 && vectorToSort.size()) {
+		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS)/10 && vectorToSort.size()) {
 			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 			CTxMemPoolEntry* e = vectorToSort.back();
 			vectorToSort.pop_back();
-			if (e->size <= MAX_RELAY_OVERSIZE_TRANSACTION_BYTES) {
+			if (e->size <= MAX_RELAY_TRANSACTION_BYTES) {
 				for (CTxMemPoolEntry* dep : e->setDeps)
 					if ((--dep->reqCount) == 0) {
 						vectorToSort.push_back(dep);
