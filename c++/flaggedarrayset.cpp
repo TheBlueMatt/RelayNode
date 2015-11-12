@@ -256,7 +256,7 @@ void FlaggedArraySet::remove_(size_t index) {
 	indexMap.erase(indexMap.begin() + index);
 }
 
-inline void FlaggedArraySet::cleanup_late_remove() const {
+void FlaggedArraySet::cleanup_late_remove() const {
 	assert(sanity_check());
 	if (to_be_removed.size()) {
 		for (unsigned int i = 0; i < to_be_removed.size(); i++) {
