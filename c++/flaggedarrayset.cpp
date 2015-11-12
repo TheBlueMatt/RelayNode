@@ -131,8 +131,8 @@ public:
 
 static Deduper* deduper;
 
-FlaggedArraySet::FlaggedArraySet(unsigned int maxSizeIn) :
-		maxSize(maxSizeIn), backingMap(maxSize) {
+FlaggedArraySet::FlaggedArraySet(uint64_t maxSizeIn, uint64_t maxFlagCountIn) :
+		maxSize(maxSizeIn), maxFlagCount(maxFlagCountIn), backingMap(maxSize) {
 	clear();
 	if (!deduper)
 		deduper = new Deduper();
@@ -145,7 +145,7 @@ FlaggedArraySet::~FlaggedArraySet() {
 }
 
 
-ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool setHash) :
+ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, uint32_t flagIn, bool setHash) :
 	flag(flagIn), elem(elemIn)
 {
 	if (setHash) {
@@ -155,7 +155,7 @@ ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& ele
 }
 ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t) :
 	elemHash(elemHashIn) {}
-ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, bool flagIn) :
+ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, uint32_t flagIn) :
 	flag(flagIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
 
 bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
@@ -214,25 +214,26 @@ bool FlaggedArraySet::sanity_check() const {
 	assert(backingMap.size() == size);
 	assert(this->size() == size - to_be_removed.size());
 
-	size_t expected_flag_count = 0;
+	uint64_t expected_flag_count = 0;
 	for (uint64_t i = 0; i < size; i++) {
 		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(i);
 		assert(it != backingMap.end());
 		assert(it->second == i + offset);
 		assert(backingMap.find(it->first) == it);
 		assert(&backingMap.find(it->first)->first == &it->first);
-		if (it->first.flag)
-			expected_flag_count++;
+		expected_flag_count += it->first.flag;
 	}
 	assert(expected_flag_count == flag_count);
 
-	ssize_t expected_flags_removed = 0;
+	uint64_t expected_flags_removed = 0;
 	for (size_t i = 0; i < to_be_removed.size(); i++) {
 		std::unordered_map<ElemAndFlag, uint64_t>::iterator it = indexMap.at(to_be_removed[i] + i);
-		if (it->first.flag)
-			expected_flags_removed++;
+		expected_flags_removed += it->first.flag;
 	}
 	assert(expected_flags_removed == flags_to_remove);
+
+	assert(this->size() <= maxSize);
+	assert(flagCount() <= maxFlagCount);
 
 	return expected_flags_removed == flags_to_remove && expected_flag_count == flag_count;
 }
@@ -240,8 +241,7 @@ bool FlaggedArraySet::sanity_check() const {
 void FlaggedArraySet::remove_(size_t index) {
 	auto& rm = indexMap[index];
 	assert(index < indexMap.size());
-	if (rm->first.flag)
-		flag_count--;
+	flag_count -= rm->first.flag;
 
 	size_t size = backingMap.size();
 
@@ -273,7 +273,7 @@ inline void FlaggedArraySet::cleanup_late_remove() const {
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
-	return backingMap.count(ElemAndFlag(e, false, false));
+	return backingMap.count(ElemAndFlag(e, 0, false));
 }
 
 bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
@@ -287,7 +287,7 @@ bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
 	return false;
 }
 
-void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag) {
+void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e, uint32_t flag) {
 	ElemAndFlag elem(e, flag, true);
 
 	std::lock_guard<WaitCountMutex> lock(mutex);
@@ -298,13 +298,12 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 		return;
 
 	indexMap.push_back(res.first);
+	flag_count += flag;
 
 	assert(size() <= maxSize + 1);
-	while (size() > maxSize)
+	assert(flagCount() <= maxFlagCount + flag);
+	while (size() > maxSize || flagCount() > maxFlagCount)
 		remove_(0);
-
-	if (flag)
-		flag_count++;
 
 	assert(sanity_check());
 }
@@ -313,7 +312,7 @@ int FlaggedArraySet::remove(const std::vector<unsigned char>::const_iterator& st
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
 
-	auto it = backingMap.find(ElemAndFlag(start, end, false));
+	auto it = backingMap.find(ElemAndFlag(start, end, 0));
 	if (it == backingMap.end())
 		return -1;
 
@@ -324,7 +323,7 @@ int FlaggedArraySet::remove(const std::vector<unsigned char>::const_iterator& st
 	return res;
 }
 
-bool FlaggedArraySet::remove(int index, std::vector<unsigned char>& elemRes, unsigned char* elemHashRes) {
+bool FlaggedArraySet::remove(unsigned int index, std::vector<unsigned char>& elemRes, unsigned char* elemHashRes) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 
 	if (index < max_remove)
@@ -342,7 +341,7 @@ bool FlaggedArraySet::remove(int index, std::vector<unsigned char>& elemRes, uns
 	if (index >= max_remove) {
 		to_be_removed.push_back(index);
 		max_remove = index;
-		if (e.flag) flags_to_remove++;
+		flags_to_remove += e.flag;
 	} else {
 		cleanup_late_remove();
 		remove_(index);

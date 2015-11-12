@@ -120,9 +120,11 @@ public:
 							continue;
 						bool got_send_mutex = conn->send_mutex.try_lock();
 						std::lock_guard<std::mutex> lock(conn->send_bytes_mutex);
+						size_t message_written_size = 0;
 						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
 							auto& msg = conn->outbound_primary_queue.front();
 							assert(msg->size() - conn->primary_writepos > 0);
+							message_written_size = msg->size();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
 							if (count <= 0) {
 								remove_set.insert(e.first);
@@ -139,6 +141,7 @@ public:
 							assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
 							auto& msg = conn->outbound_secondary_queue.front();
 							assert(msg->size() - conn->secondary_writepos > 0);
+							message_written_size = msg->size();
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
 							if (count <= 0) {
 								remove_set.insert(e.first);
@@ -158,7 +161,7 @@ public:
 							conn->send_mutex.unlock();
 						}
 						if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
-							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::milliseconds(OUTBOUND_THROTTLE_TIME_BETWEEN_MESSAGES);
+							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::microseconds(1000 * message_written_size / OUTBOUND_THROTTLE_BYTES_PER_MS);
 					}
 				}
 

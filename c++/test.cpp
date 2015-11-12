@@ -138,15 +138,12 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 
 	unsigned int i = 0;
 	sender.for_each_sent_tx([&](std::shared_ptr<std::vector<unsigned char> > tx) {
-		ssize_t index = std::max((ssize_t)0, (ssize_t)txVectors.size() - MAX_TXN_IN_FAS) + i++;
-		if (txVectors[index]->size() > MAX_RELAY_TRANSACTION_BYTES)
-			index = std::max((ssize_t)0, (ssize_t)txVectors.size() - MAX_TXN_IN_FAS) + i++;
-		if (*tx != *txVectors[index]) {
+		if (*tx != *txVectors[i]) {
 			printf("for_each_sent_tx was not in order!\n");
 			exit(6);
 		}
 		std::vector<unsigned char> tx_data, tx_hash(32);
-		if (!tester.send_tx_cache.remove(0, tx_data, &tx_hash[0]) || tx_data != *txVectors[index]) {
+		if (!tester.send_tx_cache.remove(0, tx_data, &tx_hash[0]) || tx_data != *txVectors[i++]) {
 			printf("for_each_sent_tx output did not match remove(0)\n");
 			exit(7);
 		}

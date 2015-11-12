@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
 
 	std::mutex mempool_mutex;
 	std::chrono::steady_clock::time_point last_mempool_request(std::chrono::steady_clock::time_point::min());
-	mruset<std::vector<unsigned char> > mempool(MAX_TXN_IN_FAS);
+	vectormruset mempool(MAX_FAS_TOTAL_SIZE);
 
 	uint8_t i = 0;
 	uint64_t bytes_sent = 0;
@@ -83,18 +83,18 @@ int main(int argc, char** argv) {
 						{
 							std::lock_guard<std::mutex> lock(mempool_mutex);
 
-							// 50 txn @ 10k/tx per sec == 500Kbps
-							unsigned int txn_gathered = 0, txn_to_gather = 50*to_millis_lu(std::chrono::steady_clock::now() - last_mempool_request)/1000;
+							// 62500 bytes per sec == 500Kbps
+							uint64_t size_gathered = 0, size_to_gather = 62500*to_millis_lu(std::chrono::steady_clock::now() - last_mempool_request)/1000;
 							last_mempool_request = std::chrono::steady_clock::now();
 
 							for (const auto& txn : txn_list) {
 								if (mempool.insert(txn.first).second) {
 									new_txn.insert(txn.first);
-									txn_gathered++;
+									size_gathered += txn.second;
 									bytes_sent += txn.second;
 									txn_sent++;
 								}
-								if (txn_gathered >= txn_to_gather)
+								if (size_gathered >= size_to_gather)
 									break;
 							}
 						}

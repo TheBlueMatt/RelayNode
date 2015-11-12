@@ -29,18 +29,19 @@ class RelayNodeCompressor {
 	RELAY_DECLARE_CLASS_VARS
 
 private:
-	bool useFlags;
+	bool useOldFlags;
 	FlaggedArraySet send_tx_cache, recv_tx_cache;
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	std::mutex mutex;
 
 public:
-	RelayNodeCompressor(bool useFlagsAndSmallerMax)
-		: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, useFlags(useFlagsAndSmallerMax),
-		  send_tx_cache(useFlagsAndSmallerMax ? MAX_TXN_IN_FAS + OLD_MAX_EXTRA_OVERSIZE_TRANSACTIONS : MAX_TXN_IN_FAS),
-		  recv_tx_cache(useFlagsAndSmallerMax ? MAX_TXN_IN_FAS + OLD_MAX_EXTRA_OVERSIZE_TRANSACTIONS : MAX_TXN_IN_FAS),
+	RelayNodeCompressor(bool useOldFlagsIn)
+		: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, useOldFlags(useOldFlagsIn),
+		  send_tx_cache(useOldFlagsIn ? OLD_MAX_TXN_IN_FAS : 65000, useOldFlagsIn ? uint32_t(-1) : MAX_FAS_TOTAL_SIZE),
+		  recv_tx_cache(useOldFlagsIn ? OLD_MAX_TXN_IN_FAS : 65000, useOldFlagsIn ? uint32_t(-1) : MAX_FAS_TOTAL_SIZE),
 		  blocksAlreadySeen(1000000) {}
 	RelayNodeCompressor& operator=(const RelayNodeCompressor& c) {
+		useOldFlags = c.useOldFlags;
 		send_tx_cache = c.send_tx_cache;
 		recv_tx_cache = c.recv_tx_cache;
 		blocksAlreadySeen = c.blocksAlreadySeen;

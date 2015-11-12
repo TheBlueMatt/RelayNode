@@ -332,7 +332,7 @@ int main(const int argc, const char** argv) {
 	// the client and because that is the case we want to optimize for)
 
 	std::mutex txn_mutex;
-	mruset<std::vector<unsigned char> > txnWaitingToBroadcast(MAX_TXN_IN_FAS);
+	vectormruset txnWaitingToBroadcast(MAX_FAS_TOTAL_SIZE);
 
 	const std::function<std::pair<const char*, size_t> (const std::vector<unsigned char>&, const std::vector<unsigned char>&, bool)> do_relay =
 		[&](const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& bytes, bool checkMerkle) {

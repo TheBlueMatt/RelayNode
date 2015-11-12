@@ -50,8 +50,8 @@ public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-		// Ping time(out) is 20 seconds (5000*20*2 msec) - first ping will only happen, at the quickest, at half that
-			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_TXN_IN_FAS * OUTBOUND_THROTTLE_TIME_BETWEEN_MESSAGES * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
+		// Ping time(out) is 40 seconds (5000000/250*2 msec) - first ping will only happen, at the quickest, at half that
+			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_FAS_TOTAL_SIZE / OUTBOUND_THROTTLE_BYTES_PER_MS * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected(false), compressor(false) {
 		construction_done();
 	}

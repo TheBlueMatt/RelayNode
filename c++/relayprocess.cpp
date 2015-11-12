@@ -10,14 +10,20 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::get_relay_tran
 	if (send_tx_cache.contains(tx))
 		return std::shared_ptr<std::vector<unsigned char> >();
 
-	if (!useFlags && tx->size() > MAX_RELAY_TRANSACTION_BYTES)
-		return std::shared_ptr<std::vector<unsigned char> >();
+	if (!useOldFlags) {
+		if (tx->size() > MAX_RELAY_TRANSACTION_BYTES)
+			return std::shared_ptr<std::vector<unsigned char> >();
+		send_tx_cache.add(tx, tx->size());
 
-	if (useFlags && tx->size() > OLD_MAX_RELAY_TRANSACTION_BYTES &&
+	}
+
+	if (useOldFlags) {
+		if (tx->size() > OLD_MAX_RELAY_TRANSACTION_BYTES &&
 				(send_tx_cache.flagCount() >= OLD_MAX_EXTRA_OVERSIZE_TRANSACTIONS || tx->size() > OLD_MAX_RELAY_OVERSIZE_TRANSACTION_BYTES))
-		return std::shared_ptr<std::vector<unsigned char> >();
+			return std::shared_ptr<std::vector<unsigned char> >();
+		send_tx_cache.add(tx, tx->size() > OLD_MAX_RELAY_TRANSACTION_BYTES);
+	}
 
-	send_tx_cache.add(tx, tx->size() > OLD_MAX_RELAY_TRANSACTION_BYTES);
 	return tx_to_msg(tx);
 }
 
@@ -29,8 +35,8 @@ void RelayNodeCompressor::reset() {
 }
 
 bool RelayNodeCompressor::check_recv_tx(uint32_t tx_size) {
-	return (!useFlags && tx_size <= MAX_RELAY_TRANSACTION_BYTES) ||
-			(useFlags && (tx_size <= OLD_MAX_RELAY_TRANSACTION_BYTES || (recv_tx_cache.flagCount() < OLD_MAX_EXTRA_OVERSIZE_TRANSACTIONS && tx_size <= OLD_MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)));
+	return (!useOldFlags && tx_size <= MAX_RELAY_TRANSACTION_BYTES) ||
+			(useOldFlags && (tx_size <= OLD_MAX_RELAY_TRANSACTION_BYTES || (recv_tx_cache.flagCount() < OLD_MAX_EXTRA_OVERSIZE_TRANSACTIONS && tx_size <= OLD_MAX_RELAY_OVERSIZE_TRANSACTION_BYTES)));
 }
 
 bool RelayNodeCompressor::maybe_recv_tx_of_size(uint32_t tx_size, bool debug_print) {
@@ -49,7 +55,7 @@ void RelayNodeCompressor::recv_tx(std::shared_ptr<std::vector<unsigned char > > 
 
 	uint32_t tx_size = tx.get()->size();
 	assert(check_recv_tx(tx_size));
-	recv_tx_cache.add(tx, tx_size > OLD_MAX_RELAY_TRANSACTION_BYTES);
+	recv_tx_cache.add(tx, useOldFlags ? tx_size > OLD_MAX_RELAY_TRANSACTION_BYTES : tx_size);
 }
 
 void RelayNodeCompressor::for_each_sent_tx(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) {

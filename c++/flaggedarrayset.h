@@ -13,12 +13,12 @@
  **** FlaggedArraySet util ****
  ******************************/
 struct ElemAndFlag {
-	bool flag;
+	uint32_t flag;
 	std::shared_ptr<std::vector<unsigned char> > elem, elemHash;
 	std::vector<unsigned char>::const_iterator elemBegin, elemEnd;
-	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, bool flagIn, bool setHash);
+	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, uint32_t flagIn, bool setHash);
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t);
-	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, bool flagIn);
+	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, uint32_t flagIn);
 	bool operator == (const ElemAndFlag& o) const;
 };
 namespace std {
@@ -31,8 +31,8 @@ namespace std {
 
 class FlaggedArraySet {
 private:
-	unsigned int maxSize, flag_count;
-	uint64_t offset;
+	uint64_t maxSize, maxFlagCount, flag_count;
+	size_t offset;
 	std::unordered_map<ElemAndFlag, uint64_t> backingMap;
 	std::vector<std::unordered_map<ElemAndFlag, uint64_t>::iterator> indexMap;
 
@@ -43,20 +43,25 @@ private:
 	mutable WaitCountMutex mutex;
 
 	mutable std::vector<int> to_be_removed;
-	mutable int max_remove, flags_to_remove;
+	mutable uint32_t max_remove;
+	mutable uint64_t flags_to_remove;
 
 public:
 	void clear();
-	FlaggedArraySet(unsigned int maxSizeIn);
+	FlaggedArraySet(uint64_t maxSizeIn, uint64_t maxFlagCountIn);
 	~FlaggedArraySet();
 
 	size_t size() const { return backingMap.size() - to_be_removed.size(); }
-	size_t flagCount() const { return flag_count - flags_to_remove; }
+	uint64_t flagCount() const { return flag_count - flags_to_remove; }
 	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e) const;
 	bool contains(const unsigned char* elemHash) const;
 
 	FlaggedArraySet& operator=(const FlaggedArraySet& o) {
+		o.cleanup_late_remove();
+		clear();
+
 		maxSize = o.maxSize;
+		maxFlagCount = o.maxFlagCount;
 		flag_count = o.flag_count;
 		offset = o.offset;
 		backingMap = o.backingMap;
@@ -70,9 +75,9 @@ private:
 	void cleanup_late_remove() const;
 
 public:
-	void add(const std::shared_ptr<std::vector<unsigned char> >& e, bool flag);
+	void add(const std::shared_ptr<std::vector<unsigned char> >& e, uint32_t flag);
 	int remove(const std::vector<unsigned char>::const_iterator& start, const std::vector<unsigned char>::const_iterator& end);
-	bool remove(int index, std::vector<unsigned char>& elemRes, unsigned char* elemHashRes);
+	bool remove(unsigned int index, std::vector<unsigned char>& elemRes, unsigned char* elemHashRes);
 
 	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const;
 };

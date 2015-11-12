@@ -279,7 +279,8 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 
 		uint64_t minFeePerKbSelected = 4000000000;
 		unsigned minFeePerKbTxnCount = 0;
-		while (txn_selected.size() < 9*(MAX_TXN_IN_FAS)/10 && vectorToSort.size()) {
+		uint64_t totalSizeSelected = 0;
+		while (totalSizeSelected < 9*MAX_FAS_TOTAL_SIZE/10 && vectorToSort.size()) {
 			std::pop_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 			CTxMemPoolEntry* e = vectorToSort.back();
 			vectorToSort.pop_back();
@@ -290,6 +291,7 @@ void RPCClient::net_process(const std::function<void(std::string)>& disconnect) 
 						std::push_heap(vectorToSort.begin(), vectorToSort.end(), comp);
 					}
 				txn_selected.push_back(std::make_pair(e->hash, e->size));
+				totalSizeSelected += e->size;
 				if (e->feePerKb == minFeePerKbSelected)
 					minFeePerKbTxnCount++;
 				else if (e->feePerKb < minFeePerKbSelected) {
