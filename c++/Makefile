@@ -28,8 +28,11 @@ ifeq ($(LE),Y)
 endif
 
 variant ?= production
-ifeq ($(variant),test)
+ifneq (,$(findstring test,$(variant)))
   COMMON_CXXFLAGS += -DFOR_TEST -DTEST_DATA
+  ifeq ($(variant),fasttest)
+    COMMON_CXXFLAGS += -O3
+  endif
 else
   ifeq ($(variant),bench)
     COMMON_CXXFLAGS += -DBENCH -DTEST_DATA
