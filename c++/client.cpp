@@ -41,6 +41,7 @@ private:
 
 	const std::function<void (std::vector<unsigned char>&)> provide_block;
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
+	const std::function<bool ()> bitcoind_connected;
 
 	std::atomic_bool connected;
 
@@ -49,10 +50,11 @@ private:
 public:
 	RelayNetworkClient(const char* serverHostIn,
 						const std::function<void (std::vector<unsigned char>&)>& provide_block_in,
-						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
+						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
+						const std::function<bool ()>& bitcoind_connected_in)
 		// Ping time(out) is 40 seconds (5000000/250*2 msec) - first ping will only happen, at the quickest, at half that
 			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_FAS_TOTAL_SIZE / OUTBOUND_THROTTLE_BYTES_PER_MS * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
-			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected(false), compressor(false) {
+			provide_block(provide_block_in), provide_transaction(provide_transaction_in), bitcoind_connected(bitcoind_connected_in), connected(false), compressor(false) {
 		construction_done();
 	}
 
@@ -130,7 +132,8 @@ private:
 				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
 					return disconnect("failed to read loose transaction data");
 
-				printf("Received transaction of size %u from relay server\n", message_size);
+				if (bitcoind_connected())
+					printf("Received transaction of size %u from relay server\n", message_size);
 
 				compressor.recv_tx(tx);
 				provide_transaction(tx);
@@ -178,7 +181,8 @@ public:
 		auto& msg = *msgptr.get();
 
 		maybe_do_send_bytes((char*)&msg[0], msg.size());
-		printf("Sent transaction of size %lu%s to relay server\n", (unsigned long)tx->size(), send_oob ? " (out-of-band)" : "");
+		if (bitcoind_connected())
+			printf("Sent transaction of size %lu%s to relay server\n", (unsigned long)tx->size(), send_oob ? " (out-of-band)" : "");
 	}
 
 	void receive_block(const std::vector<unsigned char>& block) {
@@ -318,7 +322,8 @@ int main(int argc, char** argv) {
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 											p2p.receive_transaction(bytes);
 											relayClient->receive_transaction(bytes, false);
-										});
+										},
+										[&]() { return p2p.is_connected(); });
 
 	while (true) { sleep(1000); }
 }

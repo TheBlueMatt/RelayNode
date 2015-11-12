@@ -223,3 +223,7 @@ void P2PRelayer::send_ping(uint64_t nonce) {
 	memcpy(&msg[sizeof(struct bitcoin_msg_header)], &nonce, 8);
 	send_message("ping", &msg[0], 8);
 }
+
+bool P2PRelayer::is_connected() const {
+	return connected == 2;
+}
