@@ -63,7 +63,7 @@ public:
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					if (e.second->total_inbound_size < 65536 || e.second->disconnectFlags & DISCONNECT_READS_DONE)
+					if (e.second->readable())
 						FD_SET(e.first, &fd_set_read);
 					if (e.second->total_waiting_size > 0) {
 						if (now < e.second->earliest_next_write) {
@@ -95,7 +95,7 @@ public:
 				ALWAYS_ASSERT(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
 
 			now = std::chrono::steady_clock::now();
-			unsigned char buf[4096];
+			char buf[4096];
 			{
 				std::set<int> remove_set;
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
@@ -103,17 +103,13 @@ public:
 					Connection* conn = e.second;
 
 					if (FD_ISSET(e.first, &fd_set_read)) {
-						ssize_t count = recv(conn->sock, (char*)buf, 4096, 0);
+						ssize_t count = recv(conn->sock, buf, 4096, 0);
 
-						std::lock_guard<std::mutex> lock(conn->read_mutex);
 						if (count <= 0) {
 							remove_set.insert(e.first);
 							conn->sock_errno = errno;
-						} else if (!(conn->disconnectFlags & DISCONNECT_READS_DONE)) {
-							conn->inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + count));
-							conn->total_inbound_size += count;
-							conn->read_cv.notify_all();
-						}
+						} else
+							conn->recv_bytes(buf, count);
 					}
 					if (FD_ISSET(e.first, &fd_set_write)) {
 						if (now < conn->earliest_next_write)
@@ -167,13 +163,10 @@ public:
 
 				for (const int fd : remove_set) {
 					Connection* conn = me->fd_map[fd];
-					std::lock_guard<std::mutex> lock(conn->read_mutex);
-					conn->inbound_queue.emplace_back((std::nullptr_t)NULL);
-					conn->read_cv.notify_all();
 					if (conn->sock_errno == EAGAIN || conn->sock_errno == EWOULDBLOCK)
 						conn->sock_errno = ENOTCONN;
-					conn->disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
 					me->fd_map.erase(fd);
+					conn->on_disconnect_done();
 				}
 			}
 #ifndef WIN32
@@ -193,11 +186,8 @@ static GlobalNetProcess processor;
 
 Connection::~Connection() {
 	assert(disconnectFlags & DISCONNECT_COMPLETE);
-	user_thread->join();
 	close(sock);
-	delete user_thread;
 }
-
 
 void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) {
 	if (!send_mutex_token)
@@ -274,8 +264,6 @@ void Connection::disconnect_from_outside(const char* reason) {
 }
 
 void Connection::disconnect(std::string reason) {
-	assert(std::this_thread::get_id() == user_thread->get_id());
-
 	if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED)
 		return;
 
@@ -284,6 +272,41 @@ void Connection::disconnect(std::string reason) {
 		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason.c_str(), strerror(sock_errno));
 		shutdown(sock, SHUT_RDWR);
 	}
+}
+
+
+
+
+ThreadedConnection::~ThreadedConnection() {
+	assert(disconnectFlags & DISCONNECT_COMPLETE);
+	user_thread->join();
+	delete user_thread;
+}
+
+void ThreadedConnection::recv_bytes(char* buf, size_t len) {
+	std::lock_guard<std::mutex> lock(read_mutex);
+	if (!(disconnectFlags & DISCONNECT_READS_DONE)) {
+		inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + len));
+		total_inbound_size += len;
+		read_cv.notify_all();
+	}
+}
+
+bool ThreadedConnection::readable() {
+	return total_inbound_size < 65536 || disconnectFlags & DISCONNECT_READS_DONE;
+}
+
+void ThreadedConnection::on_disconnect_done() {
+	std::lock_guard<std::mutex> lock(read_mutex);
+	inbound_queue.emplace_back((std::nullptr_t)NULL);
+	read_cv.notify_all();
+	disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
+}
+
+void ThreadedConnection::disconnect(std::string reason) {
+	assert(std::this_thread::get_id() == user_thread->get_id());
+
+	this->Connection::disconnect(reason);
 
 	disconnectFlags |= DISCONNECT_READS_DONE;
 
@@ -297,7 +320,7 @@ void Connection::disconnect(std::string reason) {
 		std::thread(on_disconnect).detach();
 }
 
-void Connection::do_setup_and_read(Connection* me) {
+void ThreadedConnection::do_setup_and_read(ThreadedConnection* me) {
 	#ifdef WIN32
 		unsigned long nonblocking = 1;
 		ioctlsocket(me->sock, FIONBIO, &nonblocking);
@@ -333,7 +356,7 @@ void Connection::do_setup_and_read(Connection* me) {
 	}
 }
 
-ssize_t Connection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
+ssize_t ThreadedConnection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
 	assert(std::this_thread::get_id() == user_thread->get_id());
 
 	size_t total = 0;

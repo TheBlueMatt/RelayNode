@@ -21,13 +21,11 @@ enum DisconnectFlags {
 };
 
 class Connection {
-private:
+protected:
 	const int sock;
-	std::mutex send_mutex, send_bytes_mutex;
+
 	int outside_send_mutex_token;
-
-	std::function<void(void)> on_disconnect;
-
+	std::mutex send_mutex, send_bytes_mutex;
 	std::list<std::shared_ptr<std::vector<unsigned char> > > outbound_primary_queue, outbound_secondary_queue;
 	size_t primary_writepos, secondary_writepos;
 
@@ -43,6 +41,50 @@ private:
 	std::chrono::steady_clock::time_point earliest_next_write;
 	uint32_t max_outbound_buffer_size;
 
+	std::atomic<int> disconnectFlags;
+	std::atomic<int> sock_errno;
+
+public:
+	const std::string host;
+
+	Connection(int sockIn, std::string hostIn, uint32_t max_outbound_buffer_size_in) : sock(sockIn),
+			outside_send_mutex_token(0xdeadbeef * (unsigned long)this), primary_writepos(0), secondary_writepos(0),
+			initial_outbound_throttle(false), initial_outbound_throttle_done(false),
+			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
+			max_outbound_buffer_size(max_outbound_buffer_size_in), disconnectFlags(0), sock_errno(0), host(hostIn)
+		{}
+
+	virtual ~Connection();
+
+	// See the comment above initial_outbound_throttle for special meanings of the send_mutex_tokens
+	int get_send_mutex();
+	void release_send_mutex(int send_mutex_token);
+	void do_throttle_outbound() { if (!initial_outbound_throttle_done.test_and_set()) initial_outbound_throttle = true; }
+
+	void disconnect_from_outside(const char* reason);
+
+protected:
+	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
+		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
+	}
+
+	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
+	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
+
+	virtual void recv_bytes(char* buf, size_t len)=0;
+	virtual bool readable()=0;
+	virtual void on_disconnect_done()=0;
+
+	virtual void disconnect(std::string reason);
+
+private:
+	friend class GlobalNetProcess;
+};
+
+class ThreadedConnection : public Connection {
+private:
+	std::function<void(void)> on_disconnect;
+
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
 	size_t readpos;
@@ -50,18 +92,11 @@ private:
 	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
 
 	std::thread *user_thread;
-	int sock_errno;
 
-	std::atomic<int> disconnectFlags;
 public:
-	const std::string host;
-
-	Connection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=10000000) :
-			sock(sockIn), outside_send_mutex_token(0xdeadbeef * (unsigned long)this), on_disconnect(on_disconnect_in),
-			primary_writepos(0), secondary_writepos(0), initial_outbound_throttle(false), initial_outbound_throttle_done(false),
-			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
-			max_outbound_buffer_size(max_outbound_buffer_size_in), readpos(0), total_inbound_size(0), sock_errno(0),
-			disconnectFlags(0), host(hostIn)
+	ThreadedConnection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=10000000) :
+			Connection(sockIn, hostIn, max_outbound_buffer_size_in), on_disconnect(on_disconnect_in),
+			readpos(0), total_inbound_size(0)
 		{}
 
 protected:
@@ -70,34 +105,22 @@ protected:
 	}
 
 public:
-	virtual ~Connection();
+	virtual ~ThreadedConnection();
 
 	int getDisconnectFlags() { return disconnectFlags; }
+
+private:
+	void recv_bytes(char* buf, size_t len);
+	bool readable();
+	void on_disconnect_done();
 
 protected:
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
 	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()); // Only allowed from within net_process
 
-	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
-		do_send_bytes(std::make_shared<std::vector<unsigned char> >((unsigned char*)buf, (unsigned char*)buf + nbyte), send_mutex_token);
-	}
-
-	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
-	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
-
-public:
-	// See the comment above initial_outbound_throttle for special meanings of the send_mutex_tokens
-	int get_send_mutex();
-	void release_send_mutex(int send_mutex_token);
-	void do_throttle_outbound() { if (!initial_outbound_throttle_done.test_and_set()) initial_outbound_throttle = true; }
-
-	void disconnect_from_outside(const char* reason);
-
 private:
 	void disconnect(std::string reason);
-	static void do_setup_and_read(Connection* me);
-
-	friend class GlobalNetProcess;
+	static void do_setup_and_read(ThreadedConnection* me);
 };
 
 class OutboundPersistentConnection {
@@ -105,21 +128,21 @@ private:
 	std::atomic_int mutex_valid;
 	uint32_t max_outbound_buffer_size;
 
-	class OutboundConnection : public Connection {
+	class OutboundConnection : public ThreadedConnection {
 	private:
 		OutboundPersistentConnection *parent;
 		void net_process(const std::function<void(std::string)>& disconnect) { parent->on_connect_keepalive(); parent->net_process(disconnect); }
 
 	public:
 		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
-				Connection(sockIn, parentIn->serverHost, [&](void) { parent->reconnect("THIS SHOULD NEVER PRINT"); }, parentIn->max_outbound_buffer_size),
+				ThreadedConnection(sockIn, parentIn->serverHost, [&](void) { parent->reconnect("THIS SHOULD NEVER PRINT"); }, parentIn->max_outbound_buffer_size),
 				parent(parentIn)
 			{ }
 
-		ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) { return Connection::read_all(buf, nbyte, max_sleep); }
-		void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token) { return Connection::do_send_bytes(buf, nbyte, send_mutex_token); }
-		void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) { return Connection::do_send_bytes(bytes, send_mutex_token); }
-		void construction_done() { Connection::construction_done(); }
+		ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) { return ThreadedConnection::read_all(buf, nbyte, max_sleep); }
+		void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token) { return ThreadedConnection::do_send_bytes(buf, nbyte, send_mutex_token); }
+		void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token) { return ThreadedConnection::do_send_bytes(bytes, send_mutex_token); }
+		void construction_done() { ThreadedConnection::construction_done(); }
 	};
 
 	std::atomic<unsigned long> connection;
@@ -170,7 +193,7 @@ protected:
 	}
 
 private:
-	void reconnect(std::string disconnectReason); // Called only after DISCONNECT_COMPLETE in Connection, or before Connection::construction_done()
+	void reconnect(std::string disconnectReason); // Called only after DISCONNECT_COMPLETE in ThreadedConnection, or before ThreadedConnection::construction_done()
 	static void do_connect(OutboundPersistentConnection* me);
 
 	virtual void on_disconnect_keepalive() {}

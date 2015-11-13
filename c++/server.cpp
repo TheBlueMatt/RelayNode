@@ -35,7 +35,7 @@ static const std::map<std::string, int16_t> compressor_types = {{std::string("sp
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
-class RelayNetworkClient : public Connection {
+class RelayNetworkClient : public ThreadedConnection {
 private:
 	std::atomic_int connected;
 	bool sendSponsor = false;
@@ -57,7 +57,7 @@ public:
 						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
-			: Connection(sockIn, hostIn, NULL), connected(0),
+			: ThreadedConnection(sockIn, hostIn, NULL), connected(0),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }

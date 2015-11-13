@@ -27,7 +27,7 @@ char* location;
 /************************
  **** P2P Connection ****
  ************************/
-class P2PConnection : public Connection {
+class P2PConnection : public ThreadedConnection {
 private:
 	std::atomic_int connected;
 
@@ -42,7 +42,7 @@ public:
 	P2PConnection(int sockIn, std::string hostIn,
 				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)>& provide_block_in,
 				const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
-			: Connection(sockIn, hostIn, NULL), connected(0), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
+			: ThreadedConnection(sockIn, hostIn, NULL), connected(0), provide_block(provide_block_in), provide_transaction(provide_transaction_in),
 			txnAlreadySeen(2000), blocksAlreadySeen(1000)
 		{ construction_done(); }
 

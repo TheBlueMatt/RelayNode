@@ -18,9 +18,9 @@
 
 
 
-class MempoolClient : public Connection {
+class MempoolClient : public ThreadedConnection {
 public:
-	MempoolClient(int fd_in, std::string hostIn) : Connection(fd_in, hostIn, NULL) { construction_done(); }
+	MempoolClient(int fd_in, std::string hostIn) : ThreadedConnection(fd_in, hostIn, NULL) { construction_done(); }
 	void send_pool(std::set<std::vector<unsigned char> >::const_iterator mempool_begin, const std::set<std::vector<unsigned char> >::const_iterator mempool_end, int send_mutex=0) {
 		while (mempool_begin != mempool_end) {
 			assert(mempool_begin->size() == 32);
