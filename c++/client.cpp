@@ -134,6 +134,8 @@ private:
 
 				if (bitcoind_connected())
 					printf("Received transaction of size %u from relay server\n", message_size);
+				else
+					printf("ERROR: bitcoind is not (yet) connected!\n");
 
 				compressor.recv_tx(tx);
 				provide_transaction(tx);
