@@ -429,18 +429,14 @@ KeepaliveOutboundPersistentConnection::KeepaliveOutboundPersistentConnection(std
 	OutboundPersistentConnection(serverHostIn, serverPortIn, max_outbound_buffer_size_in),
 	connected(false), next_nonce(0xDEADBEEF), ping_interval_msec(ping_interval_msec_in), scheduled(false) { }
 
-void KeepaliveOutboundPersistentConnection::schedule(bool needLock) {
+void KeepaliveOutboundPersistentConnection::schedule() {
 	uint64_t time = epoch_millis_lu(std::chrono::steady_clock::now()) + ping_interval_msec;
-
-	std::unique_lock<std::mutex> lock(processor.fd_map_mutex, std::defer_lock);
-	if (needLock)
-		lock.lock();
 
 	while (processor.actions_map.count(time))
 		time++;
 
 	processor.actions_map[time] = [&]() {
-		schedule(false);
+		schedule();
 
 		{
 			std::lock_guard<std::mutex> lock2(ping_mutex);
@@ -458,7 +454,8 @@ void KeepaliveOutboundPersistentConnection::schedule(bool needLock) {
 }
 
 void KeepaliveOutboundPersistentConnection::on_connect_keepalive() {
-	std::lock_guard<std::mutex> lock(ping_mutex);
+	std::lock_guard<std::mutex> lock(processor.fd_map_mutex); // Needed for schedule(), but locks before ping_mutex
+	std::lock_guard<std::mutex> lock2(ping_mutex);
 	if (scheduled)
 		return;
 
@@ -466,7 +463,7 @@ void KeepaliveOutboundPersistentConnection::on_connect_keepalive() {
 	connected = true;
 	ping_nonces_waiting.clear();
 
-	schedule(true);
+	schedule();
 }
 
 void KeepaliveOutboundPersistentConnection::on_disconnect_keepalive() {

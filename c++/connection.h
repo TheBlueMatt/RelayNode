@@ -188,7 +188,7 @@ private:
 	uint32_t ping_interval_msec;
 	bool scheduled;
 
-	void schedule(bool needLock);
+	void schedule();
 
 	void on_disconnect_keepalive();
 	void on_connect_keepalive();
