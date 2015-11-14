@@ -127,6 +127,12 @@ std::string gethostname(struct sockaddr_in6 *addr) {
 		return res + std::string(hbuf);
 }
 
+#ifdef FOR_VALGRIND
+//getaddrinfo is detected by helgrind/drd as having a data race in it.
+//I haven't actually checked if this is the case, but the manpage says it doesn't, so lets just work around that :)
+static std::mutex getaddrinfo_mutex;
+#endif
+
 bool lookup_address(const char* addr, struct sockaddr_in6* res) {
 	struct addrinfo hints,*server = NULL;
 
@@ -139,7 +145,17 @@ bool lookup_address(const char* addr, struct sockaddr_in6* res) {
 	hints.ai_family = AF_INET6;
 #endif
 
-	int gaires = getaddrinfo(addr, NULL, &hints, &server);
+	int gaires
+#ifdef FOR_VALGRIND
+		;
+	{
+		std::lock_guard<std::mutex> lock(getaddrinfo_mutex);
+		gaires
+#endif
+		= getaddrinfo(addr, NULL, &hints, &server);
+#ifdef FOR_VALGRIND
+		}
+#endif
 	if (gaires) {
 		printf("Unable to lookup hostname: %d (%s)\n", gaires, gai_strerror(gaires));
 		if (server)
