@@ -1,3 +1,5 @@
+#include "preinclude.h"
+
 #include "flaggedarrayset.h"
 
 #include <map>

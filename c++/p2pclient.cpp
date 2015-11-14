@@ -1,3 +1,5 @@
+#include "preinclude.h"
+
 #include "p2pclient.h"
 #include "utils.h"
 #include "crypto/sha2.h"

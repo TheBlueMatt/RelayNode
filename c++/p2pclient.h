@@ -6,7 +6,6 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
-#include <atomic>
 
 #include "utils.h"
 #include "mruset.h"
@@ -20,7 +19,7 @@ private:
 
 	const std::function<void (std::vector<unsigned char>&)> provide_headers;
 
-	std::atomic<uint8_t> connected;
+	DECLARE_ATOMIC_INT(uint8_t, connected);
 
 	std::mutex seen_mutex;
 	mruset<std::vector<unsigned char> > txnAlreadySeen;

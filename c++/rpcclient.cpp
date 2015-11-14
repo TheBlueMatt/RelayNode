@@ -1,3 +1,4 @@
+#include "preinclude.h"
 #include "rpcclient.h"
 
 #include <sstream>

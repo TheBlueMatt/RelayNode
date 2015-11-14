@@ -1,3 +1,5 @@
+#include "preinclude.h"
+
 #include "relayprocess.h"
 
 #include "crypto/sha2.h"

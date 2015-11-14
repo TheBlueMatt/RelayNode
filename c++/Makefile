@@ -30,6 +30,7 @@ endif
 variant ?= production
 ifneq (,$(findstring test,$(variant)))
   COMMON_CXXFLAGS += -DFOR_TEST -DTEST_DATA
+  NATIVE_CXXFLAGS += -DFOR_VALGRIND
   ifeq ($(variant),fasttest)
     COMMON_CXXFLAGS += -O3
   endif

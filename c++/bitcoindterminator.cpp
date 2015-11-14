@@ -1,3 +1,5 @@
+#include "preinclude.h"
+
 #include <list>
 #include <set>
 #include <vector>
@@ -29,7 +31,7 @@ char* location;
  ************************/
 class P2PConnection : public ThreadedConnection {
 private:
-	std::atomic_int connected;
+	DECLARE_ATOMIC_INT(int, connected);
 
 	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&, struct timeval)> provide_block;
 	const std::function<void (P2PConnection*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;

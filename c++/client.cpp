@@ -1,3 +1,5 @@
+#include "preinclude.h"
+
 #include <map>
 #include <vector>
 #include <thread>
@@ -43,7 +45,7 @@ private:
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<bool ()> bitcoind_connected;
 
-	std::atomic_bool connected;
+	DECLARE_ATOMIC(bool, connected);
 
 	RelayNodeCompressor compressor;
 

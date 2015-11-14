@@ -1,3 +1,5 @@
+#include "preinclude.h"
+
 #include <map>
 #include <vector>
 #include <thread>
@@ -37,7 +39,7 @@ static const std::map<std::string, int16_t> compressor_types = {{std::string("sp
  ***********************************************/
 class RelayNetworkClient : public ThreadedConnection {
 private:
-	std::atomic_int connected;
+	DECLARE_ATOMIC_INT(int, connected);
 	bool sendSponsor = false;
 	uint8_t tx_sent = 0;
 
@@ -51,7 +53,7 @@ private:
 
 public:
 	time_t lastDupConnect = 0;
-	std::atomic<int16_t> compressor_type;
+	DECLARE_ATOMIC_INT(int16_t, compressor_type);
 
 	RelayNetworkClient(int sockIn, std::string hostIn,
 						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,

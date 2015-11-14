@@ -1,12 +1,14 @@
 #ifndef _RELAY_UTILS_H
 #define _RELAY_UTILS_H
 
+#include "preinclude.h"
+
 #include <vector>
 #include <string>
 #include <assert.h>
 #include <unistd.h>
-#include <mutex>
 #include <atomic>
+#include <mutex>
 #include <sys/time.h>
 
 #define likely(x)   __builtin_expect((x), 1)
@@ -202,7 +204,7 @@ void do_assert(bool flag, const char* file, unsigned long line);
 class WaitCountMutex {
 private:
 	std::mutex mutex;
-	std::atomic_int waitCount;
+	DECLARE_ATOMIC_INT(int, waitCount);
 
 	friend class WaitCountHint;
 public:

@@ -12,8 +12,8 @@ class RPCClient : public OutboundPersistentConnection {
 private:
 	const std::function<void (std::vector<std::pair<std::vector<unsigned char>, size_t> >&, size_t)> txn_for_block_func;
 
-	std::atomic_bool connected;
-	std::atomic_bool awaiting_response;
+	DECLARE_ATOMIC(bool, connected);
+	DECLARE_ATOMIC(bool, awaiting_response);
 
 public:
 	RPCClient(std::string hostIn, int16_t portIn, const std::function<void (std::vector<std::pair<std::vector<unsigned char>, size_t> >& txhashes, size_t total_mempool_size)>& txn_for_block_func_in)

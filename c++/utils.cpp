@@ -1,3 +1,4 @@
+#include "preinclude.h"
 #include "utils.h"
 #include "crypto/sha2.h"
 

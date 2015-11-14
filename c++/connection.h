@@ -2,7 +2,6 @@
 #define _RELAY_CONNECTION_H
 
 #include <string>
-#include <atomic>
 #include <condition_variable>
 #include <thread>
 #include <list>
@@ -34,15 +33,15 @@ protected:
 	//
 	// initial_outbound_bytes is defined as the quantity of bytes sent with send_mutex_token
 	// (not mabye_send, do_send), during initial_outbound_throttle
-	std::atomic_bool initial_outbound_throttle;
+	DECLARE_ATOMIC(bool, initial_outbound_throttle);
 	std::atomic_flag initial_outbound_throttle_done;
 	int64_t initial_outbound_bytes;
-	std::atomic<int64_t> total_waiting_size;
+	DECLARE_ATOMIC_INT(int64_t, total_waiting_size);
 	std::chrono::steady_clock::time_point earliest_next_write;
 	uint32_t max_outbound_buffer_size;
 
-	std::atomic<int> disconnectFlags;
-	std::atomic<int> sock_errno;
+	DECLARE_ATOMIC_INT(int, disconnectFlags);
+	DECLARE_ATOMIC_INT(int, sock_errno);
 
 public:
 	const std::string host;
@@ -88,10 +87,10 @@ private:
 	std::mutex read_mutex;
 	std::condition_variable read_cv;
 	size_t readpos;
-	std::atomic<int64_t> total_inbound_size;
+	DECLARE_ATOMIC_INT(int64_t, total_inbound_size);
 	std::list<std::unique_ptr<std::vector<unsigned char> > > inbound_queue;
 
-	std::thread *user_thread;
+	DECLARE_ATOMIC_PTR(std::thread, user_thread);
 
 public:
 	ThreadedConnection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=10000000) :
@@ -125,7 +124,7 @@ private:
 
 class OutboundPersistentConnection {
 private:
-	std::atomic_int mutex_valid;
+	DECLARE_ATOMIC_INT(int, mutex_valid);
 	uint32_t max_outbound_buffer_size;
 
 	class OutboundConnection : public ThreadedConnection {
@@ -145,7 +144,7 @@ private:
 		void construction_done() { ThreadedConnection::construction_done(); }
 	};
 
-	std::atomic<unsigned long> connection;
+	DECLARE_ATOMIC_INT(unsigned long, connection);
 	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
 
 public:
