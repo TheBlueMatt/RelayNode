@@ -316,9 +316,9 @@ int main(int argc, char** argv) {
 	STAMPOUT();
 	printf("Using server %s\n", host);
 
-	RelayNetworkClient* relayClient;
+	DECLARE_NON_ATOMIC_PTR(RelayNetworkClient, relayClient);
 	P2PClient p2p(argv[1], std::stoul(argv[2]),
-					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { relayClient->receive_block(bytes); },
+					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { ((RelayNetworkClient*)relayClient)->receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 						//TODO: Re-enable (see issue #11): relayClient->receive_transaction(bytes, true);
 					});
@@ -326,7 +326,7 @@ int main(int argc, char** argv) {
 										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 											p2p.receive_transaction(bytes);
-											relayClient->receive_transaction(bytes, false);
+											((RelayNetworkClient*)relayClient)->receive_transaction(bytes, false);
 										},
 										[&]() { return p2p.is_connected(); });
 
