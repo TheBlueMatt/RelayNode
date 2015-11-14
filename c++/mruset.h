@@ -77,7 +77,7 @@ private:
         if (nMaxSize)
             while (element_size > nMaxSize)
             {
-                set.erase(queue.front());
+                erase(queue.front());
                 queue.pop_front();
             }
     }
