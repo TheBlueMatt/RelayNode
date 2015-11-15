@@ -227,9 +227,12 @@ void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t 
 	txn_ptrs.reserve(tx_count);
 }
 
+bool RelayNodeCompressor::DecompressState::is_finished() {
+	return state == READ_STATE_DONE;
+}
+
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle) {
-	std::lock_guard<std::mutex> lock(mutex);
-	FASLockHint faslock(recv_tx_cache);
+	DecompressLocks locks(this);
 
 	DecompressState state(check_merkle, message_size);
 	bool read_failed = false;
@@ -239,7 +242,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 					read_failed = true;
 				return !read_failed;
 			};
-	const char* err = do_decompress(state, read_fun);
+	const char* err = do_partial_decompress(locks, state, read_fun);
 	if (err)
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), err, std::shared_ptr<std::vector<unsigned char> >(NULL));
 	if (read_failed)
@@ -354,7 +357,8 @@ inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState&
 	return NULL;
 }
 
-const char* RelayNodeCompressor::do_decompress(DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
+const char* RelayNodeCompressor::do_partial_decompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
+	assert(locks.compressor == this);
 	while (state.state != DecompressState::READ_STATE_DONE) {
 		const char* res;
 		size_t start_bytes = state.wire_bytes;
