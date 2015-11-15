@@ -92,8 +92,10 @@ private:
 
 				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
 					return disconnect("unknown version string");
-				else
+				else {
+					STAMPOUT();
 					printf("Connected to relay node with protocol version %s\n", VERSION_STRING);
+				}
 			} else if (header.type == SPONSOR_TYPE) {
 				char data[message_size];
 				if (read_all(data, message_size) < (int64_t)(message_size))
@@ -118,10 +120,7 @@ private:
 				provide_block(*std::get<1>(res));
 
 				auto fullhash = *std::get<3>(res).get();
-				struct tm tm;
-				time_t now = time(NULL);
-				gmtime_r(&now, &tm);
-				printf("[%d-%02d-%02d %02d:%02d:%02d+00] ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+				STAMPOUT();
 				printf(HASH_FORMAT" recv'd, size %lu with %u bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
 			} else if (header.type == END_BLOCK_TYPE) {
 			} else if (header.type == TRANSACTION_TYPE) {
@@ -206,6 +205,7 @@ public:
 		memcpy(&(*compressed_block)[compressed_block->size() - sizeof(header)], &header, sizeof(header));
 		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
 
+		STAMPOUT();
 		printf(HASH_FORMAT" sent, size %lu with %lu bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)block.size(), (unsigned long)compressed_block->size());
 	}
 };
@@ -311,6 +311,7 @@ int main(int argc, char** argv) {
 		}
 	} else
 		memcpy(host, argv[3], strlen(argv[3]) + 1);
+	STAMPOUT();
 	printf("Using server %s\n", host);
 
 	RelayNetworkClient* relayClient;

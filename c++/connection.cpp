@@ -268,6 +268,7 @@ void Connection::disconnect_from_outside(const char* reason) {
 	if (disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)
 		return;
 
+	STAMPOUT();
 	printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno));
 	shutdown(sock, SHUT_RDWR);
 }
@@ -279,6 +280,7 @@ void Connection::disconnect(std::string reason) {
 		return;
 
 	if (!(disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)) {
+		STAMPOUT();
 		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason.c_str(), strerror(sock_errno));
 		shutdown(sock, SHUT_RDWR);
 	}
