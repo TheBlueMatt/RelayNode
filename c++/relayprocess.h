@@ -81,7 +81,13 @@ public:
 
 private:
 	bool check_recv_tx(uint32_t tx_size);
-	const char* do_decompress(DecompressState& state, std::function<ssize_t(char*, size_t)>& read_all);
+
+	const char* read_block_header(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
+	const char* read_tx_index(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
+	const char* read_tx_data_len(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
+	const char* read_tx_data(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
+	const char* decompress_block_finish(DecompressState& state);
+	const char* do_decompress(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 
 	friend void test_compress_block(std::vector<unsigned char>&, std::vector<std::shared_ptr<std::vector<unsigned char> > >);
 };
