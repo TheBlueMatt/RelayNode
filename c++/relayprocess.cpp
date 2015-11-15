@@ -231,7 +231,8 @@ void tweak_sort(std::vector<IndexPtr>& ptrs, size_t start, size_t end) {
 	}
 }
 
-struct DecompressState {
+class DecompressState {
+public:
 	const bool check_merkle;
 	const uint32_t tx_count;
 
@@ -243,7 +244,9 @@ struct DecompressState {
 	std::vector<IndexVector> txn_data;
 	std::vector<IndexPtr> txn_ptrs;
 
+public:
 	DecompressState(bool check_merkle_in, uint32_t tx_count_in);
+	const char* do_decompress(std::function<ssize_t(char*, size_t)>& read_all);
 };
 
 DecompressState::DecompressState(bool check_merkle_in, uint32_t tx_count_in) :
@@ -266,21 +269,27 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got a BLOCK message with far too many transactions", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	DecompressState state(check_merkle, message_size);
+	const char* err = do_decompress(state, read_all);
+	if (err)
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), err, std::shared_ptr<std::vector<unsigned char> >(NULL));
+	return std::make_tuple(state.wire_bytes, state.block, (const char*) NULL, state.fullhashptr);
+}
 
+const char* RelayNodeCompressor::do_decompress(DecompressState& state, std::function<ssize_t(char*, size_t)>& read_all) {
 	if (read_all((char*)&(*state.block)[sizeof(bitcoin_msg_header)], 80) != 80)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read block header", std::shared_ptr<std::vector<unsigned char> >(NULL));
+		return "failed to read block header";
 
 #ifndef TEST_DATA
 	int32_t block_version = (((*state.block)[sizeof(bitcoin_msg_header) + 3] << 24) | ((*state.block)[sizeof(bitcoin_msg_header) + 2] << 16) | ((*state.block)[sizeof(bitcoin_msg_header) + 1] << 8) | (*state.block)[sizeof(bitcoin_msg_header)]);
 	if (block_version < 4)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block had version < 4", std::shared_ptr<std::vector<unsigned char> >(NULL));
+		return "block had version < 4";
 #endif
 
 	getblockhash(*state.fullhashptr.get(), *state.block, sizeof(struct bitcoin_msg_header));
 	blocksAlreadySeen.insert(*state.fullhashptr.get());
 
 	if (state.check_merkle && ((*state.fullhashptr)[31] != 0 || (*state.fullhashptr)[30] != 0 || (*state.fullhashptr)[29] != 0 || (*state.fullhashptr)[28] != 0 || (*state.fullhashptr)[27] != 0 || (*state.fullhashptr)[26] != 0 || (*state.fullhashptr)[25] != 0))
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block hash did not meet minimum difficulty target", std::shared_ptr<std::vector<unsigned char> >(NULL));
+		return "block hash did not meet minimum difficulty target";
 
 	auto vartxcount = varint(state.tx_count);
 	state.block->insert(state.block->end(), vartxcount.begin(), vartxcount.end());
@@ -288,7 +297,7 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 	for (uint32_t i = 0; i < state.tx_count; i++) {
 		uint16_t index;
 		if (read_all((char*)&index, 2) != 2)
-			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx index", std::shared_ptr<std::vector<unsigned char> >(NULL));
+			return "failed to read tx index";
 		index = ntohs(index);
 		state.wire_bytes += 2;
 
@@ -301,15 +310,15 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 			} tx_size {0};
 
 			if (read_all(tx_size.c + 1, 3) != 3)
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read tx length", std::shared_ptr<std::vector<unsigned char> >(NULL));
+				return "failed to read tx length";
 			tx_size.i = ntohl(tx_size.i);
 
 			if (tx_size.i > 1000000)
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got unreasonably large tx", std::shared_ptr<std::vector<unsigned char> >(NULL));
+				return "got unreasonably large tx";
 
 			state.txn_data[i].data.resize(tx_size.i);
 			if (read_all((char*)&(state.txn_data[i].data[0]), tx_size.i) != int64_t(tx_size.i))
-				return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read transaction data", std::shared_ptr<std::vector<unsigned char> >(NULL));
+				return "failed to read transaction data";
 			state.wire_bytes += 3 + tx_size.i;
 
 			if (state.check_merkle)
@@ -327,14 +336,14 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 		assert(last <= int(ptr.index) && (last = ptr.index) != -1);
 
 		if (!recv_tx_cache.remove(ptr.index, state.txn_data[ptr.pos].data, state.merkleTree.getTxHashLoc(state.check_merkle ? ptr.pos : 0)))
-			return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to find referenced transaction", std::shared_ptr<std::vector<unsigned char> >(NULL));
+			return "failed to find referenced transaction";
 	}
 
 	for (uint32_t i = 0; i < state.tx_count; i++)
 		state.block->insert(state.block->end(), state.txn_data[i].data.begin(), state.txn_data[i].data.end());
 
 	if (state.check_merkle && !state.merkleTree.merkleRootMatches(&(*state.block)[4 + 32 + sizeof(bitcoin_msg_header)]))
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "merkle tree root did not match", std::shared_ptr<std::vector<unsigned char> >(NULL));
+		return "merkle tree root did not match";
 
-	return std::make_tuple(state.wire_bytes, state.block, (const char*) NULL, state.fullhashptr);
+	return NULL;
 }

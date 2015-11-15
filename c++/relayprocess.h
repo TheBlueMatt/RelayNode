@@ -25,6 +25,8 @@ private: \
 	VERSION_TYPE(htonl(0)), BLOCK_TYPE(htonl(1)), TRANSACTION_TYPE(htonl(2)), END_BLOCK_TYPE(htonl(3)), \
 	MAX_VERSION_TYPE(htonl(4)), OOB_TRANSACTION_TYPE(htonl(5)), SPONSOR_TYPE(htonl(6)), PING_TYPE(htonl(7)), PONG_TYPE(htonl(8))
 
+class DecompressState;
+
 class RelayNodeCompressor {
 	RELAY_DECLARE_CLASS_VARS
 
@@ -79,6 +81,7 @@ public:
 
 private:
 	bool check_recv_tx(uint32_t tx_size);
+	const char* do_decompress(DecompressState& state, std::function<ssize_t(char*, size_t)>& read_all);
 
 	friend void test_compress_block(std::vector<unsigned char>&, std::vector<std::shared_ptr<std::vector<unsigned char> > >);
 };
