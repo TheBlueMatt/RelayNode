@@ -37,9 +37,24 @@ static const std::map<std::string, int16_t> compressor_types = {{std::string("sp
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
-class RelayNetworkClient : public ThreadedConnection {
+class RelayNetworkClient : public Connection {
 private:
 	DECLARE_ATOMIC_INT(int, connected);
+
+	enum ReadState {
+		READ_STATE_NEW_MESSAGE,
+		READ_STATE_IN_SIZED_MESSAGE,
+		READ_STATE_START_BLOCK_MESSAGE,
+		READ_STATE_IN_BLOCK_MESSAGE,
+	};
+	ReadState read_state;
+	std::vector<char> read_buff;
+
+	relay_msg_header current_msg;
+	std::chrono::system_clock::time_point current_block_read_start;
+	RelayNodeCompressor::DecompressState current_block;
+	std::unique_ptr<RelayNodeCompressor::DecompressLocks> current_block_locks;
+
 	bool sendSponsor = false;
 	uint8_t tx_sent = 0;
 
@@ -59,7 +74,7 @@ public:
 						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
-			: ThreadedConnection(sockIn, hostIn, NULL), connected(0),
+			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }
@@ -73,130 +88,226 @@ private:
 		do_send_bytes(HOST_SPONSOR, strlen(HOST_SPONSOR), token);
 	}
 
-	void net_process(const std::function<void(std::string)>& disconnect) {
-		compressor.reset();
+	bool readable() { return true; }
 
-		while (true) {
-			relay_msg_header header;
-			if (read_all((char*)&header, 4*3) != 4*3)
-				return disconnect("failed to read message header");
 
-			if (header.magic != RELAY_MAGIC_BYTES)
-				return disconnect("invalid magic bytes");
+	inline size_t fail_msg(const char* reason) {
+		disconnect(reason);
+		return 0;
+	}
 
-			uint32_t message_size = ntohl(header.length);
+	bool process_version_message(size_t read_pos) {
+		char data[ntohl(current_msg.length) + 1];
+		memcpy(data, &read_buff[read_pos], ntohl(current_msg.length));
 
-			if (message_size > 1000000)
-				return disconnect("got message too large");
+		for (uint32_t i = 0; i < ntohl(current_msg.length); i++)
+			if (data[i] > 'z' && data[i] < 'a' && data[i] != ' ')
+				return fail_msg("bogus version string");
+		data[ntohl(current_msg.length)] = 0;
 
-			if (header.type == VERSION_TYPE) {
-				char data[message_size + 1];
-				if (read_all(data, message_size) < (int64_t)(message_size))
-					return disconnect("failed to read version message");
+		std::string their_version(data);
 
-				for (uint32_t i = 0; i < message_size; i++)
-					if (data[i] > 'z' && data[i] < 'a' && data[i] != ' ')
-						return disconnect("bogus version string");
-				data[message_size] = 0;
+		if (their_version != VERSION_STRING) {
+			relay_msg_header version_header = { RELAY_MAGIC_BYTES, MAX_VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
+			do_send_bytes((char*)&version_header, sizeof(version_header));
+			do_send_bytes(VERSION_STRING, strlen(VERSION_STRING));
+		}
 
-				std::string their_version(data);
+		std::map<std::string, int16_t>::const_iterator it = compressor_types.find(their_version);
+		if (it == compressor_types.end())
+			return fail_msg("unknown version string");
 
-				if (their_version != VERSION_STRING) {
-					relay_msg_header version_header = { RELAY_MAGIC_BYTES, MAX_VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
-					do_send_bytes((char*)&version_header, sizeof(version_header));
-					do_send_bytes(VERSION_STRING, strlen(VERSION_STRING));
-				}
+		compressor_type = it->second;
 
-				std::map<std::string, int16_t>::const_iterator it = compressor_types.find(their_version);
-				if (it == compressor_types.end())
-					return disconnect("unknown version string");
+		if (their_version == "spammy memeater")
+			compressor = RelayNodeCompressor(false);
+		else
+			compressor = RelayNodeCompressor(true);
 
-				compressor_type = it->second;
+		if (their_version != "the blocksize")
+			sendSponsor = true;
 
-				if (their_version == "spammy memeater")
-					compressor = RelayNodeCompressor(false);
-				else
-					compressor = RelayNodeCompressor(true);
+		do_send_bytes((char*)&current_msg, sizeof(current_msg));
+		do_send_bytes(data, ntohl(current_msg.length));
 
-				if (their_version != "the blocksize")
-					sendSponsor = true;
+		printf("%s Connected to relay node with protocol version %s\n", host.c_str(), data);
+		int token = get_send_mutex();
+		connected = 2;
+		do_throttle_outbound();
+		connected_callback(this, token); // Called with send_mutex!
+		release_send_mutex(token);
 
-				relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(message_size) };
-				do_send_bytes((char*)&version_header, sizeof(version_header));
-				do_send_bytes(data, message_size);
+		return true;
+	}
 
-				printf("%s Connected to relay node with protocol version %s\n", host.c_str(), data);
-				int token = get_send_mutex();
-				connected = 2;
-				do_throttle_outbound();
-				connected_callback(this, token); // Called with send_mutex!
-				release_send_mutex(token);
-			} else if (connected != 2) {
-				return disconnect("got non-version before version");
-			} else if (header.type == MAX_VERSION_TYPE) {
-				char data[message_size];
-				if (read_all(data, message_size) < (int64_t)(message_size))
-					return disconnect("failed to read max_version string");
+	bool process_max_version_message(size_t read_pos) {
+		char data[ntohl(current_msg.length)];
+		memcpy(data, &read_buff[read_pos], ntohl(current_msg.length));
 
-				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
-					printf("%s peer sent us a MAX_VERSION message\n", host.c_str());
-				else
-					return disconnect("got MAX_VERSION of same version as us");
-			} else if (header.type == SPONSOR_TYPE) {
-				char data[message_size];
-				if (read_all(data, message_size) < (int64_t)(message_size))
-					return disconnect("failed to read sponsor string");
-			} else if (header.type == BLOCK_TYPE) {
-				std::chrono::system_clock::time_point read_start(std::chrono::system_clock::now());
-				std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return read_all(buf, count); };
-				auto res = compressor.decompress_relay_block(do_read, message_size, true);
-				if (std::get<2>(res))
-					return disconnect(std::get<2>(res));
-				std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
+		if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(ntohl(current_msg.length)))))
+			printf("%s peer sent us a MAX_VERSION message\n", host.c_str());
+		else
+			return fail_msg("got MAX_VERSION of same version as us");
 
-				const std::vector<unsigned char>& fullhash = *std::get<3>(res).get();
-				size_t bytes_sent = provide_block(this, std::get<1>(res), fullhash);
-				std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
+		return true;
+	}
 
-				if (bytes_sent) {
-					printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]),
-													epoch_millis_lu(read_finish), host.c_str(),
-													(unsigned)std::get<0>(res), bytes_sent, (unsigned)std::get<1>(res)->size(),
-													to_millis_double(read_finish - read_start), to_millis_double(send_queued - read_finish));
-				}
-			} else if (header.type == END_BLOCK_TYPE) {
-			} else if (header.type == TRANSACTION_TYPE) {
-				if (!compressor.maybe_recv_tx_of_size(message_size, false))
-					return disconnect("got freely relayed transaction too large");
+	void start_block_message() {
+		current_block_read_start = std::chrono::system_clock::now();
+		current_block.reset(true, ntohl(current_msg.length));
+		current_block_locks.reset(new RelayNodeCompressor::DecompressLocks(&compressor));
+		read_state = READ_STATE_IN_BLOCK_MESSAGE;
+	}
 
-				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
-				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
-					return disconnect("failed to read loose transaction data");
+	ssize_t process_block_message(size_t read_pos) {
+		size_t start_read_pos = read_pos;
 
-				compressor.recv_tx(tx);
-				provide_transaction(this, tx);
-			} else if (header.type == OOB_TRANSACTION_TYPE) {
-				if (message_size > 1000000)
-					return disconnect("got oob transaction too large");
+		std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
+			if (read_pos + count > read_buff.size())
+				return false;
+			memcpy(buf, &read_buff[read_pos], count);
+			read_pos += count;
+			return true;
+		};
+		const char* err = compressor.do_partial_decompress(*current_block_locks, current_block, do_read);
+		if (err) {
+			current_block_locks.reset(NULL);
+			fail_msg(err);
+			return -1;
+		}
 
-				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
-				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
-					return disconnect("failed to read oob transaction data");
+		if (current_block.is_finished()) {
+			current_block_locks.reset(NULL);
 
-				provide_transaction(this, tx);
-			} else if (header.type == PING_TYPE) {
-				char data[8];
-				if (message_size != 8 || read_all(data, 8) < 8)
-					return disconnect("failed to read 8 byte ping message");
+			std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
+			size_t bytes_sent = provide_block(this, current_block.block, *current_block.fullhashptr);
+			std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
 
-				relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PONG_TYPE, htonl(8) };
+			if (bytes_sent) {
+				printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", HASH_PRINT(&(*current_block.fullhashptr)[0]),
+												epoch_millis_lu(read_finish), host.c_str(),
+												(unsigned)current_block.wire_bytes, bytes_sent, (unsigned)current_block.block->size(),
+												to_millis_double(read_finish - current_block_read_start), to_millis_double(send_queued - read_finish));
+			}
 
-				int token = get_send_mutex();
-				do_send_bytes((char*)&pong_msg_header, sizeof(pong_msg_header), token);
-				do_send_bytes(data, 8, token);
-				release_send_mutex(token);
-			} else
-				return disconnect("got unknown message type");
+			read_state = READ_STATE_NEW_MESSAGE;
+		}
+
+		return read_pos - start_read_pos;
+	}
+
+	bool process_transaction_message(size_t read_pos, bool outOfBand) {
+		if (ntohl(current_msg.length) > 1000000)
+			return fail_msg("got transaction too large");
+
+		if (!outOfBand && !compressor.maybe_recv_tx_of_size(ntohl(current_msg.length), false))
+			return fail_msg("got freely relayed transaction too large");
+
+		auto tx = std::make_shared<std::vector<unsigned char> > (ntohl(current_msg.length));
+		memcpy(&(*tx)[0], &read_buff[read_pos], ntohl(current_msg.length));
+
+		if (!outOfBand)
+			compressor.recv_tx(tx);
+		provide_transaction(this, tx);
+
+		return true;
+	}
+
+	bool process_ping_message(size_t read_pos) {
+		if (ntohl(current_msg.length) != 8)
+			return fail_msg("got ping message of non-8 length");
+
+		char data[8];
+		memcpy(data, &read_buff[read_pos], 8);
+
+		relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PONG_TYPE, htonl(8) };
+
+		int token = get_send_mutex();
+		do_send_bytes((char*)&pong_msg_header, sizeof(pong_msg_header), token);
+		do_send_bytes(data, 8, token);
+		release_send_mutex(token);
+
+		return true;
+	}
+
+	size_t process_messages() {
+		size_t read_pos = 0;
+		while (read_buff.size() > read_pos) {
+			if (disconnectStarted())
+				return 0;
+
+			switch (read_state) {
+				case READ_STATE_NEW_MESSAGE:
+					if (read_buff.size() - read_pos < 4*3)
+						return read_pos;
+					memcpy((char*)&current_msg, &read_buff[read_pos], 4*3);
+					read_pos += 4*3;
+
+					if (current_msg.magic != RELAY_MAGIC_BYTES)
+						return fail_msg("invalid magic bytes");
+
+					if (ntohl(current_msg.length) > 1000000)
+						return fail_msg("got message too large");
+
+					if (connected != 2 && current_msg.type != VERSION_TYPE)
+						return fail_msg("got non-version before version");
+
+					if (current_msg.type == BLOCK_TYPE)
+						read_state = READ_STATE_START_BLOCK_MESSAGE;
+					else
+						read_state = READ_STATE_IN_SIZED_MESSAGE;
+					break;
+				case READ_STATE_IN_SIZED_MESSAGE:
+					if (read_buff.size() - read_pos < ntohl(current_msg.length))
+						return read_pos;
+
+					if (current_msg.type == VERSION_TYPE) {
+						if (!process_version_message(read_pos))
+							return 0;
+					} else if (current_msg.type == MAX_VERSION_TYPE) {
+						if (!process_max_version_message(read_pos))
+							return 0;
+					} else if (current_msg.type == SPONSOR_TYPE) {
+					} else if (current_msg.type == END_BLOCK_TYPE) {
+						if (ntohl(current_msg.length) != 0)
+							return fail_msg("got non-0-length END_BLOCK message");
+					} else if (current_msg.type == TRANSACTION_TYPE) {
+						if (!process_transaction_message(read_pos, false))
+							return 0;
+					} else if (current_msg.type == OOB_TRANSACTION_TYPE) {
+						if (!process_transaction_message(read_pos, true))
+							return 0;
+					} else if (current_msg.type == PING_TYPE) {
+						if (!process_ping_message(read_pos))
+							return 0;
+					} else
+						return fail_msg("got unknown message type");
+
+					read_pos += ntohl(current_msg.length);
+					read_state = READ_STATE_NEW_MESSAGE;
+
+					break;
+				case READ_STATE_START_BLOCK_MESSAGE:
+					start_block_message();
+				case READ_STATE_IN_BLOCK_MESSAGE:
+					ssize_t res = process_block_message(read_pos);
+					if (res < 0)
+						return 0;
+					else if (res == 0)
+						return read_pos;
+					read_pos += res;
+					break;
+			}
+		}
+		return read_pos;
+	}
+
+	void recv_bytes(char* buf, size_t len) {
+		read_buff.insert(read_buff.end(), buf, buf + len);
+		size_t read = process_messages();
+		if (read) {
+			read_buff.erase(read_buff.begin(), read_buff.begin() + read);
+			read_buff.reserve(65536);
 		}
 	}
 
