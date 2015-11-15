@@ -36,22 +36,33 @@ private:
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	std::mutex mutex;
 
-	struct IndexVector;
-	struct IndexPtr;
 	class MerkleTreeBuilder {
 	public:
 		std::vector<unsigned char> hashlist;
 		MerkleTreeBuilder(uint32_t tx_count) : hashlist(tx_count * 32) {}
+		MerkleTreeBuilder() {}
+		void resize(uint32_t tx_count) { hashlist.resize(tx_count * 32); }
 		inline unsigned char* getTxHashLoc(uint32_t tx) { return &hashlist[tx * 32]; }
 		bool merkleRootMatches(const unsigned char* match);
 	};
 
+	struct IndexVector {
+		uint16_t index;
+		std::vector<unsigned char> data;
+	};
+	struct IndexPtr {
+		uint16_t index;
+		size_t pos;
+		IndexPtr(uint16_t index_in, size_t pos_in) : index(index_in), pos(pos_in) {}
+		bool operator< (const IndexPtr& o) const { return index < o.index; }
+	};
+
 public:
 	class DecompressState {
-	public:
-		const bool check_merkle;
-		const uint32_t tx_count;
+		bool check_merkle;
+		uint32_t tx_count;
 
+	public:
 		uint32_t wire_bytes = 4*3;
 		std::shared_ptr<std::vector<unsigned char> > block;
 		std::shared_ptr<std::vector<unsigned char> > fullhashptr;
@@ -75,7 +86,8 @@ public:
 		friend class RelayNodeCompressor;
 
 	public:
-		DecompressState(bool check_merkle_in, uint32_t tx_count_in);
+		void reset(bool check_merkle_in, uint32_t tx_count_in);
+		DecompressState(bool check_merkle_in, uint32_t tx_count_in) { reset(check_merkle_in, tx_count_in); }
 	};
 
 	RelayNodeCompressor(bool useOldFlagsIn)

@@ -195,18 +195,6 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
-
-struct RelayNodeCompressor::IndexVector {
-	uint16_t index;
-	std::vector<unsigned char> data;
-};
-struct RelayNodeCompressor::IndexPtr {
-	uint16_t index;
-	size_t pos;
-	IndexPtr(uint16_t index_in, size_t pos_in) : index(index_in), pos(pos_in) {}
-	bool operator< (const IndexPtr& o) const { return index < o.index; }
-};
-
 void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, size_t end) {
 	if (start + 1 >= end)
 		return;
@@ -225,15 +213,16 @@ void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, 
 	}
 }
 
-RelayNodeCompressor::DecompressState::DecompressState(bool check_merkle_in, uint32_t tx_count_in) :
-		check_merkle(check_merkle_in), tx_count(tx_count_in > 100000 ? 100001 : tx_count_in),
-		wire_bytes(4*3),
-		block(std::make_shared<std::vector<unsigned char> >(sizeof(bitcoin_msg_header) + 80)),
-		fullhashptr(std::make_shared<std::vector<unsigned char> >(32)),
-		merkleTree(check_merkle ? tx_count : 1),
-		txn_data(tx_count),
-		state(READ_STATE_START),
-		txn_read(0) {
+void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t tx_count_in) {
+	check_merkle = check_merkle_in;
+	tx_count = tx_count_in > 100000 ? 100001 : tx_count_in;
+	wire_bytes = 4*3;
+	block = std::make_shared<std::vector<unsigned char> >(sizeof(bitcoin_msg_header) + 80);
+	fullhashptr = std::make_shared<std::vector<unsigned char> >(32);
+	merkleTree.resize(check_merkle ? tx_count : 1);
+	txn_data.resize(tx_count);
+	state = READ_STATE_START;
+	txn_read = 0;
 	block->reserve(1000000 + sizeof(bitcoin_msg_header));
 	txn_ptrs.reserve(tx_count);
 }
