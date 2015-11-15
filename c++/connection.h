@@ -49,7 +49,7 @@ private:
 public:
 	const std::string host;
 
-	Connection(int sockIn, std::string hostIn, uint32_t max_outbound_buffer_size_in) : sock(sockIn),
+	Connection(int sockIn, std::string hostIn, uint32_t max_outbound_buffer_size_in=10000000) : sock(sockIn),
 			outside_send_mutex_token(0xdeadbeef * (unsigned long)this), primary_writepos(0), secondary_writepos(0),
 			initial_outbound_throttle(false), initial_outbound_throttle_done(false),
 			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
@@ -89,9 +89,10 @@ protected:
 	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
+	//recv_bytes will only ever be called in a thread-safe manner, however it may be called, at different times, from different threads
 	virtual void recv_bytes(char* buf, size_t len)=0;
 	virtual bool readable()=0;
-	virtual void on_disconnect_done()=0;
+	virtual void on_disconnect_done() {}
 
 private:
 	friend class GlobalNetProcess;

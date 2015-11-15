@@ -97,7 +97,7 @@ public:
 				ALWAYS_ASSERT(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
 
 			now = std::chrono::steady_clock::now();
-			char buf[4096];
+			char buf[65536];
 			{
 				std::set<int> remove_set;
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
@@ -105,7 +105,7 @@ public:
 					Connection* conn = e.second;
 
 					if (FD_ISSET(e.first, &fd_set_read)) {
-						ssize_t count = recv(conn->sock, buf, 4096, 0);
+						ssize_t count = recv(conn->sock, buf, sizeof(buf), 0);
 
 						if (count <= 0) {
 							remove_set.insert(e.first);
@@ -174,7 +174,7 @@ public:
 			}
 #ifndef WIN32
 			if (FD_ISSET(pipefd[0], &fd_set_read))
-				while (read(pipefd[0], buf, 4096) > 0);
+				while (read(pipefd[0], buf, sizeof(buf)) > 0);
 #endif
 		}
 	}
