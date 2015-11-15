@@ -36,7 +36,48 @@ private:
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	std::mutex mutex;
 
+	struct IndexVector;
+	struct IndexPtr;
+	class MerkleTreeBuilder {
+	public:
+		std::vector<unsigned char> hashlist;
+		MerkleTreeBuilder(uint32_t tx_count) : hashlist(tx_count * 32) {}
+		inline unsigned char* getTxHashLoc(uint32_t tx) { return &hashlist[tx * 32]; }
+		bool merkleRootMatches(const unsigned char* match);
+	};
+
 public:
+	class DecompressState {
+	public:
+		const bool check_merkle;
+		const uint32_t tx_count;
+
+		uint32_t wire_bytes = 4*3;
+		std::shared_ptr<std::vector<unsigned char> > block;
+		std::shared_ptr<std::vector<unsigned char> > fullhashptr;
+
+	private:
+		MerkleTreeBuilder merkleTree;
+		std::vector<IndexVector> txn_data;
+		std::vector<IndexPtr> txn_ptrs;
+
+		enum ReadState {
+			READ_STATE_START,
+			READ_STATE_START_TX,
+			READ_STATE_TX_DATA_LEN,
+			READ_STATE_TX_DATA,
+			READ_STATE_TX_READ_DONE,
+			READ_STATE_DONE,
+		};
+		ReadState state;
+		uint32_t txn_read, current_tx_size;
+
+		friend class RelayNodeCompressor;
+
+	public:
+		DecompressState(bool check_merkle_in, uint32_t tx_count_in);
+	};
+
 	RelayNodeCompressor(bool useOldFlagsIn)
 		: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, useOldFlags(useOldFlagsIn),
 		  send_tx_cache(useOldFlagsIn ? OLD_MAX_TXN_IN_FAS : 65000, useOldFlagsIn ? uint32_t(-1) : MAX_FAS_TOTAL_SIZE),
@@ -90,6 +131,7 @@ private:
 	const char* do_decompress(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 
 	friend void test_compress_block(std::vector<unsigned char>&, std::vector<std::shared_ptr<std::vector<unsigned char> > >);
+	friend void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, size_t end);
 };
 
 #endif

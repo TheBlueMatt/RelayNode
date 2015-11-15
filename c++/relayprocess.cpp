@@ -80,29 +80,22 @@ bool RelayNodeCompressor::was_tx_sent(const unsigned char* txhash) {
 	return send_tx_cache.contains(txhash);
 }
 
-class MerkleTreeBuilder {
-private:
-	std::vector<unsigned char> hashlist;
-public:
-	MerkleTreeBuilder(uint32_t tx_count) : hashlist(tx_count * 32) {}
-	inline unsigned char* getTxHashLoc(uint32_t tx) { return &hashlist[tx * 32]; }
-	bool merkleRootMatches(const unsigned char* match) {
-		uint32_t txcount = hashlist.size() / 32;
-		uint32_t stepCount = 1, lastMax = txcount - 1;
-		for (uint32_t rowSize = txcount; rowSize > 1; rowSize = (rowSize + 1) / 2) {
-			if (!memcmp(&hashlist[32 * (lastMax - stepCount)], &hashlist[32 * lastMax], 32))
-				return false;
+bool RelayNodeCompressor::MerkleTreeBuilder::merkleRootMatches(const unsigned char* match) {
+	uint32_t txcount = hashlist.size() / 32;
+	uint32_t stepCount = 1, lastMax = txcount - 1;
+	for (uint32_t rowSize = txcount; rowSize > 1; rowSize = (rowSize + 1) / 2) {
+		if (!memcmp(&hashlist[32 * (lastMax - stepCount)], &hashlist[32 * lastMax], 32))
+			return false;
 
-			for (uint32_t i = 0; i < rowSize; i += 2) {
-				assert(i*stepCount < txcount && lastMax < txcount);
-				double_sha256_two_32_inputs(&hashlist[32 * i*stepCount], &hashlist[32 * std::min((i + 1)*stepCount, lastMax)], &hashlist[32 * i*stepCount]);
-			}
-			lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
-			stepCount *= 2;
+		for (uint32_t i = 0; i < rowSize; i += 2) {
+			assert(i*stepCount < txcount && lastMax < txcount);
+			double_sha256_two_32_inputs(&hashlist[32 * i*stepCount], &hashlist[32 * std::min((i + 1)*stepCount, lastMax)], &hashlist[32 * i*stepCount]);
 		}
-		return !memcmp(match, &hashlist[0], 32);
+		lastMax = ((rowSize - 1) & 0xfffffffe) * stepCount;
+		stepCount *= 2;
 	}
-};
+	return !memcmp(match, &hashlist[0], 32);
+}
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
@@ -202,18 +195,19 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 	return std::make_tuple(compressed_block, (const char*)NULL);
 }
 
-struct IndexVector {
+
+struct RelayNodeCompressor::IndexVector {
 	uint16_t index;
 	std::vector<unsigned char> data;
 };
-struct IndexPtr {
+struct RelayNodeCompressor::IndexPtr {
 	uint16_t index;
 	size_t pos;
 	IndexPtr(uint16_t index_in, size_t pos_in) : index(index_in), pos(pos_in) {}
 	bool operator< (const IndexPtr& o) const { return index < o.index; }
 };
 
-void tweak_sort(std::vector<IndexPtr>& ptrs, size_t start, size_t end) {
+void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, size_t end) {
 	if (start + 1 >= end)
 		return;
 	size_t split = (end - start) / 2 + start;
@@ -221,7 +215,7 @@ void tweak_sort(std::vector<IndexPtr>& ptrs, size_t start, size_t end) {
 	tweak_sort(ptrs, split, end);
 
 	size_t j = 0, k = split;
-	std::vector<IndexPtr> left(ptrs.begin() + start, ptrs.begin() + split);
+	std::vector<RelayNodeCompressor::IndexPtr> left(ptrs.begin() + start, ptrs.begin() + split);
 	for (size_t i = start; i < end; i++) {
 		if (j < left.size() && (k >= end || left[j].index - (k - split) <= ptrs[k].index)) {
 			ptrs[i] = left[j++];
@@ -231,42 +225,13 @@ void tweak_sort(std::vector<IndexPtr>& ptrs, size_t start, size_t end) {
 	}
 }
 
-class DecompressState {
-public:
-	const bool check_merkle;
-	const uint32_t tx_count;
-
-	uint32_t wire_bytes = 4*3;
-	std::shared_ptr<std::vector<unsigned char> > block;
-	std::shared_ptr<std::vector<unsigned char> > fullhashptr;
-
-	MerkleTreeBuilder merkleTree;
-	std::vector<IndexVector> txn_data;
-	std::vector<IndexPtr> txn_ptrs;
-
-	enum ReadState {
-		READ_STATE_START,
-		READ_STATE_START_TX,
-		READ_STATE_TX_DATA_LEN,
-		READ_STATE_TX_DATA,
-		READ_STATE_TX_READ_DONE,
-		READ_STATE_DONE,
-	};
-	ReadState state;
-	uint32_t txn_read, current_tx_size;
-
-public:
-	DecompressState(bool check_merkle_in, uint32_t tx_count_in);
-	const char* do_decompress(std::function<ssize_t(char*, size_t)>& read_all);
-};
-
-DecompressState::DecompressState(bool check_merkle_in, uint32_t tx_count_in) :
-		check_merkle(check_merkle_in), tx_count(tx_count_in),
+RelayNodeCompressor::DecompressState::DecompressState(bool check_merkle_in, uint32_t tx_count_in) :
+		check_merkle(check_merkle_in), tx_count(tx_count_in > 100000 ? 100001 : tx_count_in),
 		wire_bytes(4*3),
 		block(std::make_shared<std::vector<unsigned char> >(sizeof(bitcoin_msg_header) + 80)),
 		fullhashptr(std::make_shared<std::vector<unsigned char> >(32)),
 		merkleTree(check_merkle ? tx_count : 1),
-		txn_data(tx_count_in),
+		txn_data(tx_count),
 		state(READ_STATE_START),
 		txn_read(0) {
 	block->reserve(1000000 + sizeof(bitcoin_msg_header));
@@ -276,9 +241,6 @@ DecompressState::DecompressState(bool check_merkle_in, uint32_t tx_count_in) :
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle) {
 	std::lock_guard<std::mutex> lock(mutex);
 	FASLockHint faslock(recv_tx_cache);
-
-	if (message_size > 100000)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "got a BLOCK message with far too many transactions", std::shared_ptr<std::vector<unsigned char> >(NULL));
 
 	DecompressState state(check_merkle, message_size);
 	bool read_failed = false;
@@ -297,6 +259,9 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 }
 
 inline const char* RelayNodeCompressor::read_block_header(DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
+	if (state.tx_count > 100000)
+		return "got a BLOCK message with far too many transactions";
+
 	if (!read_all((char*)&(*state.block)[sizeof(bitcoin_msg_header)], 80))
 		return NULL;
 	state.wire_bytes += 80;
