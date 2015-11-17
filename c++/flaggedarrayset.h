@@ -46,8 +46,10 @@ private:
 	mutable uint32_t max_remove;
 	mutable uint64_t flags_to_remove;
 
+	void _clear(bool takeLock);
+
 public:
-	void clear();
+	void clear() { _clear(true); }
 	FlaggedArraySet(uint64_t maxSizeIn, uint64_t maxFlagCountIn);
 	~FlaggedArraySet();
 
@@ -56,18 +58,7 @@ public:
 	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e) const;
 	bool contains(const unsigned char* elemHash) const;
 
-	FlaggedArraySet& operator=(const FlaggedArraySet& o) {
-		o.cleanup_late_remove();
-		clear();
-
-		maxSize = o.maxSize;
-		maxFlagCount = o.maxFlagCount;
-		flag_count = o.flag_count;
-		offset = o.offset;
-		backingMap = o.backingMap;
-		indexMap = o.indexMap;
-		return *this;
-	}
+	FlaggedArraySet& operator=(const FlaggedArraySet& o);
 
 private:
 	bool sanity_check() const;

@@ -146,6 +146,23 @@ FlaggedArraySet::~FlaggedArraySet() {
 	assert(sanity_check());
 }
 
+FlaggedArraySet& FlaggedArraySet::operator=(const FlaggedArraySet& o) {
+	std::unique_lock<WaitCountMutex> lock(mutex, std::defer_lock);
+	std::unique_lock<WaitCountMutex> lock2(o.mutex, std::defer_lock);
+	std::lock(lock, lock2);
+
+	o.cleanup_late_remove();
+	_clear(false);
+
+	maxSize = o.maxSize;
+	maxFlagCount = o.maxFlagCount;
+	flag_count = o.flag_count;
+	offset = o.offset;
+	backingMap = o.backingMap;
+	indexMap = o.indexMap;
+	return *this;
+}
+
 
 ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, uint32_t flagIn, bool setHash) :
 	flag(flagIn), elem(elemIn)
@@ -353,8 +370,11 @@ bool FlaggedArraySet::remove(unsigned int index, std::vector<unsigned char>& ele
 	return true;
 }
 
-void FlaggedArraySet::clear() {
-	std::lock_guard<WaitCountMutex> lock(mutex);
+void FlaggedArraySet::_clear(bool takeLock) {
+	std::unique_lock<WaitCountMutex> lock(mutex, std::defer_lock);
+	if (takeLock)
+		lock.lock();
+
 	if (!indexMap.empty() && !backingMap.empty())
 		assert(sanity_check());
 
