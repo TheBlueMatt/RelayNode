@@ -89,9 +89,11 @@ protected:
 	void do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 	void maybe_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0);
 
-	//recv_bytes will only ever be called in a thread-safe manner, however it may be called, at different times, from different threads
+	// recv_bytes will only ever be called in a thread-safe manner, however it may be called, at different times, from different threads
 	virtual void recv_bytes(char* buf, size_t len)=0;
+	// readable must run unlocked
 	virtual bool readable()=0;
+	// on_disconnect_done is called just before setting DISCONNECT_GLOBAL_THREAD_DONE (ie dont free just yet)
 	virtual void on_disconnect_done() {}
 
 private:
