@@ -113,10 +113,15 @@ public:
 #define DECLARE_NON_ATOMIC_PTR(TYPE, NAME) locked_atomic_int<TYPE*> NAME
 
 #else
+
+#define ANNOTATE_HAPPENS_BEFORE(A)
+#define ANNOTATE_HAPPENS_AFTER(A)
+
 #define DECLARE_ATOMIC(TYPE, NAME) std::atomic<TYPE> NAME
 #define DECLARE_ATOMIC_INT(TYPE, NAME) std::atomic<TYPE> NAME
 #define DECLARE_ATOMIC_PTR(TYPE, NAME) std::atomic<TYPE*> NAME
 #define DECLARE_NON_ATOMIC_PTR(TYPE, NAME) TYPE* NAME
+
 #endif
 
 #endif

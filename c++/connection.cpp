@@ -189,6 +189,7 @@ private:
 					}
 					conn->on_disconnect_done();
 					conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_THREAD_DONE;
+					ANNOTATE_HAPPENS_BEFORE(conn);
 				}
 			}
 #ifndef WIN32
@@ -252,6 +253,14 @@ void Connection::construction_done() {
 	}
 
 	processor.register_connection(sock, this);
+}
+
+bool Connection::disconnectComplete() {
+	if (disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE) {
+		ANNOTATE_HAPPENS_AFTER(this);
+		return true;
+	} else
+		return false;
 }
 
 Connection::~Connection() {

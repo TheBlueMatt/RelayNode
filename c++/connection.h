@@ -68,7 +68,7 @@ public:
 	void do_throttle_outbound() { if (!initial_outbound_throttle_done.test_and_set()) initial_outbound_throttle = true; }
 
 	void disconnect(const char* reason);
-	virtual bool disconnectComplete() { return disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE; }
+	virtual bool disconnectComplete();
 	bool disconnectStarted() { return disconnectFlags != 0; }
 	std::string getDisconnectDebug() {
 		int flags = disconnectFlags;
