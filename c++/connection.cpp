@@ -434,21 +434,31 @@ ssize_t ThreadedConnection::read_all(char *buf, size_t nbyte, millis_lu_type max
 }
 
 int OutboundPersistentConnection::get_send_mutex() {
-	OutboundConnection* conn = (OutboundConnection*)connection.load();
-	if (conn) {
-		mutex_valid = conn->get_send_mutex();
+	ReadWriteMutexReader read(&connection_mutex);
+	std::lock_guard<ReadWriteMutexReader> lock(read);
+	if (connection) {
+		mutex_valid = connection->get_send_mutex();
 		return mutex_valid;
 	} else
 		return 0;
 }
 void OutboundPersistentConnection::release_send_mutex(int token) {
-	OutboundConnection* conn = (OutboundConnection*)connection.load();
-	if (conn && mutex_valid.compare_exchange_strong(token, 0))
-		return conn->release_send_mutex(token);
+	ReadWriteMutexReader read(&connection_mutex);
+	std::lock_guard<ReadWriteMutexReader> lock(read);
+	if (connection && mutex_valid.compare_exchange_strong(token, 0))
+		return connection->release_send_mutex(token);
 }
 
 void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
-	OutboundConnection* old = (OutboundConnection*) connection.fetch_and(0);
+	OutboundConnection* old;
+	{
+		ReadWriteMutexWriter write(&connection_mutex);
+		std::unique_lock<ReadWriteMutexWriter> lock(write);
+
+		old = connection;
+		connection = NULL;
+	}
+
 	if (old)
 		old->disconnect_from_outside(disconnectReason.c_str());
 
@@ -474,11 +484,14 @@ void OutboundPersistentConnection::do_connect(OutboundPersistentConnection* me) 
 		return me->reconnect(error);
 
 	OutboundConnection* new_conn = new OutboundConnection(sock, me);
-#ifndef NDEBUG
-	unsigned long old_val =
-#endif
-		me->connection.exchange((unsigned long)new_conn);
-	assert(old_val == 0);
+
+	{
+		ReadWriteMutexWriter write(&me->connection_mutex);
+		std::unique_lock<ReadWriteMutexWriter> lock(write);
+
+		assert(me->connection == NULL);
+		me->connection = new_conn;
+	}
 	new_conn->construction_done();
 }
 

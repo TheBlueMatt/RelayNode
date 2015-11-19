@@ -167,8 +167,8 @@ private:
 		void construction_done() { ThreadedConnection::construction_done(); }
 	};
 
-	DECLARE_ATOMIC_INT(unsigned long, connection);
-	static_assert(sizeof(unsigned long) == sizeof(OutboundConnection*), "unsigned long must be the size of a pointer");
+	ReadWriteMutex connection_mutex;
+	OutboundConnection* connection;
 
 public:
 	const std::string serverHost;
@@ -181,15 +181,17 @@ public:
 	int get_send_mutex();
 	void release_send_mutex(int token);
 	void do_throttle_outbound(int token) {
-		OutboundConnection* conn = (OutboundConnection*)connection.load();
-		if (conn && mutex_valid == token)
-			conn->do_throttle_outbound();
+		ReadWriteMutexReader read(&connection_mutex);
+		std::lock_guard<ReadWriteMutexReader> lock(read);
+		if (connection && mutex_valid == token)
+			connection->do_throttle_outbound();
 	}
 
 	void disconnect_from_outside(const char* reason) {
-		OutboundConnection* conn = (OutboundConnection*)connection.load();
-		if (conn)
-			conn->disconnect_from_outside(reason);
+		ReadWriteMutexReader read(&connection_mutex);
+		std::lock_guard<ReadWriteMutexReader> lock(read);
+		if (connection)
+			connection->disconnect_from_outside(reason);
 	}
 
 protected:
@@ -197,20 +199,22 @@ protected:
 
 	virtual void on_disconnect()=0;
 	virtual void net_process(const std::function<void(std::string)>& disconnect)=0;
-	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return ((OutboundConnection*)connection.load())->read_all(buf, nbyte, max_sleep); } // Only allowed from within net_process
+	ssize_t read_all(char *buf, size_t nbyte, millis_lu_type max_sleep = millis_lu_type::max()) { return connection->read_all(buf, nbyte, max_sleep); } // Only allowed from within net_process
 
 	void maybe_do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
-		OutboundConnection* conn = (OutboundConnection*)connection.load();
-		if (conn) {
+		ReadWriteMutexReader read(&connection_mutex);
+		std::lock_guard<ReadWriteMutexReader> lock(read);
+		if (connection) {
 			assert(!mutex_valid || send_mutex_token == mutex_valid);
-			conn->do_send_bytes(buf, nbyte, mutex_valid == send_mutex_token ? send_mutex_token : 0);
+			connection->do_send_bytes(buf, nbyte, mutex_valid == send_mutex_token ? send_mutex_token : 0);
 		}
 	}
 	void maybe_do_send_bytes(const std::shared_ptr<std::vector<unsigned char> >& bytes, int send_mutex_token=0) {
-		OutboundConnection* conn = (OutboundConnection*)connection.load();
-		if (conn) {
+		ReadWriteMutexReader read(&connection_mutex);
+		std::lock_guard<ReadWriteMutexReader> lock(read);
+		if (connection) {
 			assert(!mutex_valid || send_mutex_token == mutex_valid);
-			conn->do_send_bytes(bytes, mutex_valid == send_mutex_token ? send_mutex_token : 0);
+			connection->do_send_bytes(bytes, mutex_valid == send_mutex_token ? send_mutex_token : 0);
 		}
 	}
 

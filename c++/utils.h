@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include <sys/time.h>
 
 #define likely(x)   __builtin_expect((x), 1)
@@ -229,6 +230,60 @@ public:
 		: mutex(&mutexIn)
 		{ mutex->waitCount.fetch_add(1, std::memory_order_release); }
 	~WaitCountHint() { mutex->waitCount.fetch_sub(1, std::memory_order_relaxed); }
+};
+
+/*****************************************
+ *** A R-W Mutex (no upgrades for now) ***
+ *****************************************/
+class ReadWriteMutex {
+private:
+	std::mutex mutex;
+	std::condition_variable write_done_cv, read_done_cv;
+	int readers = 0;
+	bool writer_waiting = false;
+public:
+	void read_lock() {
+		std::unique_lock<std::mutex> lock(mutex);
+		while (writer_waiting)
+			write_done_cv.wait(lock);
+		readers++;
+	}
+	void read_unlock() {
+		std::lock_guard<std::mutex> lock(mutex);
+		readers--;
+		read_done_cv.notify_all();
+	}
+
+	void write_lock() {
+		std::unique_lock<std::mutex> lock(mutex);
+		writer_waiting = true;
+		while (readers)
+			read_done_cv.wait(lock);
+		writer_waiting = false;
+		lock.release();
+	}
+	void write_unlock() {
+		write_done_cv.notify_all();
+		mutex.unlock();
+	}
+};
+
+class ReadWriteMutexReader {
+private:
+	ReadWriteMutex* mutex;
+public:
+	ReadWriteMutexReader(ReadWriteMutex* mutex_in) : mutex(mutex_in) {}
+	void lock() { mutex->read_lock(); }
+	void unlock() { mutex->read_unlock(); }
+};
+
+class ReadWriteMutexWriter {
+private:
+	ReadWriteMutex* mutex;
+public:
+	ReadWriteMutexWriter(ReadWriteMutex* mutex_in) : mutex(mutex_in) {}
+	void lock() { mutex->write_lock(); }
+	void unlock() { mutex->write_unlock(); }
 };
 
 #endif
