@@ -171,6 +171,7 @@ private:
 		};
 		const char* err = compressor.do_partial_decompress(*current_block_locks, current_block, do_read);
 		if (err) {
+			current_block.clear();
 			current_block_locks.reset(NULL);
 			fail_msg(err);
 			return -1;
@@ -190,6 +191,7 @@ private:
 												to_millis_double(read_finish - current_block_read_start), to_millis_double(send_queued - read_finish));
 			}
 
+			current_block.clear();
 			read_state = READ_STATE_NEW_MESSAGE;
 		}
 

@@ -73,6 +73,7 @@ public:
 		std::vector<IndexPtr> txn_ptrs;
 
 		enum ReadState {
+			READ_STATE_INVALID, // Set after clear()
 			READ_STATE_START,
 			READ_STATE_START_TX,
 			READ_STATE_TX_DATA_LEN,
@@ -87,6 +88,7 @@ public:
 
 	public:
 		DecompressState(bool check_merkle_in, uint32_t tx_count_in) { reset(check_merkle_in, tx_count_in); }
+		void clear();
 		void reset(bool check_merkle_in, uint32_t tx_count_in);
 		bool is_finished();
 	};

@@ -213,6 +213,18 @@ void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, 
 	}
 }
 
+void RelayNodeCompressor::DecompressState::clear() {
+	tx_count = 0;
+	block.reset();
+	fullhashptr.reset();
+	merkleTree.resize(0);
+	txn_data.clear();
+	txn_data.shrink_to_fit();
+	txn_ptrs.clear();
+	txn_ptrs.shrink_to_fit();
+	state = READ_STATE_INVALID;
+}
+
 void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t tx_count_in) {
 	check_merkle = check_merkle_in;
 	tx_count = tx_count_in > 100000 ? 100001 : tx_count_in;
@@ -396,6 +408,9 @@ const char* RelayNodeCompressor::do_partial_decompress(DecompressLocks& locks, D
 				return res;
 			case DecompressState::READ_STATE_DONE:
 				return NULL;
+			case DecompressState::READ_STATE_INVALID:
+				assert(0);
+				return "Called do_partial_decompress after state.clear() without state.reset()";
 		}
 	}
 	return NULL;
