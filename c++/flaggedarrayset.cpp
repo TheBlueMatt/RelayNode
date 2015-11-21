@@ -102,10 +102,6 @@ public:
 							}
 						}
 					}
-#ifdef FOR_TEST
-					if (dedups)
-						printf("Deduped %d txn\n", dedups);
-#endif
 				}
 #ifdef FOR_TEST
 				std::this_thread::sleep_for(std::chrono::milliseconds(5));
