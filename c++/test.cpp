@@ -64,34 +64,43 @@ RelayNodeCompressor global_sender(false), global_receiver(false);
 std::set<std::vector<unsigned char> > globalSeenSet;
 
 static unsigned int compress_runs = 0, decompress_runs = 0;
-static std::chrono::nanoseconds total_compress_time, total_decompress_time;
-static std::chrono::nanoseconds max_compress_time, max_decompress_time;
-static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1);
+static std::chrono::nanoseconds total_compress_time, total_decompress_time, total_decompress_init_time;
+static std::chrono::nanoseconds max_compress_time, max_decompress_time, max_decompress_init_time;
+static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1), min_decompress_init_time = std::chrono::hours(1);
 
 std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_block(std::shared_ptr<std::vector<unsigned char> >& data, RelayNodeCompressor* receiver, bool time) {
 	size_t readpos = sizeof(struct relay_msg_header);
 
-	auto start = std::chrono::steady_clock::now();
-	std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) {
+	auto init = std::chrono::steady_clock::now();
+
+	RelayNodeCompressor::DecompressState state(true, block_tx_count);
+	RelayNodeCompressor::DecompressLocks locks(receiver);
+
+	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
 		memcpy(buf, &(*data)[readpos], count);
 		readpos += count;
 		assert(readpos <= data->size());
-		return count;
+		return true;
 	};
-	auto res = receiver->decompress_relay_block(do_read, block_tx_count, true);
+	auto start = std::chrono::steady_clock::now();
+	const char* err = receiver->do_partial_decompress(locks, state, do_read);
 	auto decompressed = std::chrono::steady_clock::now();
 	if (time) {
 		total_decompress_time += decompressed - start; decompress_runs++;
 		if ((decompressed - start) > max_decompress_time) max_decompress_time = decompressed - start;
 		if ((decompressed - start) < min_decompress_time) min_decompress_time = decompressed - start;
+
+		total_decompress_init_time += start - init;
+		if ((start - init) > max_decompress_init_time) max_decompress_init_time = start - init;
+		if ((start - init) < min_decompress_init_time) min_decompress_init_time = start - init;
 	}
 
-	if (std::get<2>(res)) {
-		printf("ERROR Decompressing block %s\n", std::get<2>(res));
+	if (err) {
+		printf("ERROR Decompressing block %s\n", err);
 		exit(2);
 	} else if (time)
 		PRINT_TIME("Decompressed block in %lf ms\n", to_millis_double(decompressed - start));
-	return std::get<1>(res);
+	return state.block;
 }
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribute__((noinline)) do_compress_test(RelayNodeCompressor& sender, const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& data, uint32_t tx_count) {
@@ -243,5 +252,6 @@ int main() {
 
 	printf("Total time spent compressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", compress_runs, to_millis_double(total_compress_time), to_millis_double(total_compress_time / compress_runs), to_millis_double(min_compress_time), to_millis_double(max_compress_time));
 	printf("Total time spent decompressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis_double(total_decompress_time), to_millis_double(total_decompress_time / decompress_runs), to_millis_double(min_decompress_time), to_millis_double(max_decompress_time));
+	printf("Total time spent initializing decompresstion of %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis_double(total_decompress_init_time), to_millis_double(total_decompress_init_time / decompress_runs), to_millis_double(min_decompress_init_time), to_millis_double(max_decompress_init_time));
 	return 0;
 }
