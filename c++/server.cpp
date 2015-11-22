@@ -160,8 +160,9 @@ private:
 	}
 
 	ssize_t process_block_message(size_t read_pos) {
-		size_t start_read_pos = read_pos;
+		std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
 
+		size_t start_read_pos = read_pos;
 		std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
 			if (read_pos + count > read_buff.size())
 				return false;
@@ -169,6 +170,7 @@ private:
 			read_pos += count;
 			return true;
 		};
+
 		const char* err = compressor.do_partial_decompress(*current_block_locks, current_block, do_read);
 		if (err) {
 			current_block.clear();
@@ -180,7 +182,6 @@ private:
 		if (current_block.is_finished()) {
 			current_block_locks.reset(NULL);
 
-			std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
 			size_t bytes_sent = provide_block(this, current_block.block, *current_block.fullhashptr);
 			std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
 
