@@ -48,7 +48,8 @@ private:
 
 	struct IndexVector {
 		uint16_t index;
-		std::vector<unsigned char> data;
+		uint32_t size;
+		unsigned char* data;
 	};
 	struct IndexPtr {
 		uint16_t index;
@@ -71,6 +72,8 @@ public:
 		MerkleTreeBuilder merkleTree;
 		std::vector<IndexVector> txn_data;
 		std::vector<IndexPtr> txn_ptrs;
+		std::unique_ptr<unsigned char[]> txn_data_block;
+		uint32_t txn_data_block_use;
 
 		enum ReadState {
 			READ_STATE_INVALID, // Set after clear()

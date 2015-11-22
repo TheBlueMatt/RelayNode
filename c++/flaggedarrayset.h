@@ -68,7 +68,7 @@ private:
 public:
 	void add(const std::shared_ptr<std::vector<unsigned char> >& e, uint32_t flag);
 	int remove(const std::vector<unsigned char>::const_iterator& start, const std::vector<unsigned char>::const_iterator& end);
-	bool remove(unsigned int index, std::vector<unsigned char>& elemRes, unsigned char* elemHashRes);
+	std::shared_ptr<std::vector<unsigned char> > remove(unsigned int index, unsigned char* elemHashRes);
 
 	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const;
 };

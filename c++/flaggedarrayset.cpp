@@ -338,20 +338,20 @@ int FlaggedArraySet::remove(const std::vector<unsigned char>::const_iterator& st
 	return res;
 }
 
-bool FlaggedArraySet::remove(unsigned int index, std::vector<unsigned char>& elemRes, unsigned char* elemHashRes) {
+std::shared_ptr<std::vector<unsigned char> > FlaggedArraySet::remove(unsigned int index, unsigned char* elemHashRes) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 
 	if (index < max_remove)
 		cleanup_late_remove();
-	int lookup_index = index + to_be_removed.size();
+	unsigned int lookup_index = index + to_be_removed.size();
 
-	if ((unsigned int)lookup_index >= indexMap.size())
-		return false;
+	if (lookup_index >= indexMap.size())
+		return std::shared_ptr<std::vector<unsigned char> >();
 
 	const ElemAndFlag& e = indexMap[lookup_index]->first;
 	assert(e.elem && e.elemHash);
 	memcpy(elemHashRes, &(*e.elemHash)[0], 32);
-	elemRes = *e.elem;
+	std::shared_ptr<std::vector<unsigned char> > res = e.elem;
 
 	if (index >= max_remove) {
 		to_be_removed.push_back(index);
@@ -363,7 +363,7 @@ bool FlaggedArraySet::remove(unsigned int index, std::vector<unsigned char>& ele
 	}
 
 	assert(sanity_check());
-	return true;
+	return res;
 }
 
 void FlaggedArraySet::_clear(bool takeLock) {
