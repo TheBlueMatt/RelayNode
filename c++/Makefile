@@ -86,8 +86,8 @@ endif
 
 COMMON_CXXFLAGS += -std=c++11 -Wall
 
-CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS)
-LDFLAGS += -pthread -lresolv
+CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS) $(CUSTOM_CXXFLAGS)
+LDFLAGS += -pthread -lresolv $(CUSTOM_LDFLAGS)
 
 # list of all targets
 NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server mempoolserver test)
