@@ -82,7 +82,7 @@ public:
 			READ_STATE_DONE,
 		};
 		ReadState state;
-		uint32_t txn_read, current_tx_size;
+		uint32_t txn_read;
 
 		friend class RelayNodeCompressor;
 

@@ -323,20 +323,20 @@ inline const char* RelayNodeCompressor::read_tx_data_len(DecompressState& state,
 	if (tx_size.i > 1000000)
 		return "got unreasonably large tx";
 
-	state.current_tx_size = tx_size.i;
+	state.txn_data[state.txn_read].data.resize(tx_size.i);
 	state.state = DecompressState::READ_STATE_TX_DATA;
 
 	return NULL;
 }
 
 inline const char* RelayNodeCompressor::read_tx_data(DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
-	state.txn_data[state.txn_read].data.resize(state.current_tx_size);
-	if (!read_all((char*)&(state.txn_data[state.txn_read].data[0]), state.current_tx_size))
+	IndexVector& v = state.txn_data[state.txn_read];
+	if (!read_all((char*)&(v.data[0]), v.data.size()))
 		return NULL;
-	state.wire_bytes += state.current_tx_size;
+	state.wire_bytes += v.data.size();
 
 	if (state.check_merkle)
-		double_sha256(&(state.txn_data[state.txn_read].data[0]), state.merkleTree.getTxHashLoc(state.txn_read), state.current_tx_size);
+		double_sha256(&(v.data[0]), state.merkleTree.getTxHashLoc(state.txn_read), v.data.size());
 
 	state.txn_read++;
 	if (state.txn_read == state.tx_count)
