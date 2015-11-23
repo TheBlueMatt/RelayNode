@@ -63,18 +63,18 @@ uint32_t block_tx_count;
 RelayNodeCompressor global_sender(false), global_receiver(false);
 std::set<std::vector<unsigned char> > globalSeenSet;
 
-static unsigned int compress_runs = 0, decompress_runs = 0;
-static std::chrono::nanoseconds total_compress_time, total_decompress_time, total_decompress_init_time;
-static std::chrono::nanoseconds max_compress_time, max_decompress_time, max_decompress_init_time;
-static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1), min_decompress_init_time = std::chrono::hours(1);
+static unsigned int compress_runs = 0, decompress_runs = 0, recompress_runs;
+static std::chrono::nanoseconds total_compress_time, total_recompress_time, total_decompress_time, total_decompress_init_time, total_recompress_init_time;
+static std::chrono::nanoseconds max_compress_time, max_recompress_time, max_decompress_time, max_decompress_init_time, max_recompress_init_time;
+static std::chrono::nanoseconds min_compress_time = std::chrono::hours(1), min_recompress_time = std::chrono::hours(1), min_decompress_time = std::chrono::hours(1), min_decompress_init_time = std::chrono::hours(1), min_recompress_init_time = std::chrono::hours(1);
 
-std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_block(std::shared_ptr<std::vector<unsigned char> >& data, RelayNodeCompressor* receiver, bool time) {
+std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_block(std::shared_ptr<std::vector<unsigned char> >& data, RelayNodeCompressor& receiver, bool time) {
 	size_t readpos = sizeof(struct relay_msg_header);
 
 	auto init = std::chrono::steady_clock::now();
 
 	RelayNodeCompressor::DecompressState state(true, block_tx_count, false);
-	RelayNodeCompressor::DecompressLocks locks(receiver);
+	RelayNodeCompressor::DecompressLocks locks(&receiver);
 
 	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
 		memcpy(buf, &(*data)[readpos], count);
@@ -83,7 +83,7 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_bloc
 		return true;
 	};
 	auto start = std::chrono::steady_clock::now();
-	const char* err = receiver->do_partial_decompress(locks, state, do_read);
+	const char* err = receiver.do_partial_decompress(locks, state, do_read);
 	auto decompressed = std::chrono::steady_clock::now();
 	if (time) {
 		total_decompress_time += decompressed - start; decompress_runs++;
@@ -115,26 +115,70 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribut
 	return res;
 }
 
+std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) do_recompress_test(std::vector<unsigned char>& data, RelayNodeCompressor& receiver, RelayNodeCompressor* sender[COMPRESSOR_TYPES]) {
+	size_t readpos = sizeof(struct relay_msg_header);
+
+	auto init = std::chrono::steady_clock::now();
+
+	RelayNodeCompressor::DecompressState state(true, block_tx_count, true);
+	RelayNodeCompressor::DecompressLocks locks(&receiver);
+
+	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
+		memcpy(buf, &data[readpos], count);
+		readpos += count;
+		assert(readpos <= data.size());
+		return true;
+	};
+	auto start = std::chrono::steady_clock::now();
+	const char* err = receiver.do_partial_recompress(locks, state, do_read, sender);
+	auto recompressed = std::chrono::steady_clock::now();
+
+	total_recompress_time += recompressed - start; recompress_runs++;
+	if ((recompressed - start) > max_recompress_time) max_recompress_time = recompressed - start;
+	if ((recompressed - start) < min_recompress_time) min_recompress_time = recompressed - start;
+
+	total_recompress_init_time += start - init;
+	if ((start - init) > max_recompress_init_time) max_recompress_init_time = start - init;
+	if ((start - init) < min_recompress_init_time) min_recompress_init_time = start - init;
+
+	if (err) {
+		printf("ERROR Recompressing block %s\n", err);
+		exit(2);
+	} else
+		PRINT_TIME("Recompressed block in %lf ms\n", to_millis_double(recompressed - start));
+	return state.block[0];
+}
+
 void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors) {
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	RelayNodeCompressor sender(false), tester(false), tester2(false), receiver(false);
+	static_assert(COMPRESSOR_TYPES == 2, "There are two compressor types used in test");
+	RelayNodeCompressor *senders_recompress[COMPRESSOR_TYPES];
+	senders_recompress[0] = new RelayNodeCompressor(false);
+	senders_recompress[1] = new RelayNodeCompressor(true);
+
+	RelayNodeCompressor sender(false), tester(false), tester2(false), receiver(false), receiver_recompress(false);
 
 	for (auto v : txVectors) {
 		unsigned int made = sender.get_relay_transaction(v).use_count();
 #ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v); // Copy the vector to give the deduper something to do
 #endif
-		if (made)
+		if (made) {
 			receiver.recv_tx(v);
+			receiver_recompress.recv_tx(v);
+		}
 #ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
 #endif
-		if (made != tester.get_relay_transaction(v).use_count() || made != tester2.get_relay_transaction(v).use_count()) {
+		if (made != tester.get_relay_transaction(v).use_count() ||
+				made != tester2.get_relay_transaction(v).use_count() ||
+				made != senders_recompress[0]->get_relay_transaction(v).use_count()) {
 			printf("get_relay_transaction behavior not consistent???\n");
 			exit(5);
 		}
+		senders_recompress[1]->get_relay_transaction(v);
 #ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
 #endif
@@ -176,12 +220,20 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
 	block_tx_count = ntohl(header.length);
 
-	auto decompressed_block = recv_block(std::get<0>(res), &receiver, true);
+	auto decompressed_block = recv_block(std::get<0>(res), receiver, true);
 
 	if (*decompressed_block != data) {
 		printf("Re-constructed block did not match!\n");
 		exit(4);
 	}
+
+	auto recompressed_block = do_recompress_test(*std::get<0>(res), receiver_recompress, senders_recompress);
+
+	if (*recompressed_block != *std::get<0>(res)) {
+		printf("Re-compressed block did not match compressed block!\n");
+		exit(10);
+	}
+
 
 	if (globalSeenSet.insert(fullhash).second) {
 		res = global_sender.maybe_compress_block(fullhash, data, true);
@@ -189,13 +241,16 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			printf("Failed to compress block globally %s\n", std::get<1>(res));
 			exit(8);
 		}
-		decompressed_block = recv_block(std::get<0>(res), &global_receiver, false);
+		decompressed_block = recv_block(std::get<0>(res), global_receiver, false);
 
 		if (*decompressed_block != data) {
 			printf("Global re-constructed block did not match!\n");
 			exit(4);
 		}
 	}
+
+	delete senders_recompress[0];
+	delete senders_recompress[1];
 }
 
 void run_test(std::vector<unsigned char>& data) {
@@ -254,5 +309,7 @@ int main() {
 	printf("Total time spent compressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", compress_runs, to_millis_double(total_compress_time), to_millis_double(total_compress_time / compress_runs), to_millis_double(min_compress_time), to_millis_double(max_compress_time));
 	printf("Total time spent decompressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis_double(total_decompress_time), to_millis_double(total_decompress_time / decompress_runs), to_millis_double(min_decompress_time), to_millis_double(max_decompress_time));
 	printf("Total time spent initializing decompresstion of %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", decompress_runs, to_millis_double(total_decompress_init_time), to_millis_double(total_decompress_init_time / decompress_runs), to_millis_double(min_decompress_init_time), to_millis_double(max_decompress_init_time));
+	printf("Total time spent recompressing %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", recompress_runs, to_millis_double(total_recompress_time), to_millis_double(total_recompress_time / recompress_runs), to_millis_double(min_recompress_time), to_millis_double(max_recompress_time));
+	printf("Total time spent initializing recompresstion of %u blocks: %lf ms (avg %lf, min %lf, max %lf)\n", recompress_runs, to_millis_double(total_recompress_init_time), to_millis_double(total_recompress_init_time / recompress_runs), to_millis_double(min_recompress_init_time), to_millis_double(max_recompress_init_time));
 	return 0;
 }
