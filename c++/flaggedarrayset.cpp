@@ -170,7 +170,7 @@ ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& ele
 }
 ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t) :
 	elemHash(elemHashIn) {}
-ElemAndFlag::ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBeginIn, const std::vector<unsigned char>::const_iterator& elemEndIn, uint32_t flagIn) :
+ElemAndFlag::ElemAndFlag(const unsigned char* elemBeginIn, const unsigned char* elemEndIn, uint32_t flagIn) :
 	flag(flagIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
 
 bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
@@ -180,17 +180,17 @@ bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
 			(hashSet && *o.elemHash == *elemHash) ||
 			(!hashSet && *o.elem == *elem);
 	} else {
-		std::vector<unsigned char>::const_iterator o_begin, o_end, e_begin, e_end;
+		const unsigned char *o_begin, *o_end, *e_begin, *e_end;
 		if (elem) {
-			e_begin = elem->begin();
-			e_end = elem->end();
+			e_begin = &(*elem)[0];
+			e_end = &(*elem->end());
 		} else {
 			e_begin = elemBegin;
 			e_end = elemEnd;
 		}
 		if (o.elem) {
-			o_begin = o.elem->begin();
-			o_end = o.elem->end();
+			o_begin = &(*o.elem)[0];
+			o_end = &(*o.elem->end());
 		} else {
 			o_begin = o.elemBegin;
 			o_end = o.elemEnd;
@@ -200,10 +200,10 @@ bool ElemAndFlag::operator == (const ElemAndFlag& o) const {
 }
 
 size_t std::hash<ElemAndFlag>::operator()(const ElemAndFlag& e) const {
-	std::vector<unsigned char>::const_iterator it, end;
+	const unsigned char *it, *end;
 	if (e.elem) {
-		it = e.elem->begin();
-		end = e.elem->end();
+		it = &(*e.elem)[0];
+		end = &(*e.elem->end());
 	} else {
 		it = e.elemBegin;
 		end = e.elemEnd;
@@ -323,7 +323,7 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 	assert(sanity_check());
 }
 
-int FlaggedArraySet::remove(const std::vector<unsigned char>::const_iterator& start, const std::vector<unsigned char>::const_iterator& end) {
+int FlaggedArraySet::remove(const unsigned char* start, const unsigned char* end) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
 

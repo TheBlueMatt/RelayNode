@@ -15,10 +15,10 @@
 struct ElemAndFlag {
 	uint32_t flag;
 	std::shared_ptr<std::vector<unsigned char> > elem, elemHash;
-	std::vector<unsigned char>::const_iterator elemBegin, elemEnd;
+	const unsigned char *elemBegin, *elemEnd;
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, uint32_t flagIn, bool setHash);
 	ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t);
-	ElemAndFlag(const std::vector<unsigned char>::const_iterator& elemBegin, const std::vector<unsigned char>::const_iterator& elemEnd, uint32_t flagIn);
+	ElemAndFlag(const unsigned char* elemBegin, const unsigned char* elemEnd, uint32_t flagIn);
 	bool operator == (const ElemAndFlag& o) const;
 };
 namespace std {
@@ -67,7 +67,7 @@ private:
 
 public:
 	void add(const std::shared_ptr<std::vector<unsigned char> >& e, uint32_t flag);
-	int remove(const std::vector<unsigned char>::const_iterator& start, const std::vector<unsigned char>::const_iterator& end);
+	int remove(const unsigned char* start, const unsigned char* end);
 	std::shared_ptr<std::vector<unsigned char> > remove(unsigned int index, unsigned char* elemHashRes);
 
 	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const;

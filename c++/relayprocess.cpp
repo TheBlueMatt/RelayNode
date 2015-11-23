@@ -156,7 +156,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 			move_forward(readit, 4, block.end());
 
-			int index = send_tx_cache.remove(txstart, readit);
+			int index = send_tx_cache.remove(&(*txstart), &(*readit));
 
 			__builtin_prefetch(&(*readit), 0);
 			__builtin_prefetch(&(*readit) + 64, 0);
