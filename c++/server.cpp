@@ -31,7 +31,30 @@
 static const char* HOST_SPONSOR;
 
 
+
+class RelayNetworkClient;
+class RelayNetworkCompressor : public RelayNodeCompressor {
+public:
+	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
+	RelayNetworkCompressor(bool useFlagsAndSmallerMax) : RelayNodeCompressor(useFlagsAndSmallerMax) {}
+	void relay_node_connected(RelayNetworkClient* client, int token);
+};
+
+static_assert(COMPRESSOR_TYPES == 2, "There are two compressor types init'd in server");
 static const std::map<std::string, int16_t> compressor_types = {{std::string("sponsor printer"), 1}, {std::string("spammy memeater"), 0}, {std::string("the blocksize"), 1}};
+static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
+static RelayNodeCompressor* compressor_ptrs[COMPRESSOR_TYPES];
+class CompressorInit {
+public:
+	CompressorInit() {
+		compressors[0] = RelayNetworkCompressor(false);
+		compressors[1] = RelayNetworkCompressor(true);
+		compressor_ptrs[0] = &compressors[0];
+		compressor_ptrs[1] = &compressors[1];
+	}
+};
+static CompressorInit init;
+
 
 
 /***********************************************
@@ -58,7 +81,7 @@ private:
 	bool sendSponsor = false;
 	uint8_t tx_sent = 0;
 
-	const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> provide_block;
+	const std::function<void (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<void (RelayNetworkClient*, int)> connected_callback;
 
@@ -71,10 +94,10 @@ public:
 	DECLARE_ATOMIC_INT(int16_t, compressor_type);
 
 	RelayNetworkClient(int sockIn, std::string hostIn,
-						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
+						const std::function<void (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
-			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1, false),
+			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1, true),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }
@@ -154,7 +177,7 @@ private:
 
 	void start_block_message() {
 		current_block_read_start = std::chrono::system_clock::now();
-		current_block.reset(true, ntohl(current_msg.length), false);
+		current_block.reset(true, ntohl(current_msg.length), true);
 		current_block_locks.reset(new RelayNodeCompressor::DecompressLocks(&compressor));
 		read_state = READ_STATE_IN_BLOCK_MESSAGE;
 	}
@@ -171,7 +194,7 @@ private:
 			return true;
 		};
 
-		const char* err = compressor.do_partial_decompress(*current_block_locks, current_block, do_read);
+		const char* err = compressor.do_partial_recompress(*current_block_locks, current_block, do_read, compressor_ptrs);
 		if (err) {
 			current_block.clear();
 			current_block_locks.reset(NULL);
@@ -182,13 +205,15 @@ private:
 		if (current_block.is_finished()) {
 			current_block_locks.reset(NULL);
 
-			size_t bytes_sent = provide_block(this, current_block.block[0], *current_block.fullhashptr);
+			provide_block(this, current_block);
 			std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
 
-			if (bytes_sent) {
-				printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", HASH_PRINT(&(*current_block.fullhashptr)[0]),
+			if (current_block.compress_res[0]) {
+				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&(*current_block.fullhashptr)[0]), current_block.compress_res[0], host.c_str());
+			} else {
+				printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %u / %u TIMES: %lf %lf\n", HASH_PRINT(&(*current_block.fullhashptr)[0]),
 												epoch_millis_lu(read_finish), host.c_str(),
-												(unsigned)current_block.wire_bytes, bytes_sent, (unsigned)current_block.block[0]->size(),
+												(unsigned)current_block.wire_bytes, (unsigned)current_block.block[0]->size(), current_block.block_bytes,
 												to_millis_double(read_finish - current_block_read_start), to_millis_double(send_queued - read_finish));
 			}
 
@@ -357,28 +382,12 @@ private:
 };
 
 
-class RelayNetworkCompressor : public RelayNodeCompressor {
-public:
-	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
-	RelayNetworkCompressor(bool useFlagsAndSmallerMax) : RelayNodeCompressor(useFlagsAndSmallerMax) {}
-
-	void relay_node_connected(RelayNetworkClient* client, int token) {
-		for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
-			client->receive_transaction(tx_to_msg(tx, false, false), token);
-			client->receive_transaction(tx, token);
-		});
-	}
-};
-
-static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
-class CompressorInit {
-public:
-	CompressorInit() {
-		compressors[0] = RelayNetworkCompressor(false);
-		compressors[1] = RelayNetworkCompressor(true);
-	}
-};
-static CompressorInit init;
+void RelayNetworkCompressor::relay_node_connected(RelayNetworkClient* client, int token) {
+	for_each_sent_tx([&] (const std::shared_ptr<std::vector<unsigned char> >& tx) {
+		client->receive_transaction(tx_to_msg(tx, false, false), token);
+		client->receive_transaction(tx, token);
+	});
+}
 
 
 class MempoolClient : public OutboundPersistentConnection {
@@ -540,18 +549,19 @@ int main(const int argc, const char** argv) {
 						}
 					});
 
-	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
-		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {
-			if (bytes->size() < sizeof(struct bitcoin_msg_header) + 80)
-				return (size_t)0;
+	std::function<void (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> relayBlock =
+		[&](RelayNetworkClient* from, RelayNodeCompressor::DecompressState& block) {
+			assert(block.recompress);
 
-			std::pair<const char*, size_t> relay_res = do_relay(fullhash, *bytes, false);
-			if (relay_res.first) {
-				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&fullhash[0]), relay_res.first, from->host.c_str());
-				return relay_res.second;
+			std::lock_guard<std::mutex> lock(map_mutex);
+			for (uint16_t i = 0; i < COMPRESSOR_TYPES; i++) {
+				if (!block.compress_res[i]) {
+					const auto& relay = block.block[i];
+					for (const auto& client : clientMap)
+						if (!client.second->disconnectStarted() && client.second->compressor_type == i)
+							client.second->receive_block(relay);
+				}
 			}
-
-			return relay_res.second;
 		};
 
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =
