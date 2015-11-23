@@ -296,9 +296,11 @@ bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
 	cleanup_late_remove();
 	ElemAndFlag e(std::make_shared<std::vector<unsigned char> >(elemHash, elemHash + 32), NULL);
-	for (const std::unordered_map<ElemAndFlag, uint64_t>::iterator& it : indexMap)
+	for (const std::unordered_map<ElemAndFlag, uint64_t>::iterator& it : indexMap) {
+		assert(it->first.elemHash && e.elemHash);
 		if (it->first == e)
 			return true;
+	}
 	return false;
 }
 
