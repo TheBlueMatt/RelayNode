@@ -441,7 +441,6 @@ int main(const int argc, const char** argv) {
 	std::mutex map_mutex;
 	std::map<std::string, RelayNetworkClient*> clientMap;
 	DECLARE_NON_ATOMIC_PTR(P2PClient, trustedP2P);
-	DECLARE_NON_ATOMIC_PTR(P2PClient, localP2P);
 
 	// You'll notice in the below callbacks that we have to do some header adding/removing
 	// This is because the things are setup for the relay <-> p2p case (both to optimize
@@ -485,8 +484,7 @@ int main(const int argc, const char** argv) {
 						if (relay_res.first) {
 							printf(HASH_FORMAT" INSANE %s TRUSTEDP2P\n", HASH_PRINT(&fullhash[0]), relay_res.first);
 							return;
-						} else
-							((P2PClient*)localP2P)->receive_block(bytes);
+						}
 
 						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
 						printf(HASH_FORMAT" BLOCK %lu %s TRUSTEDP2P %lu / %lu / %lu TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]), epoch_millis_lu(send_start), argv[1],
@@ -502,17 +500,12 @@ int main(const int argc, const char** argv) {
 								return;
 						}
 						std::lock_guard<std::mutex> lock(map_mutex);
-						bool sentToLocal = false;
 						for (uint16_t i = 0; i < COMPRESSOR_TYPES; i++) {
 							auto tx = compressors[i].get_relay_transaction(bytes);
 							if (tx.use_count()) {
 								for (const auto& client : clientMap) {
 									if (!client.second->disconnectStarted() && client.second->compressor_type == i)
 										client.second->receive_transaction(tx);
-								}
-								if (!sentToLocal) {
-									((P2PClient*)localP2P)->receive_transaction(bytes);
-									sentToLocal = true;
 								}
 							}
 						}
@@ -547,35 +540,6 @@ int main(const int argc, const char** argv) {
 						}
 					});
 
-	localP2P = new P2PClient("127.0.0.1", 8335,
-					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point& read_start) {
-						if (bytes.size() < sizeof(struct bitcoin_msg_header) + 80)
-							return;
-
-						std::chrono::system_clock::time_point send_start(std::chrono::system_clock::now());
-
-						std::vector<unsigned char> fullhash(32);
-						getblockhash(fullhash, bytes, sizeof(struct bitcoin_msg_header));
-
-						std::pair<const char*, size_t> relay_res = do_relay(fullhash, bytes, true);
-						if (relay_res.first) {
-							printf(HASH_FORMAT" INSANE %s LOCALP2P\n", HASH_PRINT(&fullhash[0]), relay_res.first);
-							return;
-						} else
-							((P2PClient*)localP2P)->receive_block(bytes);
-
-						((P2PClient*)trustedP2P)->receive_block(bytes);
-
-						std::chrono::system_clock::time_point send_end(std::chrono::system_clock::now());
-						printf(HASH_FORMAT" BLOCK %lu %s LOCALP2P %lu / %lu / %lu TIMES: %lf %lf\n", HASH_PRINT(&fullhash[0]),
-														epoch_millis_lu(send_start), "127.0.0.1",
-														bytes.size(), relay_res.second, bytes.size(),
-														to_millis_double(send_start - read_start), to_millis_double(send_end - send_start));
-					},
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						((P2PClient*)trustedP2P)->receive_transaction(bytes);
-					}, NULL, false);
-
 	std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)> relayBlock =
 		[&](RelayNetworkClient* from, std::shared_ptr<std::vector<unsigned char>> & bytes, const std::vector<unsigned char>& fullhash) {
 			if (bytes->size() < sizeof(struct bitcoin_msg_header) + 80)
@@ -585,10 +549,7 @@ int main(const int argc, const char** argv) {
 			if (relay_res.first) {
 				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&fullhash[0]), relay_res.first, from->host.c_str());
 				return relay_res.second;
-			} else
-				((P2PClient*)localP2P)->receive_block(*bytes);
-
-			((P2PClient*)trustedP2P)->receive_block(*bytes);
+			}
 
 			return relay_res.second;
 		};
