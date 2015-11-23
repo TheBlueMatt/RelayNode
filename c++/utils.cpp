@@ -54,24 +54,35 @@ uint64_t read_varint(std::vector<unsigned char>::const_iterator& it, const std::
 	}
 }
 
-std::vector<unsigned char> varint(uint32_t size) {
-	if (size < 0xfd) {
-		uint8_t lesize = size;
-		return std::vector<unsigned char>(&lesize, &lesize + sizeof(lesize));
+uint32_t varint_length(uint32_t num) {
+	if (num < 0xfd)
+		return 1;
+	else if (num < 0xffff)
+		return 3;
+	else if (num < 0xffffffff)
+		return 5;
+	else
+		return 9;
+}
+
+std::vector<unsigned char> varint(uint32_t num) {
+	if (num < 0xfd) {
+		uint8_t lenum = num;
+		return std::vector<unsigned char>(&lenum, &lenum + sizeof(lenum));
 	} else {
 		std::vector<unsigned char> res;
-		if (size <= 0xffff) {
+		if (num <= 0xffff) {
 			res.push_back(0xfd);
-			uint16_t lesize = htole16(size);
-			res.insert(res.end(), (unsigned char*)&lesize, ((unsigned char*)&lesize) + sizeof(lesize));
-		} else if (size <= 0xffffffff) {
+			uint16_t lenum = htole16(num);
+			res.insert(res.end(), (unsigned char*)&lenum, ((unsigned char*)&lenum) + sizeof(lenum));
+		} else if (num <= 0xffffffff) {
 			res.push_back(0xfe);
-			uint32_t lesize = htole32(size);
-			res.insert(res.end(), (unsigned char*)&lesize, ((unsigned char*)&lesize) + sizeof(lesize));
+			uint32_t lenum = htole32(num);
+			res.insert(res.end(), (unsigned char*)&lenum, ((unsigned char*)&lenum) + sizeof(lenum));
 		} else {
 			res.push_back(0xff);
-			uint64_t lesize = htole64(size);
-			res.insert(res.end(), (unsigned char*)&lesize, ((unsigned char*)&lesize) + sizeof(lesize));
+			uint64_t lenum = htole64(num);
+			res.insert(res.end(), (unsigned char*)&lenum, ((unsigned char*)&lenum) + sizeof(lenum));
 		}
 		return res;
 	}

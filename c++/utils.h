@@ -136,6 +136,7 @@ inline void move_forward(std::vector<unsigned char>::const_iterator& it, size_t 
 	std::advance(it, i);
 }
 uint64_t read_varint(std::vector<unsigned char>::const_iterator& it, const std::vector<unsigned char>::const_iterator& end);
+uint32_t varint_length(uint32_t num);
 std::vector<unsigned char> varint(uint32_t size);
 
 /***********************

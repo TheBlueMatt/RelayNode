@@ -227,11 +227,12 @@ void RelayNodeCompressor::DecompressState::clear() {
 	state = READ_STATE_INVALID;
 }
 
-void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t tx_count_in) {
+void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t tx_count_in, bool recompress_in) {
 	check_merkle = check_merkle_in;
 	tx_count = tx_count_in > 100000 ? 100001 : tx_count_in;
+	recompress = recompress_in;
 	wire_bytes = 4*3;
-	for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+	for (int i = 0; i < (recompress ? COMPRESSOR_TYPES : 1); i++) {
 		block[i] = std::make_shared<std::vector<unsigned char> >(sizeof(bitcoin_msg_header) + 80);
 		block[i]->reserve(1000000 + sizeof(bitcoin_msg_header));
 	}
@@ -252,7 +253,7 @@ bool RelayNodeCompressor::DecompressState::is_finished() {
 std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle) {
 	DecompressLocks locks(this);
 
-	DecompressState state(check_merkle, message_size);
+	DecompressState state(check_merkle, message_size, false);
 	bool read_failed = false;
 	std::function<bool(char* buf, size_t len)> read_fun =
 			[&] (char* buf, size_t len) {
@@ -384,6 +385,82 @@ inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState&
 	for (uint32_t i = 0; i < state.tx_count; i++)
 		state.block[0]->insert(state.block[0]->end(), state.txn_data[i].data, state.txn_data[i].data + state.txn_data[i].size);
 
+	state.block_bytes = state.block[0]->size();
+	state.state = DecompressState::READ_STATE_DONE;
+	return NULL;
+}
+
+inline const char* RelayNodeCompressor::recompress_block_finish(DecompressState& state, RelayNodeCompressor* compressTo[COMPRESSOR_TYPES]) {
+	std::vector<std::shared_ptr<std::vector<unsigned char> > > data_ptrs;
+	const char* res = decompress_block_finalize(state, data_ptrs);
+	if (res) return res;
+
+	std::lock_guard<std::mutex>* lock = (std::lock_guard<std::mutex>*)alloca(COMPRESSOR_TYPES * sizeof(std::lock_guard<std::mutex>));
+	FASLockHint* faslock = (FASLockHint*)alloca(COMPRESSOR_TYPES * sizeof(FASLockHint));
+	for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+		new (&lock[i]) std::lock_guard<std::mutex>(compressTo[i]->mutex);
+		new (&faslock[i]) FASLockHint(compressTo[i]->send_tx_cache);
+	}
+
+	struct relay_msg_header header;
+
+	if (!compressTo[0]->blocksAlreadySeen.insert(*state.fullhashptr).second) {
+		for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+			assert(compressTo[i]->blocksAlreadySeen.count(*state.fullhashptr));
+			state.compress_res[i] = "SEEN";
+		}
+		goto exit;
+	} else
+		for (int i = 1; i < COMPRESSOR_TYPES; i++)
+			assert(compressTo[i]->blocksAlreadySeen.insert(*state.fullhashptr).second);
+
+	header.magic = RELAY_MAGIC_BYTES;
+	header.type = BLOCK_TYPE;
+	header.length = htonl(state.tx_count);
+
+	static_assert(sizeof(struct bitcoin_msg_header) >= sizeof(struct relay_msg_header), "bitcoin_msg_header should be larger than relay_msg_header");
+	for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+		state.block[i]->erase(state.block[i]->begin(), state.block[i]->begin() + sizeof(struct bitcoin_msg_header) - sizeof(struct relay_msg_header)); //TODO: NO
+		state.block[i]->resize(sizeof(struct relay_msg_header) + 80); //TODO: NO
+		if (i != 0)
+			memcpy(&(*state.block[i])[sizeof(struct relay_msg_header)], &(*state.block[0])[sizeof(struct relay_msg_header)], 80);
+		memcpy(&(*state.block[i])[0], (unsigned char*)&header, sizeof(header));
+		state.compress_res[i] = NULL;
+	}
+
+	for (uint32_t j = 0; j < state.tx_count; j++) {
+		const unsigned char* txstart = state.txn_data[j].data;
+		const unsigned char* txend = txstart + state.txn_data[j].size;
+		state.block_bytes += state.txn_data[j].size;
+
+		for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+			int index = compressTo[i]->send_tx_cache.remove(txstart, txend);
+
+			if (index < 0) {
+				state.block[i]->push_back(0xff);
+				state.block[i]->push_back(0xff);
+
+				uint32_t txlen = txend - txstart;
+				state.block[i]->push_back((txlen >> 16) & 0xff);
+				state.block[i]->push_back((txlen >>  8) & 0xff);
+				state.block[i]->push_back((txlen      ) & 0xff);
+
+				state.block[i]->insert(state.block[i]->end(), txstart, txend);
+			} else {
+				state.block[i]->push_back((index >> 8) & 0xff);
+				state.block[i]->push_back((index     ) & 0xff);
+			}
+		}
+	}
+
+	state.block_bytes += varint_length(state.tx_count);
+
+exit:
+	for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+		typedef std::lock_guard<std::mutex> mutex_lock_guard;
+		lock[i].~mutex_lock_guard();
+		faslock[i].~FASLockHint();
+	}
 
 	state.state = DecompressState::READ_STATE_DONE;
 	return NULL;
@@ -391,6 +468,7 @@ inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState&
 
 const char* RelayNodeCompressor::do_partial_decompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
 	assert(locks.compressor == this);
+	assert(!state.recompress);
 	while (state.state != DecompressState::READ_STATE_DONE) {
 		const char* res;
 		size_t start_bytes = state.wire_bytes;
@@ -425,6 +503,54 @@ const char* RelayNodeCompressor::do_partial_decompress(DecompressLocks& locks, D
 				break;
 			case DecompressState::READ_STATE_TX_READ_DONE:
 				res = decompress_block_finish(state);
+				return res;
+			case DecompressState::READ_STATE_DONE:
+				return NULL;
+			case DecompressState::READ_STATE_INVALID:
+				assert(0);
+				return "Called do_partial_decompress after state.clear() without state.reset()";
+		}
+	}
+	return NULL;
+}
+
+const char* RelayNodeCompressor::do_partial_recompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all, RelayNodeCompressor* compressTo[COMPRESSOR_TYPES]) {
+	assert(locks.compressor == this);
+	assert(state.recompress);
+	while (state.state != DecompressState::READ_STATE_DONE) {
+		const char* res;
+		size_t start_bytes = state.wire_bytes;
+		switch (state.state) {
+			case DecompressState::READ_STATE_START:
+				res = read_block_header(state, read_all);
+				if (res)
+					return res;
+				if (start_bytes == state.wire_bytes)
+					return NULL;
+				break;
+			case DecompressState::READ_STATE_START_TX:
+				res = read_tx_index(state, read_all);
+				if (res)
+					return res;
+				if (start_bytes == state.wire_bytes)
+					return NULL;
+				break;
+			case DecompressState::READ_STATE_TX_DATA_LEN:
+				res = read_tx_data_len(state, read_all);
+				if (res)
+					return res;
+				if (start_bytes == state.wire_bytes)
+					return NULL;
+				break;
+			case DecompressState::READ_STATE_TX_DATA:
+				res = read_tx_data(state, read_all);
+				if (res)
+					return res;
+				if (start_bytes == state.wire_bytes)
+					return NULL;
+				break;
+			case DecompressState::READ_STATE_TX_READ_DONE:
+				res = recompress_block_finish(state, compressTo);
 				return res;
 			case DecompressState::READ_STATE_DONE:
 				return NULL;

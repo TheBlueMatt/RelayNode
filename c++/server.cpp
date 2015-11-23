@@ -74,7 +74,7 @@ public:
 						const std::function<size_t (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&, const std::vector<unsigned char>&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
-			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1),
+			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1, false),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }
@@ -154,7 +154,7 @@ private:
 
 	void start_block_message() {
 		current_block_read_start = std::chrono::system_clock::now();
-		current_block.reset(true, ntohl(current_msg.length));
+		current_block.reset(true, ntohl(current_msg.length), false);
 		current_block_locks.reset(new RelayNodeCompressor::DecompressLocks(&compressor));
 		read_state = READ_STATE_IN_BLOCK_MESSAGE;
 	}
