@@ -65,7 +65,7 @@ public:
 
 	public:
 		uint32_t wire_bytes = 4*3;
-		std::shared_ptr<std::vector<unsigned char> > block;
+		std::shared_ptr<std::vector<unsigned char> > block[COMPRESSOR_TYPES];
 		std::shared_ptr<std::vector<unsigned char> > fullhashptr;
 
 	private:
@@ -156,6 +156,7 @@ private:
 	const char* read_tx_index(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 	const char* read_tx_data_len(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 	const char* read_tx_data(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
+	const char* decompress_block_finalize(DecompressState& state, std::vector<std::shared_ptr<std::vector<unsigned char> > >& ptrs);
 	const char* decompress_block_finish(DecompressState& state);
 
 	friend void test_compress_block(std::vector<unsigned char>&, std::vector<std::shared_ptr<std::vector<unsigned char> > >);

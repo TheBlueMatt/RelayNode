@@ -182,13 +182,13 @@ private:
 		if (current_block.is_finished()) {
 			current_block_locks.reset(NULL);
 
-			size_t bytes_sent = provide_block(this, current_block.block, *current_block.fullhashptr);
+			size_t bytes_sent = provide_block(this, current_block.block[0], *current_block.fullhashptr);
 			std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
 
 			if (bytes_sent) {
 				printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", HASH_PRINT(&(*current_block.fullhashptr)[0]),
 												epoch_millis_lu(read_finish), host.c_str(),
-												(unsigned)current_block.wire_bytes, bytes_sent, (unsigned)current_block.block->size(),
+												(unsigned)current_block.wire_bytes, bytes_sent, (unsigned)current_block.block[0]->size(),
 												to_millis_double(read_finish - current_block_read_start), to_millis_double(send_queued - read_finish));
 			}
 
@@ -370,7 +370,6 @@ public:
 	}
 };
 
-#define COMPRESSOR_TYPES 2
 static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
 class CompressorInit {
 public:

@@ -215,7 +215,8 @@ void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, 
 
 void RelayNodeCompressor::DecompressState::clear() {
 	tx_count = 0;
-	block.reset();
+	for (int i = 0; i < COMPRESSOR_TYPES; i++)
+		block[i].reset();
 	fullhashptr.reset();
 	merkleTree.resize(0);
 	txn_data.clear();
@@ -230,7 +231,10 @@ void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t 
 	check_merkle = check_merkle_in;
 	tx_count = tx_count_in > 100000 ? 100001 : tx_count_in;
 	wire_bytes = 4*3;
-	block = std::make_shared<std::vector<unsigned char> >(sizeof(bitcoin_msg_header) + 80);
+	for (int i = 0; i < COMPRESSOR_TYPES; i++) {
+		block[i] = std::make_shared<std::vector<unsigned char> >(sizeof(bitcoin_msg_header) + 80);
+		block[i]->reserve(1000000 + sizeof(bitcoin_msg_header));
+	}
 	fullhashptr = std::make_shared<std::vector<unsigned char> >(32);
 	merkleTree.resize(check_merkle ? tx_count : 1);
 	txn_data.resize(tx_count);
@@ -238,7 +242,6 @@ void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t 
 	txn_data_block_use = 0;
 	state = READ_STATE_START;
 	txn_read = 0;
-	block->reserve(1000000 + sizeof(bitcoin_msg_header));
 	txn_ptrs.reserve(tx_count);
 }
 
@@ -262,31 +265,31 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), err, std::shared_ptr<std::vector<unsigned char> >(NULL));
 	if (read_failed)
 		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read compressed block data", std::shared_ptr<std::vector<unsigned char> >(NULL));
-	return std::make_tuple(state.wire_bytes, state.block, (const char*) NULL, state.fullhashptr);
+	return std::make_tuple(state.wire_bytes, state.block[0], (const char*) NULL, state.fullhashptr);
 }
 
 inline const char* RelayNodeCompressor::read_block_header(DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
 	if (state.tx_count > 100000)
 		return "got a BLOCK message with far too many transactions";
 
-	if (!read_all((char*)&(*state.block)[sizeof(bitcoin_msg_header)], 80))
+	if (!read_all((char*)&(*state.block[0])[sizeof(bitcoin_msg_header)], 80))
 		return NULL;
 	state.wire_bytes += 80;
 
 #ifndef TEST_DATA
-	int32_t block_version = (((*state.block)[sizeof(bitcoin_msg_header) + 3] << 24) | ((*state.block)[sizeof(bitcoin_msg_header) + 2] << 16) | ((*state.block)[sizeof(bitcoin_msg_header) + 1] << 8) | (*state.block)[sizeof(bitcoin_msg_header)]);
+	int32_t block_version = (((*state.block[0])[sizeof(bitcoin_msg_header) + 3] << 24) | ((*state.block[0])[sizeof(bitcoin_msg_header) + 2] << 16) | ((*state.block[0])[sizeof(bitcoin_msg_header) + 1] << 8) | (*state.block[0])[sizeof(bitcoin_msg_header)]);
 	if (block_version < 4)
 		return "block had version < 4";
 #endif
 
-	getblockhash(*state.fullhashptr.get(), *state.block, sizeof(struct bitcoin_msg_header));
+	getblockhash(*state.fullhashptr.get(), *state.block[0], sizeof(struct bitcoin_msg_header));
 	blocksAlreadySeen.insert(*state.fullhashptr.get());
 
 	if (state.check_merkle && ((*state.fullhashptr)[31] != 0 || (*state.fullhashptr)[30] != 0 || (*state.fullhashptr)[29] != 0 || (*state.fullhashptr)[28] != 0 || (*state.fullhashptr)[27] != 0 || (*state.fullhashptr)[26] != 0 || (*state.fullhashptr)[25] != 0))
 		return "block hash did not meet minimum difficulty target";
 
 	auto vartxcount = varint(state.tx_count);
-	state.block->insert(state.block->end(), vartxcount.begin(), vartxcount.end());
+	state.block[0]->insert(state.block[0]->end(), vartxcount.begin(), vartxcount.end());
 
 	state.state = DecompressState::READ_STATE_START_TX;
 	return NULL;
@@ -351,9 +354,8 @@ inline const char* RelayNodeCompressor::read_tx_data(DecompressState& state, std
 	return NULL;
 }
 
-inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState& state) {
+inline const char* RelayNodeCompressor::decompress_block_finalize(DecompressState& state, std::vector<std::shared_ptr<std::vector<unsigned char> > >& data_ptrs) {
 	tweak_sort(state.txn_ptrs, 0, state.txn_ptrs.size());
-	std::vector<std::shared_ptr<std::vector<unsigned char> > > data_ptrs;
 #ifndef NDEBUG
 	int32_t last = -1;
 #endif
@@ -368,11 +370,20 @@ inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState&
 		state.txn_data[ptr.pos].size = data_ptrs.back()->size();
 	}
 
-	for (uint32_t i = 0; i < state.tx_count; i++)
-		state.block->insert(state.block->end(), state.txn_data[i].data, state.txn_data[i].data + state.txn_data[i].size);
-
-	if (state.check_merkle && !state.merkleTree.merkleRootMatches(&(*state.block)[4 + 32 + sizeof(bitcoin_msg_header)]))
+	if (state.check_merkle && !state.merkleTree.merkleRootMatches(&(*state.block[0])[4 + 32 + sizeof(bitcoin_msg_header)]))
 		return "merkle tree root did not match";
+
+	return NULL;
+}
+
+inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState& state) {
+	std::vector<std::shared_ptr<std::vector<unsigned char> > > data_ptrs;
+	const char* res = decompress_block_finalize(state, data_ptrs);
+	if (res) return res;
+
+	for (uint32_t i = 0; i < state.tx_count; i++)
+		state.block[0]->insert(state.block[0]->end(), state.txn_data[i].data, state.txn_data[i].data + state.txn_data[i].size);
+
 
 	state.state = DecompressState::READ_STATE_DONE;
 	return NULL;

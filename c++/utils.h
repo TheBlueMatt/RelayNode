@@ -76,6 +76,8 @@ struct relay_msg_header {
 // Limit outbound to avg 2Mbps worst-case (2Mb / 1000 ms)
 #define OUTBOUND_THROTTLE_BYTES_PER_MS 250
 
+// Number of types of compressors there are (see server)
+#define COMPRESSOR_TYPES 2
 
 
 #define BITCOIN_MAGIC htonl(0xf9beb4d9)

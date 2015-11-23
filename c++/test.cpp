@@ -100,7 +100,7 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_bloc
 		exit(2);
 	} else if (time)
 		PRINT_TIME("Decompressed block in %lf ms\n", to_millis_double(decompressed - start));
-	return state.block;
+	return state.block[0];
 }
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribute__((noinline)) do_compress_test(RelayNodeCompressor& sender, const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& data, uint32_t tx_count) {
