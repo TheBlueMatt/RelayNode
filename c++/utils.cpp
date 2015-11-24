@@ -288,7 +288,7 @@ int create_connect_socket(const std::string& serverHost, const uint16_t serverPo
  *** Random stuff ***
  ********************/
 #ifdef SHA256
-extern "C" void SHA256(void *, uint32_t[8], uint64_t);
+extern "C" void SHA256(const void *, uint32_t[8], uint64_t);
 #endif
 
 void static inline WriteBE64(unsigned char *ptr, uint64_t x) {
@@ -330,19 +330,26 @@ void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte
 	hash.Finalize(res);
 	hash.Reset().Write(res, 32).Finalize(res);
 #else
-	uint64_t pad_count = 1 + ((119 - (byte_count % 64)) % 64);
-	std::vector<unsigned char> data(byte_count + pad_count + 8);
-
-	memcpy(&data[0], input, byte_count);
-	data[byte_count] = 0x80;
-	memset(&data[byte_count+1], 0, pad_count-1);
-	WriteBE64(&data[byte_count + pad_count], byte_count << 3);
-
 	uint32_t state[8];
 	sha256_init(state);
+	uint64_t bytes_read = byte_count / 64;
+	if (bytes_read)
+		SHA256(&input[0], state, bytes_read);
 
+	bytes_read *= 64;
+	uint64_t bytes_left = byte_count - bytes_read;
+
+	unsigned char data[128];
+
+	uint64_t pad_count = 1 + ((119 - bytes_left) % 64);
 	assert((byte_count + pad_count + 8) % 64 == 0);
-	SHA256(&data[0], state, (byte_count + pad_count + 8) / 64);
+
+	memcpy(&data[0], input + bytes_read, bytes_left);
+	data[bytes_left] = 0x80;
+	memset(&data[bytes_left + 1], 0, pad_count-1);
+	WriteBE64(&data[bytes_left + pad_count], byte_count << 3);
+
+	SHA256(&data[0], state, (bytes_left + pad_count + 8) / 64);
 	sha256_done(&data[0], state);
 
 	data[32] = 0x80;
