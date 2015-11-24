@@ -48,7 +48,6 @@ private:
 	};
 
 	struct IndexVector {
-		uint16_t index;
 		uint32_t size;
 		unsigned char* data;
 	};

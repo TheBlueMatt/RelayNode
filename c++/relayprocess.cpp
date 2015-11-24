@@ -303,8 +303,6 @@ inline const char* RelayNodeCompressor::read_tx_index(DecompressState& state, st
 	index = ntohs(index);
 	state.wire_bytes += 2;
 
-	state.txn_data[state.txn_read].index = index;
-
 	if (index == 0xffff)
 		state.state = DecompressState::READ_STATE_TX_DATA_LEN;
 	else {
