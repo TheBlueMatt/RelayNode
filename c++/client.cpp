@@ -56,7 +56,7 @@ public:
 						const std::function<bool ()>& bitcoind_connected_in)
 		// Ping time(out) is 40 seconds (5000000/250*2 msec) - first ping will only happen, at the quickest, at half that
 			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_FAS_TOTAL_SIZE / OUTBOUND_THROTTLE_BYTES_PER_MS * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
-			provide_block(provide_block_in), provide_transaction(provide_transaction_in), bitcoind_connected(bitcoind_connected_in), connected(false), compressor(false) {
+			provide_block(provide_block_in), provide_transaction(provide_transaction_in), bitcoind_connected(bitcoind_connected_in), connected(false), compressor(false, true) {
 		construction_done();
 	}
 

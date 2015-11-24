@@ -137,6 +137,10 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 		MerkleTreeBuilder merkleTree(check_merkle ? txcount : 0);
 
+		std::vector<int> indexes_removed;
+		if (freezeIndexesDuringBlock)
+			indexes_removed.reserve(txcount - 1);
+
 		for (uint32_t i = 0; i < txcount; i++) {
 			std::vector<unsigned char>::const_iterator txstart = readit;
 
@@ -156,7 +160,13 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 
 			move_forward(readit, 4, block.end());
 
-			int index = send_tx_cache.remove(&(*txstart), &(*readit));
+			int index;
+			if (freezeIndexesDuringBlock) {
+				index = send_tx_cache.get_index(&(*txstart), &(*readit));
+				if (index >= 0)
+					indexes_removed.push_back(index);
+			} else
+				index = send_tx_cache.remove(&(*txstart), &(*readit));
 
 			__builtin_prefetch(&(*readit), 0);
 			__builtin_prefetch(&(*readit) + 64, 0);
@@ -182,6 +192,9 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 				compressed_block->push_back((index     ) & 0xff);
 			}
 		}
+
+		if (freezeIndexesDuringBlock)
+			send_tx_cache.remove_indexes(indexes_removed);
 
 		if (check_merkle && !merkleTree.merkleRootMatches(&(*merkle_hash_it)))
 			return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "INVALID_MERKLE");
@@ -223,6 +236,8 @@ void RelayNodeCompressor::DecompressState::clear() {
 	txn_data.shrink_to_fit();
 	txn_ptrs.clear();
 	txn_ptrs.shrink_to_fit();
+	txn_data_holds.clear();
+	txn_data_holds.shrink_to_fit();
 	txn_data_block.reset();
 	state = READ_STATE_INVALID;
 }
@@ -244,6 +259,7 @@ void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t 
 	state = READ_STATE_START;
 	txn_read = 0;
 	txn_ptrs.reserve(tx_count);
+	txn_data_holds.reserve(tx_count);
 }
 
 bool RelayNodeCompressor::DecompressState::is_finished() {
@@ -306,7 +322,15 @@ inline const char* RelayNodeCompressor::read_tx_index(DecompressState& state, st
 	if (index == 0xffff)
 		state.state = DecompressState::READ_STATE_TX_DATA_LEN;
 	else {
-		state.txn_ptrs.emplace_back(index, state.txn_read++);
+		if (freezeIndexesDuringBlock) {
+			state.txn_data_holds.emplace_back(recv_tx_cache.get_at_index(index, state.merkleTree.getTxHashLoc(state.check_merkle ? state.txn_read : 0)));
+			if (!(state.txn_data_holds.back()))
+				return "failed to find referenced transaction";
+			state.txn_data[state.txn_read].data = &(*state.txn_data_holds.back())[0];
+			state.txn_data[state.txn_read].size = state.txn_data_holds.back()->size();
+		} else
+			state.txn_ptrs.emplace_back(index, state.txn_read);
+		state.txn_read++;
 		if (state.txn_read == state.tx_count)
 			state.state = DecompressState::READ_STATE_TX_READ_DONE;
 	}
@@ -353,20 +377,22 @@ inline const char* RelayNodeCompressor::read_tx_data(DecompressState& state, std
 	return NULL;
 }
 
-inline const char* RelayNodeCompressor::decompress_block_finalize(DecompressState& state, std::vector<std::shared_ptr<std::vector<unsigned char> > >& data_ptrs) {
-	tweak_sort(state.txn_ptrs, 0, state.txn_ptrs.size());
+inline const char* RelayNodeCompressor::decompress_block_finalize(DecompressState& state) {
+	if (!freezeIndexesDuringBlock) {
+		tweak_sort(state.txn_ptrs, 0, state.txn_ptrs.size());
 #ifndef NDEBUG
-	int32_t last = -1;
+		int32_t last = -1;
 #endif
-	for (size_t i = 0; i < state.txn_ptrs.size(); i++) {
-		const IndexPtr& ptr = state.txn_ptrs[i];
-		assert(last <= int(ptr.index) && (last = ptr.index) != -1);
+		for (size_t i = 0; i < state.txn_ptrs.size(); i++) {
+			const IndexPtr& ptr = state.txn_ptrs[i];
+			assert(last <= int(ptr.index) && (last = ptr.index) != -1);
 
-		data_ptrs.emplace_back(recv_tx_cache.remove(ptr.index, state.merkleTree.getTxHashLoc(state.check_merkle ? ptr.pos : 0)));
-		if (!(data_ptrs.back()))
-			return "failed to find referenced transaction";
-		state.txn_data[ptr.pos].data = &(*data_ptrs.back())[0];
-		state.txn_data[ptr.pos].size = data_ptrs.back()->size();
+			state.txn_data_holds.emplace_back(recv_tx_cache.remove(ptr.index, state.merkleTree.getTxHashLoc(state.check_merkle ? ptr.pos : 0)));
+			if (!(state.txn_data_holds.back()))
+				return "failed to find referenced transaction";
+			state.txn_data[ptr.pos].data = &(*state.txn_data_holds.back())[0];
+			state.txn_data[ptr.pos].size = state.txn_data_holds.back()->size();
+		}
 	}
 
 	if (state.check_merkle && !state.merkleTree.merkleRootMatches(&(*state.block[0])[4 + 32 + sizeof(bitcoin_msg_header)]))
@@ -376,8 +402,7 @@ inline const char* RelayNodeCompressor::decompress_block_finalize(DecompressStat
 }
 
 inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState& state) {
-	std::vector<std::shared_ptr<std::vector<unsigned char> > > data_ptrs;
-	const char* res = decompress_block_finalize(state, data_ptrs);
+	const char* res = decompress_block_finalize(state);
 	if (res) return res;
 
 	for (uint32_t i = 0; i < state.tx_count; i++)
@@ -389,8 +414,7 @@ inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState&
 }
 
 inline const char* RelayNodeCompressor::recompress_block_finish(DecompressState& state, RelayNodeCompressor* compressTo[COMPRESSOR_TYPES]) {
-	std::vector<std::shared_ptr<std::vector<unsigned char> > > data_ptrs;
-	const char* res = decompress_block_finalize(state, data_ptrs);
+	const char* res = decompress_block_finalize(state);
 	if (res) return res;
 
 	std::lock_guard<std::mutex>* lock = (std::lock_guard<std::mutex>*)alloca(COMPRESSOR_TYPES * sizeof(std::lock_guard<std::mutex>));
@@ -401,6 +425,7 @@ inline const char* RelayNodeCompressor::recompress_block_finish(DecompressState&
 	}
 
 	struct relay_msg_header header;
+	std::vector<int> indexes_removed[COMPRESSOR_TYPES];
 
 	if (!compressTo[0]->blocksAlreadySeen.insert(*state.fullhashptr).second) {
 		for (int i = 0; i < COMPRESSOR_TYPES; i++) {
@@ -426,13 +451,23 @@ inline const char* RelayNodeCompressor::recompress_block_finish(DecompressState&
 		state.compress_res[i] = NULL;
 	}
 
+	for (int i = 0; i < COMPRESSOR_TYPES; i++)
+		if (compressTo[i]->freezeIndexesDuringBlock)
+			indexes_removed[i].reserve(state.tx_count - 1);
+
 	for (uint32_t j = 0; j < state.tx_count; j++) {
 		const unsigned char* txstart = state.txn_data[j].data;
 		const unsigned char* txend = txstart + state.txn_data[j].size;
 		state.block_bytes += state.txn_data[j].size;
 
 		for (int i = 0; i < COMPRESSOR_TYPES; i++) {
-			int index = compressTo[i]->send_tx_cache.remove(txstart, txend);
+			int index;
+			if (compressTo[i]->freezeIndexesDuringBlock) {
+				index = compressTo[i]->send_tx_cache.get_index(txstart, txend);
+				if (index >= 0)
+					indexes_removed[i].push_back(index);
+			} else
+				index = compressTo[i]->send_tx_cache.remove(txstart, txend);
 
 			if (index < 0) {
 				state.block[i]->push_back(0xff);
@@ -450,6 +485,10 @@ inline const char* RelayNodeCompressor::recompress_block_finish(DecompressState&
 			}
 		}
 	}
+
+	for (int i = 0; i < COMPRESSOR_TYPES; i++)
+		if (compressTo[i]->freezeIndexesDuringBlock)
+			compressTo[i]->send_tx_cache.remove_indexes(indexes_removed[i]);
 
 	state.block_bytes += varint_length(state.tx_count);
 

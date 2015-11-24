@@ -31,7 +31,7 @@ class RelayNodeCompressor {
 	RELAY_DECLARE_CLASS_VARS
 
 private:
-	bool useOldFlags;
+	bool useOldFlags, freezeIndexesDuringBlock; // "version" flags
 	FlaggedArraySet send_tx_cache, recv_tx_cache;
 	mruset<std::vector<unsigned char> > blocksAlreadySeen;
 	std::mutex mutex;
@@ -75,6 +75,7 @@ public:
 		MerkleTreeBuilder merkleTree;
 		std::vector<IndexVector> txn_data;
 		std::vector<IndexPtr> txn_ptrs;
+		std::vector<std::shared_ptr<std::vector<unsigned char> > > txn_data_holds;
 		std::unique_ptr<unsigned char[]> txn_data_block;
 		uint32_t txn_data_block_use;
 
@@ -108,13 +109,14 @@ public:
 		DecompressLocks(RelayNodeCompressor* compressor_in) : lock(compressor_in->mutex), faslock(compressor_in->recv_tx_cache), compressor(compressor_in) {}
 	};
 
-	RelayNodeCompressor(bool useOldFlagsIn)
-		: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, useOldFlags(useOldFlagsIn),
+	RelayNodeCompressor(bool useOldFlagsIn, bool freezeIndexesDuringBlockIn)
+		: RELAY_DECLARE_CONSTRUCTOR_EXTENDS, useOldFlags(useOldFlagsIn), freezeIndexesDuringBlock(freezeIndexesDuringBlockIn),
 		  send_tx_cache(useOldFlagsIn ? OLD_MAX_TXN_IN_FAS : 65000, useOldFlagsIn ? uint32_t(-1) : MAX_FAS_TOTAL_SIZE),
 		  recv_tx_cache(useOldFlagsIn ? OLD_MAX_TXN_IN_FAS : 65000, useOldFlagsIn ? uint32_t(-1) : MAX_FAS_TOTAL_SIZE),
 		  blocksAlreadySeen(1000000) {}
 	RelayNodeCompressor& operator=(const RelayNodeCompressor& c) {
 		useOldFlags = c.useOldFlags;
+		freezeIndexesDuringBlock = c.freezeIndexesDuringBlock;
 		send_tx_cache = c.send_tx_cache;
 		recv_tx_cache = c.recv_tx_cache;
 		blocksAlreadySeen = c.blocksAlreadySeen;
@@ -161,7 +163,7 @@ private:
 	const char* read_tx_index(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 	const char* read_tx_data_len(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 	const char* read_tx_data(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
-	const char* decompress_block_finalize(DecompressState& state, std::vector<std::shared_ptr<std::vector<unsigned char> > >& ptrs);
+	const char* decompress_block_finalize(DecompressState& state);
 	const char* decompress_block_finish(DecompressState& state);
 	const char* recompress_block_finish(DecompressState& state, RelayNodeCompressor* compressTo[COMPRESSOR_TYPES]);
 

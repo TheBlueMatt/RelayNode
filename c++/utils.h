@@ -64,7 +64,7 @@ struct relay_msg_header {
 };
 
 #define RELAY_MAGIC_BYTES htonl(0xF2BEEF42)
-#define VERSION_STRING "spammy memeater"
+#define VERSION_STRING "what i should have done"
 #define MAX_RELAY_TRANSACTION_BYTES 100000
 #define MAX_FAS_TOTAL_SIZE 5000000
 
@@ -77,7 +77,7 @@ struct relay_msg_header {
 #define OUTBOUND_THROTTLE_BYTES_PER_MS 250
 
 // Number of types of compressors there are (see server)
-#define COMPRESSOR_TYPES 2
+#define COMPRESSOR_TYPES 3
 
 
 #define BITCOIN_MAGIC htonl(0xf9beb4d9)

@@ -60,7 +60,7 @@ void fill_txv(std::vector<unsigned char>& block, std::vector<std::shared_ptr<std
 int pipefd[2];
 uint32_t block_tx_count;
 
-RelayNodeCompressor global_sender(false), global_receiver(false);
+RelayNodeCompressor global_sender(false, true), global_receiver(false, true);
 std::set<std::vector<unsigned char> > globalSeenSet;
 
 static unsigned int compress_runs = 0, decompress_runs = 0, recompress_runs;
@@ -153,12 +153,13 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	static_assert(COMPRESSOR_TYPES == 2, "There are two compressor types used in test");
+	static_assert(COMPRESSOR_TYPES == 3, "There are three compressor types used in test");
 	RelayNodeCompressor *senders_recompress[COMPRESSOR_TYPES];
-	senders_recompress[0] = new RelayNodeCompressor(false);
-	senders_recompress[1] = new RelayNodeCompressor(true);
+	senders_recompress[0] = new RelayNodeCompressor(false, true);
+	senders_recompress[1] = new RelayNodeCompressor(false, false);
+	senders_recompress[2] = new RelayNodeCompressor(true, false);
 
-	RelayNodeCompressor sender(false), tester(false), tester2(false), receiver(false), receiver_recompress(false);
+	RelayNodeCompressor sender(false, true), tester(false, true), tester2(false, true), receiver(false, true), receiver_recompress(false, true);
 
 	for (auto v : txVectors) {
 		unsigned int made = sender.get_relay_transaction(v).use_count();
@@ -179,6 +180,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			exit(5);
 		}
 		senders_recompress[1]->get_relay_transaction(v);
+		senders_recompress[2]->get_relay_transaction(v);
 #ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
 #endif
@@ -251,6 +253,7 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 
 	delete senders_recompress[0];
 	delete senders_recompress[1];
+	delete senders_recompress[2];
 }
 
 void run_test(std::vector<unsigned char>& data) {

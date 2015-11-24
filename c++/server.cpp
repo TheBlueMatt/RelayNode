@@ -35,22 +35,24 @@ static const char* HOST_SPONSOR;
 class RelayNetworkClient;
 class RelayNetworkCompressor : public RelayNodeCompressor {
 public:
-	RelayNetworkCompressor() : RelayNodeCompressor(false) {}
-	RelayNetworkCompressor(bool useFlagsAndSmallerMax) : RelayNodeCompressor(useFlagsAndSmallerMax) {}
+	RelayNetworkCompressor() : RelayNodeCompressor(false, true) {}
+	RelayNetworkCompressor(bool useFlagsAndSmallerMax, bool freezeIndexesDuringBlock) : RelayNodeCompressor(useFlagsAndSmallerMax, freezeIndexesDuringBlock) {}
 	void relay_node_connected(RelayNetworkClient* client, int token);
 };
 
-static_assert(COMPRESSOR_TYPES == 2, "There are two compressor types init'd in server");
-static const std::map<std::string, int16_t> compressor_types = {{std::string("sponsor printer"), 1}, {std::string("spammy memeater"), 0}, {std::string("the blocksize"), 1}};
+static_assert(COMPRESSOR_TYPES == 3, "There are two compressor types init'd in server");
+static const std::map<std::string, int16_t> compressor_types = {{std::string("sponsor printer"), 2}, {std::string("spammy memeater"), 1}, {std::string("the blocksize"), 2}, {std::string("what i should have done"), 0}};
 static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
 static RelayNodeCompressor* compressor_ptrs[COMPRESSOR_TYPES];
 class CompressorInit {
 public:
 	CompressorInit() {
-		compressors[0] = RelayNetworkCompressor(false);
-		compressors[1] = RelayNetworkCompressor(true);
-		compressor_ptrs[0] = &compressors[0];
-		compressor_ptrs[1] = &compressors[1];
+		compressors[0] = RelayNetworkCompressor(false, true);
+		compressors[1] = RelayNetworkCompressor(false, false);
+		compressors[2] = RelayNetworkCompressor(true, false);
+
+		for (int i = 0; i < COMPRESSOR_TYPES; i++)
+			compressor_ptrs[i] = &compressors[i];
 	}
 };
 static CompressorInit init;
@@ -99,7 +101,7 @@ public:
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
 			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1, true),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
-			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
+			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false, false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }
 
 private:
@@ -142,10 +144,12 @@ private:
 
 		compressor_type = it->second;
 
-		if (their_version == "spammy memeater")
-			compressor = RelayNodeCompressor(false);
+		if (their_version == "what i should have done")
+			compressor = RelayNodeCompressor(false, true);
+		else if (their_version == "spammy memeater")
+			compressor = RelayNodeCompressor(false, false);
 		else
-			compressor = RelayNodeCompressor(true);
+			compressor = RelayNodeCompressor(true, false);
 
 		if (their_version != "the blocksize")
 			sendSponsor = true;
