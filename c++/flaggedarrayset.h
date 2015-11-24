@@ -46,6 +46,8 @@ private:
 	mutable uint32_t max_remove;
 	mutable uint64_t flags_to_remove;
 
+	mutable std::vector<int> unsorted_to_remove;
+
 	void _clear(bool takeLock);
 
 public:
@@ -53,8 +55,8 @@ public:
 	FlaggedArraySet(uint64_t maxSizeIn, uint64_t maxFlagCountIn);
 	~FlaggedArraySet();
 
-	size_t size() const { return backingMap.size() - to_be_removed.size(); }
-	uint64_t flagCount() const { return flag_count - flags_to_remove; }
+	size_t size() const { return backingMap.size() - to_be_removed.size() - unsorted_to_remove.size(); }
+	uint64_t flagCount() const;
 	bool contains(const std::shared_ptr<std::vector<unsigned char> >& e) const;
 	bool contains(const unsigned char* elemHash) const;
 
@@ -63,12 +65,16 @@ public:
 private:
 	bool sanity_check() const;
 	void remove_(size_t index);
-	void cleanup_late_remove() const;
+	void cleanup_late_remove(bool allowSortedToRemain) const;
 
 public:
 	void add(const std::shared_ptr<std::vector<unsigned char> >& e, uint32_t flag);
 	int remove(const unsigned char* start, const unsigned char* end);
 	std::shared_ptr<std::vector<unsigned char> > remove(unsigned int index, unsigned char* elemHashRes);
+
+	int get_index(const unsigned char* start, const unsigned char* end) const;
+	std::shared_ptr<std::vector<unsigned char> > get_at_index(unsigned int index, unsigned char* elemHashRes) const;
+	void remove_indexes(std::vector<int>& indexes);
 
 	void for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const;
 };

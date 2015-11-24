@@ -8,6 +8,7 @@
 #include <list>
 #include <thread>
 #include <mutex>
+#include <algorithm>
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
@@ -147,7 +148,7 @@ FlaggedArraySet& FlaggedArraySet::operator=(const FlaggedArraySet& o) {
 	std::unique_lock<WaitCountMutex> lock2(o.mutex, std::defer_lock);
 	std::lock(lock, lock2);
 
-	o.cleanup_late_remove();
+	o.cleanup_late_remove(false);
 	_clear(false);
 
 	maxSize = o.maxSize;
@@ -224,6 +225,12 @@ size_t std::hash<ElemAndFlag>::operator()(const ElemAndFlag& e) const {
 }
 
 
+uint64_t FlaggedArraySet::flagCount() const {
+	cleanup_late_remove(true);
+	return flag_count - flags_to_remove;
+}
+
+
 bool FlaggedArraySet::sanity_check() const {
 	size_t size = indexMap.size();
 	assert(backingMap.size() == size);
@@ -250,6 +257,8 @@ bool FlaggedArraySet::sanity_check() const {
 	assert(this->size() <= maxSize);
 	assert(flagCount() <= maxFlagCount);
 
+	assert((to_be_removed.empty() && max_remove == 0 && flags_to_remove == 0) || unsorted_to_remove.empty());
+
 	return expected_flags_removed == flags_to_remove && expected_flag_count == flag_count;
 }
 
@@ -271,9 +280,9 @@ void FlaggedArraySet::remove_(size_t index) {
 	indexMap.erase(indexMap.begin() + index);
 }
 
-void FlaggedArraySet::cleanup_late_remove() const {
+void FlaggedArraySet::cleanup_late_remove(bool allowSortedToRemain) const {
 	assert(sanity_check());
-	if (to_be_removed.size()) {
+	if (!allowSortedToRemain && to_be_removed.size()) {
 		for (unsigned int i = 0; i < to_be_removed.size(); i++) {
 			assert((unsigned int)to_be_removed[i] < indexMap.size());
 			const_cast<FlaggedArraySet*>(this)->remove_(to_be_removed[i]);
@@ -281,20 +290,40 @@ void FlaggedArraySet::cleanup_late_remove() const {
 		to_be_removed.clear();
 		flags_to_remove = 0;
 		max_remove = 0;
+	} else if (unsorted_to_remove.size()) {
+#ifndef NDEBUG
+		std::vector<std::shared_ptr<std::vector<unsigned char> > > to_remove;
+		for (const int& index : unsorted_to_remove) {
+			assert(index >= 0);
+			assert((unsigned int)index < indexMap.size());
+			to_remove.push_back(indexMap[index]->first.elem);
+			assert(to_remove.back()->size());
+		}
+#endif
+
+		std::sort(unsorted_to_remove.begin(), unsorted_to_remove.end(), std::greater<int>());
+		for (const int& index : unsorted_to_remove)
+			const_cast<FlaggedArraySet*>(this)->remove_(index);
+		unsorted_to_remove.clear();
+
+#ifndef NDEBUG
+		for (const auto& v : to_remove)
+			assert(backingMap.find(ElemAndFlag(&(*v->begin()), &(*v->end()), 0)) == backingMap.end());
+#endif
 	}
 	assert(sanity_check());
 }
 
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	cleanup_late_remove();
+	cleanup_late_remove(false);
 	return backingMap.count(ElemAndFlag(e, 0, false));
 }
 
 bool FlaggedArraySet::contains(const unsigned char* elemHash) const {
 	//TODO: Come up with a cheap way to optimize this?
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	cleanup_late_remove();
+	cleanup_late_remove(false);
 	ElemAndFlag e(std::make_shared<std::vector<unsigned char> >(elemHash, elemHash + 32), NULL);
 	for (const std::unordered_map<ElemAndFlag, uint64_t>::iterator& it : indexMap) {
 		assert(it->first.elemHash && e.elemHash);
@@ -308,7 +337,7 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 	ElemAndFlag elem(e, flag, true);
 
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	cleanup_late_remove();
+	cleanup_late_remove(false);
 
 	auto res = backingMap.insert(std::make_pair(elem, size() + offset));
 	if (!res.second)
@@ -327,7 +356,7 @@ void FlaggedArraySet::add(const std::shared_ptr<std::vector<unsigned char> >& e,
 
 int FlaggedArraySet::remove(const unsigned char* start, const unsigned char* end) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	cleanup_late_remove();
+	cleanup_late_remove(false);
 
 	auto it = backingMap.find(ElemAndFlag(start, end, 0));
 	if (it == backingMap.end())
@@ -337,14 +366,30 @@ int FlaggedArraySet::remove(const unsigned char* start, const unsigned char* end
 	remove_(res);
 
 	assert(sanity_check());
+	assert(res >= 0);
+	return res;
+}
+
+int FlaggedArraySet::get_index(const unsigned char* start, const unsigned char* end) const {
+	std::lock_guard<WaitCountMutex> lock(mutex);
+	cleanup_late_remove(false);
+
+	auto it = backingMap.find(ElemAndFlag(start, end, 0));
+	if (it == backingMap.end())
+		return -1;
+
+	int res = it->second - offset;
+	assert(sanity_check());
+	assert(res >= 0);
 	return res;
 }
 
 std::shared_ptr<std::vector<unsigned char> > FlaggedArraySet::remove(unsigned int index, unsigned char* elemHashRes) {
 	std::lock_guard<WaitCountMutex> lock(mutex);
+	cleanup_late_remove(true);
 
 	if (index < max_remove)
-		cleanup_late_remove();
+		cleanup_late_remove(false);
 	unsigned int lookup_index = index + to_be_removed.size();
 
 	if (lookup_index >= indexMap.size())
@@ -360,12 +405,31 @@ std::shared_ptr<std::vector<unsigned char> > FlaggedArraySet::remove(unsigned in
 		max_remove = index;
 		flags_to_remove += e.flag;
 	} else {
-		cleanup_late_remove();
+		cleanup_late_remove(false);
 		remove_(index);
 	}
 
 	assert(sanity_check());
 	return res;
+}
+
+std::shared_ptr<std::vector<unsigned char> > FlaggedArraySet::get_at_index(unsigned int index, unsigned char* elemHashRes) const {
+	std::lock_guard<WaitCountMutex> lock(mutex);
+	cleanup_late_remove(false);
+
+	if (index >= indexMap.size())
+		return std::shared_ptr<std::vector<unsigned char> >();
+
+	const ElemAndFlag& e = indexMap[index]->first;
+	assert(e.elem && e.elemHash);
+	memcpy(elemHashRes, &(*e.elemHash)[0], 32);
+	return e.elem;
+}
+
+void FlaggedArraySet::remove_indexes(std::vector<int>& indexes) {
+	std::lock_guard<WaitCountMutex> lock(mutex);
+	cleanup_late_remove(false);
+	unsorted_to_remove = indexes;
 }
 
 void FlaggedArraySet::_clear(bool takeLock) {
@@ -378,12 +442,12 @@ void FlaggedArraySet::_clear(bool takeLock) {
 
 	flag_count = 0; offset = 0;
 	flags_to_remove = 0; max_remove = 0;
-	backingMap.clear(); indexMap.clear(); to_be_removed.clear();
+	backingMap.clear(); indexMap.clear(); to_be_removed.clear(); unsorted_to_remove.clear();
 }
 
 void FlaggedArraySet::for_all_txn(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) const {
 	std::lock_guard<WaitCountMutex> lock(mutex);
-	cleanup_late_remove();
+	cleanup_late_remove(false);
 	for (const auto& e : indexMap) {
 		assert(e->first.elem);
 		callback(e->first.elem);
