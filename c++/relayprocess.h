@@ -37,8 +37,9 @@ private:
 	std::mutex mutex;
 
 	class MerkleTreeBuilder {
-	public:
+	private:
 		std::vector<unsigned char> hashlist;
+	public:
 		MerkleTreeBuilder(uint32_t tx_count) : hashlist(tx_count * 32) {}
 		MerkleTreeBuilder() {}
 		void resize(uint32_t tx_count) { hashlist.resize(tx_count * 32); }
