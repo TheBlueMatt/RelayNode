@@ -64,17 +64,17 @@ public:
 		uint32_t tx_count;
 
 	public:
-		bool recompress;
 		uint32_t wire_bytes = 4*3;
 		uint32_t block_bytes = 0;
-		std::shared_ptr<std::vector<unsigned char> > block[COMPRESSOR_TYPES];
 		std::shared_ptr<std::vector<unsigned char> > fullhashptr;
-		const char* compress_res[COMPRESSOR_TYPES];
 
 	private:
+		unsigned char block_header[80];
+
 		MerkleTreeBuilder merkleTree;
 		std::vector<IndexVector> txn_data;
 		std::vector<IndexPtr> txn_ptrs;
+		std::vector<int> txn_to_remove;
 		std::vector<std::shared_ptr<std::vector<unsigned char> > > txn_data_holds;
 		std::unique_ptr<unsigned char[]> txn_data_block;
 		uint32_t txn_data_block_use;
@@ -94,10 +94,11 @@ public:
 		friend class RelayNodeCompressor;
 
 	public:
-		DecompressState(bool check_merkle_in, uint32_t tx_count_in, bool recompress_in) { reset(check_merkle_in, tx_count_in, recompress_in); }
+		DecompressState(bool check_merkle_in, uint32_t tx_count_in) { reset(check_merkle_in, tx_count_in); }
 		void clear();
-		void reset(bool check_merkle_in, uint32_t tx_count_in, bool recompress_in);
+		void reset(bool check_merkle_in, uint32_t tx_count_in);
 		bool is_finished();
+		std::shared_ptr<std::vector<unsigned char> > get_block_data();
 	};
 
 	class DecompressLocks {
@@ -148,8 +149,7 @@ public:
 	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle);
 
 	const char* do_partial_decompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all);
-
-	const char* do_partial_recompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all, RelayNodeCompressor* compressTo[COMPRESSOR_TYPES]);
+	std::shared_ptr<std::vector<unsigned char> > recompress_block(DecompressState& state);
 
 	bool block_sent(std::vector<unsigned char>& hash);
 	uint32_t blocks_sent();
@@ -163,9 +163,7 @@ private:
 	const char* read_tx_index(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 	const char* read_tx_data_len(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
 	const char* read_tx_data(DecompressState& state, std::function<bool(char*, size_t)>& read_all);
-	const char* decompress_block_finalize(DecompressState& state);
 	const char* decompress_block_finish(DecompressState& state);
-	const char* recompress_block_finish(DecompressState& state, RelayNodeCompressor* compressTo[COMPRESSOR_TYPES]);
 
 	friend void test_compress_block(std::vector<unsigned char>&, std::vector<std::shared_ptr<std::vector<unsigned char> > >);
 	friend void tweak_sort(std::vector<RelayNodeCompressor::IndexPtr>& ptrs, size_t start, size_t end);

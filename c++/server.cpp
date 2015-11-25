@@ -43,16 +43,12 @@ public:
 static_assert(COMPRESSOR_TYPES == 3, "There are two compressor types init'd in server");
 static const std::map<std::string, int16_t> compressor_types = {{std::string("sponsor printer"), 2}, {std::string("spammy memeater"), 1}, {std::string("the blocksize"), 2}, {std::string("what i should have done"), 0}};
 static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
-static RelayNodeCompressor* compressor_ptrs[COMPRESSOR_TYPES];
 class CompressorInit {
 public:
 	CompressorInit() {
 		compressors[0] = RelayNetworkCompressor(false, true);
 		compressors[1] = RelayNetworkCompressor(false, false);
 		compressors[2] = RelayNetworkCompressor(true, false);
-
-		for (int i = 0; i < COMPRESSOR_TYPES; i++)
-			compressor_ptrs[i] = &compressors[i];
 	}
 };
 static CompressorInit init;
@@ -76,14 +72,14 @@ private:
 	std::vector<char> read_buff;
 
 	relay_msg_header current_msg;
-	std::chrono::system_clock::time_point current_block_read_start;
+	std::chrono::steady_clock::time_point current_block_read_start;
 	RelayNodeCompressor::DecompressState current_block;
 	std::unique_ptr<RelayNodeCompressor::DecompressLocks> current_block_locks;
 
 	bool sendSponsor = false;
 	uint8_t tx_sent = 0;
 
-	const std::function<void (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> provide_block;
+	const std::function<std::tuple<uint64_t, std::chrono::steady_clock::time_point> (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> provide_block;
 	const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<void (RelayNetworkClient*, int)> connected_callback;
 
@@ -96,10 +92,10 @@ public:
 	DECLARE_ATOMIC_INT(int16_t, compressor_type);
 
 	RelayNetworkClient(int sockIn, std::string hostIn,
-						const std::function<void (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)>& provide_block_in,
+						const std::function<std::tuple<uint64_t, std::chrono::steady_clock::time_point> (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)>& provide_block_in,
 						const std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<void (RelayNetworkClient*, int)>& connected_callback_in)
-			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1, true),
+			: Connection(sockIn, hostIn), connected(0), read_state(READ_STATE_NEW_MESSAGE), current_block(false, 1),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected_callback(connected_callback_in),
 			RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false, false), compressor_type(-1) // compressor is always replaced in VERSION_TYPE recv
 	{ construction_done(); }
@@ -180,14 +176,15 @@ private:
 	}
 
 	void start_block_message() {
-		current_block_read_start = std::chrono::system_clock::now();
-		current_block.reset(true, ntohl(current_msg.length), true);
+		current_block_read_start = std::chrono::steady_clock::now();
+		current_block.reset(true, ntohl(current_msg.length));
 		current_block_locks.reset(new RelayNodeCompressor::DecompressLocks(&compressor));
 		read_state = READ_STATE_IN_BLOCK_MESSAGE;
 	}
 
 	ssize_t process_block_message(size_t read_pos) {
-		std::chrono::system_clock::time_point read_finish(std::chrono::system_clock::now());
+		std::chrono::system_clock::time_point read_finish_time(std::chrono::system_clock::now());
+		std::chrono::steady_clock::time_point read_finish(std::chrono::steady_clock::now());
 
 		size_t start_read_pos = read_pos;
 		std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
@@ -198,7 +195,7 @@ private:
 			return true;
 		};
 
-		const char* err = compressor.do_partial_recompress(*current_block_locks, current_block, do_read, compressor_ptrs);
+		const char* err = compressor.do_partial_decompress(*current_block_locks, current_block, do_read);
 		if (err) {
 			current_block.clear();
 			current_block_locks.reset(NULL);
@@ -209,17 +206,13 @@ private:
 		if (current_block.is_finished()) {
 			current_block_locks.reset(NULL);
 
-			provide_block(this, current_block);
-			std::chrono::system_clock::time_point send_queued(std::chrono::system_clock::now());
+			auto res = provide_block(this, current_block);
 
-			if (current_block.compress_res[0]) {
-				printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&(*current_block.fullhashptr)[0]), current_block.compress_res[0], host.c_str());
-			} else {
-				printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %u / %u TIMES: %lf %lf\n", HASH_PRINT(&(*current_block.fullhashptr)[0]),
-												epoch_millis_lu(read_finish), host.c_str(),
-												(unsigned)current_block.wire_bytes, (unsigned)current_block.block[0]->size(), current_block.block_bytes,
-												to_millis_double(read_finish - current_block_read_start), to_millis_double(send_queued - read_finish));
-			}
+			if (std::get<0>(res))
+				printf(HASH_FORMAT" BLOCK %lu %s UNTRUSTEDRELAY %u / %lu / %u TIMES: %lf %lf\n", HASH_PRINT(&(*current_block.fullhashptr)[0]),
+												epoch_millis_lu(read_finish_time), host.c_str(),
+												current_block.wire_bytes, std::get<0>(res), current_block.block_bytes,
+												to_millis_double(read_finish - current_block_read_start), to_millis_double(std::get<1>(res) - read_finish));
 
 			current_block.clear();
 			read_state = READ_STATE_NEW_MESSAGE;
@@ -553,19 +546,30 @@ int main(const int argc, const char** argv) {
 						}
 					});
 
-	std::function<void (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> relayBlock =
+	std::function<std::tuple<uint64_t, std::chrono::steady_clock::time_point> (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> relayBlock =
 		[&](RelayNetworkClient* from, RelayNodeCompressor::DecompressState& block) {
-			assert(block.recompress);
+			assert(block.is_finished());
+
+			std::chrono::steady_clock::time_point first_compressor_sends_queued;
+			uint64_t first_compressor_block_size;
 
 			std::lock_guard<std::mutex> lock(map_mutex);
 			for (uint16_t i = 0; i < COMPRESSOR_TYPES; i++) {
-				if (!block.compress_res[i]) {
-					const auto& relay = block.block[i];
+				auto compressed = compressors[i].recompress_block(block);
+				if (compressed->size() > 80) {
 					for (const auto& client : clientMap)
 						if (!client.second->disconnectStarted() && client.second->compressor_type == i)
-							client.second->receive_block(relay);
+							client.second->receive_block(compressed);
+				} else {
+					printf(HASH_FORMAT" INSANE %s UNTRUSTEDRELAY %s\n", HASH_PRINT(&(*block.fullhashptr)[0]), (const char*)&(*compressed)[0], from->host.c_str());
+					return std::make_tuple((uint64_t)0, std::chrono::steady_clock::now());
+				}
+				if (i == 0) {
+					first_compressor_sends_queued = std::chrono::steady_clock::now();
+					first_compressor_block_size = compressed->size();
 				}
 			}
+			return std::make_tuple(first_compressor_block_size, first_compressor_sends_queued);
 		};
 
 	std::function<void (RelayNetworkClient*, std::shared_ptr<std::vector<unsigned char> >&)> relayTx =

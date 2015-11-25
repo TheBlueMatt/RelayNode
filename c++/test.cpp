@@ -73,7 +73,7 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_bloc
 
 	auto init = std::chrono::steady_clock::now();
 
-	RelayNodeCompressor::DecompressState state(true, block_tx_count, false);
+	RelayNodeCompressor::DecompressState state(true, block_tx_count);
 	RelayNodeCompressor::DecompressLocks locks(&receiver);
 
 	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
@@ -84,6 +84,7 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_bloc
 	};
 	auto start = std::chrono::steady_clock::now();
 	const char* err = receiver.do_partial_decompress(locks, state, do_read);
+	auto res = state.get_block_data();
 	auto decompressed = std::chrono::steady_clock::now();
 	if (time) {
 		total_decompress_time += decompressed - start; decompress_runs++;
@@ -100,7 +101,7 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_bloc
 		exit(2);
 	} else if (time)
 		PRINT_TIME("Decompressed block in %lf ms\n", to_millis_double(decompressed - start));
-	return state.block[0];
+	return res;
 }
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribute__((noinline)) do_compress_test(RelayNodeCompressor& sender, const std::vector<unsigned char>& fullhash, const std::vector<unsigned char>& data, uint32_t tx_count) {
@@ -115,13 +116,12 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> __attribut
 	return res;
 }
 
-std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) do_recompress_test(std::vector<unsigned char>& data, RelayNodeCompressor& receiver, RelayNodeCompressor* sender[COMPRESSOR_TYPES]) {
+std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) do_recompress_test(std::vector<unsigned char>& data, RelayNodeCompressor& receiver, RelayNodeCompressor& sender) {
 	size_t readpos = sizeof(struct relay_msg_header);
 
 	auto init = std::chrono::steady_clock::now();
 
-	RelayNodeCompressor::DecompressState state(true, block_tx_count, true);
-	RelayNodeCompressor::DecompressLocks locks(&receiver);
+	RelayNodeCompressor::DecompressState state(true, block_tx_count);
 
 	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
 		memcpy(buf, &data[readpos], count);
@@ -130,7 +130,12 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) do_recomp
 		return true;
 	};
 	auto start = std::chrono::steady_clock::now();
-	const char* err = receiver.do_partial_recompress(locks, state, do_read, sender);
+	const char* err;
+	{
+		RelayNodeCompressor::DecompressLocks locks(&receiver);
+		err = receiver.do_partial_decompress(locks, state, do_read);
+	}
+	auto res = sender.recompress_block(state);
 	auto recompressed = std::chrono::steady_clock::now();
 
 	total_recompress_time += recompressed - start; recompress_runs++;
@@ -142,24 +147,21 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) do_recomp
 	if ((start - init) < min_recompress_init_time) min_recompress_init_time = start - init;
 
 	if (err) {
-		printf("ERROR Recompressing block %s\n", err);
+		printf("ERROR decompressing block %s\n", err);
+		exit(2);
+	} else if (res->size() < 80) {
+		printf("ERROR Recompressing block %s\n", &(*res)[0]);
 		exit(2);
 	} else
 		PRINT_TIME("Recompressed block in %lf ms\n", to_millis_double(recompressed - start));
-	return state.block[0];
+	return res;
 }
 
 void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors) {
 	std::vector<unsigned char> fullhash(32);
 	getblockhash(fullhash, data, sizeof(struct bitcoin_msg_header));
 
-	static_assert(COMPRESSOR_TYPES == 3, "There are three compressor types used in test");
-	RelayNodeCompressor *senders_recompress[COMPRESSOR_TYPES];
-	senders_recompress[0] = new RelayNodeCompressor(false, true);
-	senders_recompress[1] = new RelayNodeCompressor(false, false);
-	senders_recompress[2] = new RelayNodeCompressor(true, false);
-
-	RelayNodeCompressor sender(false, true), tester(false, true), tester2(false, true), receiver(false, true), receiver_recompress(false, true);
+	RelayNodeCompressor sender(false, true), tester(false, true), tester2(false, true), receiver(false, true), receiver_recompress(false, true), sender_recompress(false, true);
 
 	for (auto v : txVectors) {
 		unsigned int made = sender.get_relay_transaction(v).use_count();
@@ -175,12 +177,10 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 #endif
 		if (made != tester.get_relay_transaction(v).use_count() ||
 				made != tester2.get_relay_transaction(v).use_count() ||
-				made != senders_recompress[0]->get_relay_transaction(v).use_count()) {
+				made != sender_recompress.get_relay_transaction(v).use_count()) {
 			printf("get_relay_transaction behavior not consistent???\n");
 			exit(5);
 		}
-		senders_recompress[1]->get_relay_transaction(v);
-		senders_recompress[2]->get_relay_transaction(v);
 #ifndef PRECISE_BENCH
 		v = std::make_shared<std::vector<unsigned char> >(*v);
 #endif
@@ -222,6 +222,11 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 	memcpy(&header, &(*std::get<0>(res))[0], sizeof(header));
 	block_tx_count = ntohl(header.length);
 
+	if (std::get<0>(res)->size() > data.size() * (block_tx_count - txVectors.size() + 10) / block_tx_count * 3 / 2) {
+		printf("Compression failed to significantly compress block (compressed from %lu to %lu with %lu txn selected out of %u)\n", data.size(), std::get<0>(res)->size(), txVectors.size(), block_tx_count);
+		exit(12);
+	}
+
 	auto decompressed_block = recv_block(std::get<0>(res), receiver, true);
 
 	if (*decompressed_block != data) {
@@ -229,13 +234,12 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 		exit(4);
 	}
 
-	auto recompressed_block = do_recompress_test(*std::get<0>(res), receiver_recompress, senders_recompress);
+	auto recompressed_block = do_recompress_test(*std::get<0>(res), receiver_recompress, sender_recompress);
 
 	if (*recompressed_block != *std::get<0>(res)) {
 		printf("Re-compressed block did not match compressed block!\n");
 		exit(10);
 	}
-
 
 	if (globalSeenSet.insert(fullhash).second) {
 		res = global_sender.maybe_compress_block(fullhash, data, true);
@@ -243,6 +247,21 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			printf("Failed to compress block globally %s\n", std::get<1>(res));
 			exit(8);
 		}
+
+		if (std::get<0>(res)->size() > data.size() * (block_tx_count - txVectors.size() + 10) / block_tx_count * 3 / 2) {
+			printf("Global compression failed to significantly compress block (compressed from %lu to %lu with %lu txn selected out of %u)\n", data.size(), std::get<0>(res)->size(), txVectors.size(), block_tx_count);
+			exit(13);
+		}
+
+		for (auto v : txVectors) {
+			unsigned char hash[32];
+			double_sha256(&(*v)[0], hash, v->size());
+			if (global_sender.was_tx_sent(hash)) {
+				printf("Tx was not removed from sent cache after compress\n");
+				exit(11);
+			}
+		}
+
 		decompressed_block = recv_block(std::get<0>(res), global_receiver, false);
 
 		if (*decompressed_block != data) {
@@ -250,21 +269,18 @@ void test_compress_block(std::vector<unsigned char>& data, std::vector<std::shar
 			exit(4);
 		}
 	}
-
-	delete senders_recompress[0];
-	delete senders_recompress[1];
-	delete senders_recompress[2];
 }
 
 void run_test(std::vector<unsigned char>& data) {
 	std::vector<std::shared_ptr<std::vector<unsigned char> > > txVectors;
+	fill_txv(data, txVectors, 0.5);
 	test_compress_block(data, txVectors);
 
+	txVectors.clear();
 	fill_txv(data, txVectors, 1.0);
 	test_compress_block(data, txVectors);
 
 	txVectors.clear();
-	fill_txv(data, txVectors, 0.5);
 	test_compress_block(data, txVectors);
 
 	txVectors.clear();
