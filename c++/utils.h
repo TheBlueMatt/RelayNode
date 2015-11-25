@@ -156,6 +156,7 @@ int create_connect_socket(const std::string& serverHost, const uint16_t serverPo
 void double_sha256(const unsigned char* input, unsigned char* res, uint64_t byte_count);
 void double_sha256_two_32_inputs(const unsigned char* input, const unsigned char* input2, unsigned char* res);
 void getblockhash(std::vector<unsigned char>& hashRes, const std::vector<unsigned char>& block, size_t offset);
+void getblockhash(std::vector<unsigned char>& hashRes, const unsigned char* headerptr);
 
 void double_sha256_init(uint32_t state[8]);
 void double_sha256_step(const unsigned char* input, uint64_t byte_count, uint32_t state[8]);
