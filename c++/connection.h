@@ -96,7 +96,7 @@ protected:
 	virtual void recv_bytes(char* buf, size_t len)=0;
 	// readable must run unlocked
 	virtual bool readable()=0;
-	// on_disconnect_done is called just before setting DISCONNECT_GLOBAL_THREAD_DONE (ie dont free just yet)
+	// on_disconnect_done is called just after setting DISCONNECT_GLOBAL_THREADS_DONE
 	virtual void on_disconnect_done() {}
 
 private:

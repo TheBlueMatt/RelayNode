@@ -25,14 +25,17 @@
 
 class GlobalNetProcess {
 private:
-	std::mutex fd_map_mutex;
-	std::unordered_map<int, Connection*> fd_map;
+	std::mutex fd_write_map_mutex;
+	std::unordered_map<int, Connection*> fd_map_write;
 	std::map<uint64_t, std::function<void (void)> > actions_map;
+
+	std::mutex fd_read_map_mutex;
+	std::unordered_map<int, Connection*> fd_map_read;
 #ifndef WIN32
-	int pipe_write;
+	int write_pipe, read_pipe;
 #endif
 
-	static void do_net_process(GlobalNetProcess* me) {
+	static void do_net_write_process(GlobalNetProcess* me) {
 		fd_set fd_set_read, fd_set_write;
 		struct timeval timeout;
 
@@ -41,7 +44,7 @@ private:
 		ALWAYS_ASSERT(!pipe(pipefd));
 		fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL) | O_NONBLOCK);
 		fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL) | O_NONBLOCK);
-		me->pipe_write = pipefd[1];
+		me->write_pipe = pipefd[1];
 #endif
 
 		while (true) {
@@ -63,19 +66,18 @@ private:
 			auto now = std::chrono::steady_clock::now();
 			std::list<std::function<void (void)> > funs_scheduled_to_run;
 			{
-				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
-				for (const auto& e : me->fd_map) {
+				std::lock_guard<std::mutex> lock(me->fd_write_map_mutex);
+				for (const auto& e : me->fd_map_write) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					if (e.second->readable() || e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN)
-						FD_SET(e.first, &fd_set_read);
 					if (e.second->total_waiting_size > 0) {
 						if (now < e.second->earliest_next_write) {
 							timeout.tv_sec = 0;
 							timeout.tv_usec = std::min((long unsigned)timeout.tv_usec, to_micros_lu(e.second->earliest_next_write - now));
-						} else
+						} else {
 							FD_SET(e.first, &fd_set_write);
+							max = std::max(e.first, max);
+						}
 					}
-					max = std::max(e.first, max);
 				}
 
 				if (me->actions_map.size()) {
@@ -100,30 +102,12 @@ private:
 				ALWAYS_ASSERT(select(max + 1, &fd_set_read, &fd_set_write, NULL, &timeout) >= 0);
 
 			now = std::chrono::steady_clock::now();
-			char buf[65536];
 			std::set<int> remove_set;
-			bool done;
-			do {
-				done = true;
-				std::unique_lock<std::mutex> lock(me->fd_map_mutex);
-				for (const auto& e : me->fd_map) {
+			{
+				std::unique_lock<std::mutex> lock(me->fd_write_map_mutex);
+				for (const auto& e : me->fd_map_write) {
 					Connection* conn = e.second;
 
-					if (FD_ISSET(e.first, &fd_set_read)) {
-						FD_CLR(e.first, &fd_set_read);
-
-						ssize_t count = recv(conn->sock, buf, sizeof(buf), 0);
-
-						if (count <= 0) {
-							remove_set.insert(e.first);
-							conn->sock_errno = errno;
-						} else {
-							lock.unlock();
-							conn->recv_bytes(buf, count);
-							done = false;
-							break;
-						}
-					}
 					if (FD_ISSET(e.first, &fd_set_write)) {
 						FD_CLR(e.first, &fd_set_write);
 
@@ -139,7 +123,8 @@ private:
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
 							if (count <= 0) {
 								remove_set.insert(e.first);
-								conn->sock_errno = errno;
+								int z = 0;
+								conn->sock_errno.compare_exchange_strong(z, errno);
 							} else {
 								conn->primary_writepos += count;
 								if (conn->primary_writepos == msg->size()) {
@@ -156,7 +141,8 @@ private:
 							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
 							if (count <= 0) {
 								remove_set.insert(e.first);
-								conn->sock_errno = errno;
+								int z = 0;
+								conn->sock_errno.compare_exchange_strong(z, errno);
 							} else {
 								conn->secondary_writepos += count;
 								if (conn->secondary_writepos == msg->size()) {
@@ -175,19 +161,113 @@ private:
 							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::microseconds(1000 * message_written_size / OUTBOUND_THROTTLE_BYTES_PER_MS);
 					}
 				}
+			}
+
+			for (const int fd : remove_set) {
+				Connection* conn;
+				{
+					std::lock_guard<std::mutex> lock(me->fd_write_map_mutex);
+					conn = me->fd_map_write[fd];
+					if (conn->sock_errno == EAGAIN || conn->sock_errno == EWOULDBLOCK)
+						conn->sock_errno = ENOTCONN;
+					me->fd_map_write.erase(fd);
+				}
+				int newFlags = (conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_WRITE_THREAD_DONE);
+				if (newFlags & Connection::DISCONNECT_GLOBAL_READ_THREAD_DONE)
+					conn->on_disconnect_done();
+			}
+#ifndef WIN32
+			char buf[1024];
+			if (FD_ISSET(pipefd[0], &fd_set_read))
+				while (read(pipefd[0], buf, sizeof(buf)) > 0);
+#endif
+		}
+	}
+
+	static void do_net_read_process(GlobalNetProcess* me) {
+		fd_set fd_set_read;
+		struct timeval timeout;
+
+#ifndef WIN32
+		int pipefd[2];
+		ALWAYS_ASSERT(!pipe(pipefd));
+		fcntl(pipefd[1], F_SETFL, fcntl(pipefd[1], F_GETFL) | O_NONBLOCK);
+		fcntl(pipefd[0], F_SETFL, fcntl(pipefd[0], F_GETFL) | O_NONBLOCK);
+		me->read_pipe = pipefd[1];
+#endif
+
+		while (true) {
+#ifndef WIN32
+			timeout.tv_sec = 86400;
+			timeout.tv_usec = 999999;
+#else
+			timeout.tv_sec = 0;
+			timeout.tv_usec = 1000;
+#endif
+
+			FD_ZERO(&fd_set_read);
+#ifndef WIN32
+			int max = pipefd[0];
+			FD_SET(pipefd[0], &fd_set_read);
+#else
+			int max = -1;
+#endif
+			{
+				std::lock_guard<std::mutex> lock(me->fd_read_map_mutex);
+				for (const auto& e : me->fd_map_read) {
+					ALWAYS_ASSERT(e.first < FD_SETSIZE);
+					if (e.second->readable() || e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN) {
+						FD_SET(e.first, &fd_set_read);
+						max = std::max(e.first, max);
+					}
+				}
+			}
+
+			if (max < 0)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			else
+				ALWAYS_ASSERT(select(max + 1, &fd_set_read, NULL, NULL, &timeout) >= 0);
+
+			char buf[65536];
+			std::set<int> remove_set;
+			bool done;
+			do {
+				done = true;
+				std::unique_lock<std::mutex> lock(me->fd_read_map_mutex);
+				for (const auto& e : me->fd_map_read) {
+					Connection* conn = e.second;
+
+					if (FD_ISSET(e.first, &fd_set_read)) {
+						FD_CLR(e.first, &fd_set_read);
+
+						ssize_t count = recv(conn->sock, buf, sizeof(buf), 0);
+
+						if (count <= 0) {
+							remove_set.insert(e.first);
+							int z = 0;
+							conn->sock_errno.compare_exchange_strong(z, errno);
+						} else {
+							lock.unlock();
+							conn->recv_bytes(buf, count);
+							done = false;
+							break;
+						}
+					}
+				}
 			} while(!done);
 
 			for (const int fd : remove_set) {
 				Connection* conn;
 				{
-					std::lock_guard<std::mutex> lock(me->fd_map_mutex);
-					conn = me->fd_map[fd];
+					std::lock_guard<std::mutex> lock(me->fd_read_map_mutex);
+					conn = me->fd_map_read[fd];
 					if (conn->sock_errno == EAGAIN || conn->sock_errno == EWOULDBLOCK)
 						conn->sock_errno = ENOTCONN;
-					me->fd_map.erase(fd);
+					me->fd_map_read.erase(fd);
 				}
-				conn->on_disconnect_done();
-				conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_THREADS_DONE;
+				int newFlags = (conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_READ_THREAD_DONE);
+				if (newFlags & Connection::DISCONNECT_GLOBAL_WRITE_THREAD_DONE)
+					conn->on_disconnect_done();
 			}
 #ifndef WIN32
 			if (FD_ISSET(pipefd[0], &fd_set_read))
@@ -198,30 +278,48 @@ private:
 
 public:
 	GlobalNetProcess() {
-		std::thread(do_net_process, this).detach();
+		std::thread(do_net_write_process, this).detach();
+		std::thread(do_net_read_process, this).detach();
 	}
 
 	void register_connection(int sock, Connection* conn) {
-		std::lock_guard<std::mutex> lock(fd_map_mutex);
-		fd_map[sock] = conn;
-		notify();
+		{
+			std::lock_guard<std::mutex> lock(fd_read_map_mutex);
+			fd_map_read[sock] = conn;
+		}
+		{
+			std::lock_guard<std::mutex> lock(fd_write_map_mutex);
+			fd_map_write[sock] = conn;
+		}
+		notify_all();
 	}
 
 	void register_action(uint32_t ms_from_now, std::function<void (void)> action) {
 		uint64_t time = epoch_millis_lu(std::chrono::steady_clock::now()) + ms_from_now;
-		std::lock_guard<std::mutex> lock(fd_map_mutex);
+		std::lock_guard<std::mutex> lock(fd_write_map_mutex);
 
 		while (actions_map.count(time))
 			time++;
 
 		actions_map[time] = action;
-		notify();
+		notify_write();
 	}
 
-	inline void notify() {
+	inline void notify_write() {
 #ifndef WIN32
-		ALWAYS_ASSERT(write(pipe_write, "1", 1) == 1);
+		ALWAYS_ASSERT(write(write_pipe, "1", 1) == 1);
 #endif
+	}
+
+	inline void notify_read() {
+#ifndef WIN32
+		ALWAYS_ASSERT(write(read_pipe, "1", 1) == 1);
+#endif
+	}
+
+	inline void notify_all() {
+		notify_read();
+		notify_write();
 	}
 };
 static GlobalNetProcess processor;
@@ -281,7 +379,7 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	outbound_primary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 	if (total_waiting_size == (ssize_t)bytes->size())
-		processor.notify();
+		processor.notify_write();
 
 	if (!send_mutex_token)
 		send_mutex.unlock();
@@ -305,7 +403,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	outbound_secondary_queue.push_back(bytes);
 	total_waiting_size += bytes->size();
 	if (total_waiting_size == (ssize_t)bytes->size())
-		processor.notify();
+		processor.notify_write();
 
 	if (!send_mutex_token)
 		send_mutex.unlock();
@@ -330,7 +428,7 @@ void Connection::disconnect(const char* reason) {
 	printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno));
 	shutdown(sock, SHUT_RDWR);
 	disconnectFlags |= DISCONNECT_SOCK_DOWN;
-	processor.notify();
+	processor.notify_all();
 }
 
 
@@ -415,7 +513,7 @@ ssize_t ThreadedConnection::read_all(char *buf, size_t nbyte, millis_lu_type max
 			total_inbound_size -= inbound_queue.front()->size();
 			// If the old size is >= 64k, we may need to wakeup the select thread to get it to read more
 			if (old_size >= 65536)
-				processor.notify();
+				processor.notify_read();
 
 			readpos = 0;
 			inbound_queue.pop_front();
