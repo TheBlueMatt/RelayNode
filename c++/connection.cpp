@@ -187,8 +187,7 @@ private:
 					me->fd_map.erase(fd);
 				}
 				conn->on_disconnect_done();
-				conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_THREAD_DONE;
-				ANNOTATE_HAPPENS_BEFORE(conn);
+				conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_THREADS_DONE;
 			}
 #ifndef WIN32
 			if (FD_ISSET(pipefd[0], &fd_set_read))
@@ -246,7 +245,7 @@ void Connection::construction_done() {
 	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
 
 	if (errno) {
-		disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
+		disconnectFlags |= DISCONNECT_GLOBAL_THREADS_DONE;
 		return disconnect("error during connect");
 	}
 
@@ -254,15 +253,11 @@ void Connection::construction_done() {
 }
 
 bool Connection::disconnectComplete() {
-	if (disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE) {
-		ANNOTATE_HAPPENS_AFTER(this);
-		return true;
-	} else
-		return false;
+	return (disconnectFlags & DISCONNECT_GLOBAL_THREADS_DONE) == DISCONNECT_GLOBAL_THREADS_DONE;
 }
 
 Connection::~Connection() {
-	assert(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE);
+	assert((disconnectFlags & DISCONNECT_GLOBAL_THREADS_DONE) == DISCONNECT_GLOBAL_THREADS_DONE);
 	close(sock);
 }
 
@@ -342,7 +337,8 @@ void Connection::disconnect(const char* reason) {
 
 
 ThreadedConnection::~ThreadedConnection() {
-	assert((disconnectFlags & (DISCONNECT_THREADS_CLOSED | DISCONNECT_GLOBAL_THREAD_DONE)) == (DISCONNECT_THREADS_CLOSED | DISCONNECT_GLOBAL_THREAD_DONE));
+	assert(Connection::disconnectComplete());
+	assert(disconnectFlags & DISCONNECT_THREADS_CLOSED);
 	user_thread.load()->join();
 	delete user_thread;
 }
@@ -373,7 +369,7 @@ void ThreadedConnection::disconnect(std::string reason) {
 	Connection::disconnect(reason.c_str());
 
 	std::unique_lock<std::mutex> lock(read_mutex);
-	while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
+	while (!Connection::disconnectComplete())
 		read_cv.wait(lock);
 
 	disconnectFlags |= DISCONNECT_THREADS_CLOSED;
