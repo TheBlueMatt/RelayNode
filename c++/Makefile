@@ -90,7 +90,7 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS) $(CUSTOM_CXXFLAGS)
 LDFLAGS += -pthread -lresolv $(CUSTOM_LDFLAGS)
 
 # list of all targets
-NATIVE_TARGETS = $(addprefix relaynetwork,client terminator proxy outbound server mempoolserver test)
+NATIVE_TARGETS = $(addprefix relaynetwork,client proxy server mempoolserver test)
 WINDOWS_TARGETS = relaynetworkclient.exe
 
 %.a: %.asm
@@ -111,11 +111,7 @@ relaynetworkserver: $(native_objs) $(common_objs) server.o
 
 relaynetworkmempoolserver: $(native_objs) $(common_objs) rpcclient.o mempoolserver.o
 
-relaynetworkterminator: $(native_objs) $(common_objs) bitcoindterminator.o
-
 relaynetworkproxy: $(native_objs) $(common_objs) relayproxy.o
-
-relaynetworkoutbound: $(native_objs) $(common_objs) p2poutbound.o
 
 relaynetworktest: $(native_objs) $(common_objs) test.o
 
