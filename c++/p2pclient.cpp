@@ -89,11 +89,13 @@ void P2PRelayer::net_process(const std::function<void(std::string)>& disconnect)
 			struct bitcoin_msg_header new_header;
 			send_message("verack", (unsigned char*)&new_header, 0);
 
+			STAMPOUT();
 			printf("Connected to bitcoind with version %u\n", le32toh(their_version->protocol_version));
 			continue;
 		} else if (!strncmp(header.command, "verack", strlen("verack"))) {
 			if (connected != 1)
 				return disconnect("got invalid verack");
+			STAMPOUT();
 			printf("Finished connect handshake with bitcoind\n");
 			connected = 2;
 

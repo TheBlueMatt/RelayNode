@@ -106,6 +106,7 @@ private:
 		if (len != sizeof(addr))
 			return reconnect("getsockname didnt return a sockaddr_in6?");
 
+		STAMPOUT();
 		printf("Connected to %s local_port %d at %lu\n", server_host, addr.sin6_port, epoch_millis_lu(std::chrono::system_clock::now()));
 
 		provide_sock(sock);

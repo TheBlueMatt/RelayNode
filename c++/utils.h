@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <mutex>
 #include <atomic>
+#include <sys/time.h>
 
 #define likely(x)   __builtin_expect((x), 1)
 #define unlikely(x) __builtin_expect((x), 0)
@@ -177,6 +178,23 @@ void do_assert(bool flag, const char* file, unsigned long line);
 #else
 #define ALWAYS_ASSERT assert
 #endif
+
+#define STAMPOUT() do { \
+		struct timeval now_tv; \
+		struct tm tm; \
+		int ms; \
+		gettimeofday(&now_tv, NULL); \
+		ms = (int)(now_tv.tv_usec / 1000); \
+		gmtime_r(&(now_tv.tv_sec), &tm); \
+		printf("[%d-%02d-%02d %02d:%02d:%02d.%03d+00] ", \
+			tm.tm_year + 1900, \
+			tm.tm_mon + 1, \
+			tm.tm_mday, \
+			tm.tm_hour, \
+			tm.tm_min, \
+			tm.tm_sec, \
+			ms); \
+	} while(0)
 
 /****************************************************************
  *** A mutex that gives acess to the count of waiting threads ***
