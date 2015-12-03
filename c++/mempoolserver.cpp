@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
 
 						std::lock_guard<std::mutex> lock(map_mutex);
 						for (auto it = clientMap.begin(); it != clientMap.end(); it++) {
-							if (!it->second->getDisconnectFlags())
+							if (!it->second->disconnectStarted())
 								it->second->send_pool(new_txn.begin(), new_txn.end());
 						}
 					});
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
 			{
 				std::lock_guard<std::mutex> lock(map_mutex);
 				for (auto it = clientMap.begin(); it != clientMap.end();) {
-					if (it->second->getDisconnectFlags() & DISCONNECT_COMPLETE) {
+					if (it->second->disconnectComplete()) {
 						fprintf(stderr, "%lld: Culled %s, have %lu relay clients\n", (long long) time(NULL), it->first.c_str(), clientMap.size() - 1);
 						delete it->second;
 						clientMap.erase(it++);
@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
 				(host.length() > droppostfix.length() && !host.compare(host.length() - droppostfix.length(), droppostfix.length(), droppostfix))) {
 			if (clientMap.count(host)) {
 				const auto& client = clientMap[host];
-				fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %d)\n", (long long) time(NULL), host.c_str(), client->getDisconnectFlags());
+				fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %s)\n", (long long) time(NULL), host.c_str(), client->getDisconnectDebug().c_str());
 			}
 			close(new_fd);
 		} else {

@@ -302,7 +302,7 @@ int main(int argc, char** argv) {
 				else
 					set = &localSet;
 				for (auto it = set->begin(); it != set->end(); it++) {
-					if (!(*it)->getDisconnectFlags())
+					if (!(*it)->disconnectStarted())
 						(*it)->receive_block(fullhash, bytes);
 				}
 			}
@@ -327,7 +327,7 @@ int main(int argc, char** argv) {
 			else
 				set = &localSet;
 			for (auto it = set->begin(); it != set->end(); it++) {
-				if (!(*it)->getDisconnectFlags())
+				if (!(*it)->disconnectStarted())
 					(*it)->receive_transaction(fullhash, bytes);
 			}
 		};
@@ -390,7 +390,7 @@ int main(int argc, char** argv) {
 
 		std::lock_guard<std::mutex> lock(list_mutex);
 		for (auto it = blockSet.begin(); it != blockSet.end();) {
-			if ((*it)->getDisconnectFlags() & DISCONNECT_COMPLETE) {
+			if ((*it)->disconnectComplete()) {
 				auto rm = it++; auto item = *rm;
 				txesSet.erase(item);
 				blockSet.erase(rm);
@@ -399,7 +399,7 @@ int main(int argc, char** argv) {
 				it++;
 		}
 		for (auto it = localSet.begin(); it != localSet.end();) {
-			if ((*it)->getDisconnectFlags() & DISCONNECT_COMPLETE) {
+			if ((*it)->disconnectComplete()) {
 				auto rm = it++; auto item = *rm;
 				localSet.erase(rm);
 				delete item;

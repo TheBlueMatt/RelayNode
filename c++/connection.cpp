@@ -65,7 +65,7 @@ public:
 				std::lock_guard<std::mutex> lock(me->fd_map_mutex);
 				for (const auto& e : me->fd_map) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					if (e.second->readable())
+					if (e.second->readable() || e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN)
 						FD_SET(e.first, &fd_set_read);
 					if (e.second->total_waiting_size > 0) {
 						if (now < e.second->earliest_next_write) {
@@ -168,6 +168,7 @@ public:
 					if (conn->sock_errno == EAGAIN || conn->sock_errno == EWOULDBLOCK)
 						conn->sock_errno = ENOTCONN;
 					me->fd_map.erase(fd);
+					conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_THREAD_DONE;
 					conn->on_disconnect_done();
 				}
 			}
@@ -186,8 +187,38 @@ static GlobalNetProcess processor;
 
 
 
+void Connection::construction_done() {
+	#ifdef WIN32
+		unsigned long nonblocking = 1;
+		ioctlsocket(sock, FIONBIO, &nonblocking);
+	#else
+		fcntl(sock, F_SETFL, fcntl(sock, F_GETFL) | O_NONBLOCK);
+	#endif
+
+	#ifdef X86_BSD
+		int nosigpipe = 1;
+		setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
+	#endif
+
+	int nodelay = 1;
+	setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
+
+	if (errno) {
+		disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
+		return disconnect("error during connect");
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(processor.fd_map_mutex);
+		processor.fd_map[sock] = this;
+#ifndef WIN32
+		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
+#endif
+	}
+}
+
 Connection::~Connection() {
-	assert(disconnectFlags & DISCONNECT_COMPLETE);
+	assert(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE);
 	close(sock);
 }
 
@@ -205,7 +236,7 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > max_outbound_buffer_size) {
 		if (!send_mutex_token)
 			send_mutex.unlock();
-		return disconnect_from_outside("total_waiting_size blew up :(");
+		return disconnect("total_waiting_size blew up :(");
 	}
 
 	outbound_primary_queue.push_back(bytes);
@@ -231,7 +262,7 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 	if (total_waiting_size - (initial_outbound_throttle ? initial_outbound_bytes : 0) > max_outbound_buffer_size) {
 		if (!send_mutex_token)
 			send_mutex.unlock();
-		return disconnect_from_outside("total_waiting_size blew up :(");
+		return disconnect("total_waiting_size blew up :(");
 	}
 
 	outbound_secondary_queue.push_back(bytes);
@@ -256,101 +287,66 @@ void Connection::release_send_mutex(int send_mutex_token) {
 	send_mutex.unlock();
 }
 
-void Connection::disconnect_from_outside(const char* reason) {
+void Connection::disconnect(const char* reason) {
 	if (disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)
 		return;
 
 	STAMPOUT();
 	printf("%s Disconnect: %s (%s)\n", host.c_str(), reason, strerror(errno));
 	shutdown(sock, SHUT_RDWR);
-}
-
-void Connection::disconnect(std::string reason) {
-	if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED)
-		return;
-
-	if (!(disconnectFlags.fetch_or(DISCONNECT_PRINT_AND_CLOSE) & DISCONNECT_PRINT_AND_CLOSE)) {
-		STAMPOUT();
-		printf("%s Disconnect: %s (%s)\n", host.c_str(), reason.c_str(), strerror(sock_errno));
-		shutdown(sock, SHUT_RDWR);
-	}
+	disconnectFlags |= DISCONNECT_SOCK_DOWN;
+#ifndef WIN32
+	ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
+#endif
 }
 
 
 
 
 ThreadedConnection::~ThreadedConnection() {
-	assert(disconnectFlags & DISCONNECT_COMPLETE);
-	user_thread->join();
+	assert((disconnectFlags & (DISCONNECT_THREADS_CLOSED | DISCONNECT_GLOBAL_THREAD_DONE)) == (DISCONNECT_THREADS_CLOSED | DISCONNECT_GLOBAL_THREAD_DONE));
+	user_thread.load()->join();
 	delete user_thread;
 }
 
 void ThreadedConnection::recv_bytes(char* buf, size_t len) {
 	std::lock_guard<std::mutex> lock(read_mutex);
-	if (!(disconnectFlags & DISCONNECT_READS_DONE)) {
-		inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + len));
-		total_inbound_size += len;
-		read_cv.notify_all();
-	}
+	inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + len));
+	total_inbound_size += len;
+	read_cv.notify_all();
 }
 
 bool ThreadedConnection::readable() {
-	return total_inbound_size < 65536 || disconnectFlags & DISCONNECT_READS_DONE;
+	return total_inbound_size < 65536;
 }
 
 void ThreadedConnection::on_disconnect_done() {
 	std::lock_guard<std::mutex> lock(read_mutex);
 	inbound_queue.emplace_back((std::nullptr_t)NULL);
 	read_cv.notify_all();
-	disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
 }
 
 void ThreadedConnection::disconnect(std::string reason) {
-	assert(std::this_thread::get_id() == user_thread->get_id());
+	assert(std::this_thread::get_id() == user_thread.load()->get_id());
 
-	this->Connection::disconnect(reason);
+	if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED)
+		return;
 
-	disconnectFlags |= DISCONNECT_READS_DONE;
+	Connection::disconnect(reason.c_str());
 
 	std::unique_lock<std::mutex> lock(read_mutex);
 	while (!(disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE))
 		read_cv.wait(lock);
 
-	disconnectFlags |= DISCONNECT_COMPLETE;
+	disconnectFlags |= DISCONNECT_THREADS_CLOSED;
 
 	if (on_disconnect)
 		std::thread(on_disconnect).detach();
 }
 
 void ThreadedConnection::do_setup_and_read(ThreadedConnection* me) {
-	#ifdef WIN32
-		unsigned long nonblocking = 1;
-		ioctlsocket(me->sock, FIONBIO, &nonblocking);
-	#else
-		fcntl(me->sock, F_SETFL, fcntl(me->sock, F_GETFL) | O_NONBLOCK);
-	#endif
-
-	#ifdef X86_BSD
-		int nosigpipe = 1;
-		setsockopt(me->sock, SOL_SOCKET, SO_NOSIGPIPE, (void *)&nosigpipe, sizeof(int));
-	#endif
-
-	int nodelay = 1;
-	setsockopt(me->sock, IPPROTO_TCP, TCP_NODELAY, (char*)&nodelay, sizeof(nodelay));
-
-	if (errno) {
-		me->disconnectFlags |= DISCONNECT_GLOBAL_THREAD_DONE;
-		return me->disconnect("error during connect");
-	}
-
-	{
-		std::lock_guard<std::mutex> lock(processor.fd_map_mutex);
-		processor.fd_map[me->sock] = me;
-#ifndef WIN32
-		ALWAYS_ASSERT(write(processor.pipe_write, "1", 1) == 1);
-#endif
-	}
-
+	while (me->user_thread.load() == NULL)
+		std::this_thread::yield();
 	try {
 		me->net_process([&](std::string reason) { me->disconnect(reason); });
 	} catch (std::exception& e) {
@@ -359,7 +355,7 @@ void ThreadedConnection::do_setup_and_read(ThreadedConnection* me) {
 }
 
 ssize_t ThreadedConnection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
-	assert(std::this_thread::get_id() == user_thread->get_id());
+	assert(std::this_thread::get_id() == user_thread.load()->get_id());
 
 	size_t total = 0;
 	std::chrono::system_clock::time_point stop_time;
@@ -426,8 +422,8 @@ void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
 	on_disconnect();
 
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	while (old && !(old->getDisconnectFlags() & DISCONNECT_COMPLETE)) {
-		printf("Disconnect of outbound connection still not complete (status is %d)\n", old->getDisconnectFlags());
+	while (old && !old->disconnectComplete()) {
+		printf("Disconnect of outbound connection still not complete (status is %s)\n", old->getDisconnectDebug().c_str());
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 

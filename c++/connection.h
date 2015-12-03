@@ -11,16 +11,8 @@
 
 #include "utils.h"
 
-enum DisconnectFlags {
-	DISCONNECT_STARTED = 1,
-	DISCONNECT_PRINT_AND_CLOSE = 2,
-	DISCONNECT_READS_DONE = 4,
-	DISCONNECT_GLOBAL_THREAD_DONE = 8,
-	DISCONNECT_COMPLETE = 16,
-};
-
 class Connection {
-protected:
+private:
 	const int sock;
 
 	int outside_send_mutex_token;
@@ -40,7 +32,18 @@ protected:
 	std::chrono::steady_clock::time_point earliest_next_write;
 	uint32_t max_outbound_buffer_size;
 
+protected:
+	enum DisconnectFlags {
+		// Used by Connection:
+		DISCONNECT_PRINT_AND_CLOSE = 1,
+		DISCONNECT_SOCK_DOWN = 2,
+		DISCONNECT_GLOBAL_THREAD_DONE = 4,
+		// Used by ThreadedConnection:
+		DISCONNECT_STARTED = 8,
+		DISCONNECT_THREADS_CLOSED = 16,
+	};
 	DECLARE_ATOMIC_INT(int, disconnectFlags);
+private:
 	DECLARE_ATOMIC_INT(int, sock_errno);
 
 public:
@@ -55,12 +58,28 @@ public:
 
 	virtual ~Connection();
 
+protected:
+	void construction_done();
+
+public:
 	// See the comment above initial_outbound_throttle for special meanings of the send_mutex_tokens
 	int get_send_mutex();
 	void release_send_mutex(int send_mutex_token);
 	void do_throttle_outbound() { if (!initial_outbound_throttle_done.test_and_set()) initial_outbound_throttle = true; }
 
-	void disconnect_from_outside(const char* reason);
+	void disconnect(const char* reason);
+	virtual bool disconnectComplete() { return disconnectFlags & DISCONNECT_GLOBAL_THREAD_DONE; }
+	bool disconnectStarted() { return disconnectFlags != 0; }
+	std::string getDisconnectDebug() {
+		int flags = disconnectFlags;
+		std::string res("0");
+		if (flags & DISCONNECT_PRINT_AND_CLOSE) res += "|PRINT_AND_CLOSE";
+		if (flags & DISCONNECT_SOCK_DOWN) res += "|SOCK_DOWN";
+		if (flags & DISCONNECT_GLOBAL_THREAD_DONE) res += "|GLOBAL_THREAD_DONE";
+		if (flags & DISCONNECT_STARTED) res += "|STARTED";
+		if (flags & DISCONNECT_THREADS_CLOSED) res += "|THREADS_CLOSED";
+		return res;
+	}
 
 protected:
 	void do_send_bytes(const char *buf, size_t nbyte, int send_mutex_token=0) {
@@ -73,8 +92,6 @@ protected:
 	virtual void recv_bytes(char* buf, size_t len)=0;
 	virtual bool readable()=0;
 	virtual void on_disconnect_done()=0;
-
-	virtual void disconnect(std::string reason);
 
 private:
 	friend class GlobalNetProcess;
@@ -95,18 +112,21 @@ private:
 public:
 	ThreadedConnection(int sockIn, std::string hostIn, std::function<void(void)> on_disconnect_in, uint32_t max_outbound_buffer_size_in=10000000) :
 			Connection(sockIn, hostIn, max_outbound_buffer_size_in), on_disconnect(on_disconnect_in),
-			readpos(0), total_inbound_size(0)
+			readpos(0), total_inbound_size(0), user_thread(NULL)
 		{}
+
+	void disconnect_from_outside(const char* reason) { Connection::disconnect(reason); }
 
 protected:
 	void construction_done() {
+		Connection::construction_done();
 		user_thread = new std::thread(do_setup_and_read, this);
 	}
 
 public:
 	virtual ~ThreadedConnection();
 
-	int getDisconnectFlags() { return disconnectFlags; }
+	virtual bool disconnectComplete() { return Connection::disconnectComplete() && (disconnectFlags & DISCONNECT_THREADS_CLOSED); }
 
 private:
 	void recv_bytes(char* buf, size_t len);

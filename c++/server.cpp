@@ -346,7 +346,7 @@ int main(const int argc, const char** argv) {
 				if (!insane) {
 					auto block = std::get<0>(tuple);
 					for (const auto& client : clientMap) {
-						if (!client.second->getDisconnectFlags() && client.second->compressor_type == i)
+						if (!client.second->disconnectStarted() && client.second->compressor_type == i)
 							client.second->receive_block(block);
 					}
 					if (i == 0)
@@ -393,7 +393,7 @@ int main(const int argc, const char** argv) {
 							auto tx = compressors[i].get_relay_transaction(bytes);
 							if (tx.use_count()) {
 								for (const auto& client : clientMap) {
-									if (!client.second->getDisconnectFlags() && client.second->compressor_type == i)
+									if (!client.second->disconnectStarted() && client.second->compressor_type == i)
 										client.second->receive_transaction(tx);
 								}
 								if (!sentToLocal) {
@@ -496,7 +496,7 @@ int main(const int argc, const char** argv) {
 			{
 				std::lock_guard<std::mutex> lock(map_mutex);
 				for (auto it = clientMap.begin(); it != clientMap.end();) {
-					if (it->second->getDisconnectFlags() & DISCONNECT_COMPLETE) {
+					if (it->second->disconnectComplete()) {
 						fprintf(stderr, "%lld: Culled %s, have %lu relay clients\n", (long long) time(NULL), it->first.c_str(), clientMap.size() - 1);
 						delete it->second;
 						clientMap.erase(it++);
@@ -534,7 +534,7 @@ int main(const int argc, const char** argv) {
 				const auto& client = clientMap[host];
 				if (client->lastDupConnect < (time(NULL) - 60)) {
 					client->lastDupConnect = time(NULL);
-					fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %d)\n", (long long) time(NULL), host.c_str(), client->getDisconnectFlags());
+					fprintf(stderr, "%lld: Got duplicate connection from %s (original's disconnect status: %s)\n", (long long) time(NULL), host.c_str(), client->getDisconnectDebug().c_str());
 				}
 			}
 			close(new_fd);
