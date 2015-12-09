@@ -22,6 +22,10 @@
 	#include <resolv.h>
 #endif // !WIN32
 
+#ifdef __APPLE__
+	#include <arpa/nameser_compat.h>
+#endif
+
 /***************************
  **** Varint processing ****
  ***************************/
