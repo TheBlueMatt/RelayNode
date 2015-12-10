@@ -32,6 +32,8 @@ private:
 	std::chrono::steady_clock::time_point earliest_next_write;
 	uint32_t max_outbound_buffer_size;
 
+	bool on_connect_called;
+
 protected:
 	enum DisconnectFlags {
 		// Used by Connection:
@@ -55,7 +57,7 @@ public:
 			outside_send_mutex_token(0xdeadbeef * (unsigned long)this), primary_writepos(0), secondary_writepos(0),
 			initial_outbound_throttle(false), initial_outbound_throttle_done(false),
 			initial_outbound_bytes(0), total_waiting_size(0), earliest_next_write(std::chrono::steady_clock::time_point::min()),
-			max_outbound_buffer_size(max_outbound_buffer_size_in), disconnectFlags(0), sock_errno(0), host(hostIn)
+			max_outbound_buffer_size(max_outbound_buffer_size_in), on_connect_called(false), disconnectFlags(0), sock_errno(0), host(hostIn)
 		{}
 
 	virtual ~Connection();
@@ -98,6 +100,8 @@ protected:
 	virtual bool readable()=0;
 	// on_disconnect_done is called just after setting DISCONNECT_GLOBAL_THREADS_DONE
 	virtual void on_disconnect_done() {}
+	// on_connect_done is called before any recv_bytes, just after socket bringup
+	virtual void on_connect_done() {}
 
 private:
 	friend class GlobalNetProcess;

@@ -69,8 +69,8 @@ private:
 				std::lock_guard<std::mutex> lock(me->fd_write_map_mutex);
 				for (const auto& e : me->fd_map_write) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					if (e.second->total_waiting_size > 0) {
-						if (now < e.second->earliest_next_write) {
+					if (!e.second->on_connect_called || e.second->total_waiting_size > 0 || (e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN)) {
+						if (!(e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN) && now < e.second->earliest_next_write) {
 							timeout.tv_sec = 0;
 							timeout.tv_usec = std::min((long unsigned)timeout.tv_usec, to_micros_lu(e.second->earliest_next_write - now));
 						} else {
@@ -103,65 +103,80 @@ private:
 
 			now = std::chrono::steady_clock::now();
 			std::set<int> remove_set;
-			{
+			bool done;
+			do {
+				done = true;
 				std::unique_lock<std::mutex> lock(me->fd_write_map_mutex);
+
 				for (const auto& e : me->fd_map_write) {
 					Connection* conn = e.second;
 
 					if (FD_ISSET(e.first, &fd_set_write)) {
 						FD_CLR(e.first, &fd_set_write);
 
-						if (now < conn->earliest_next_write)
-							continue;
-						bool got_send_mutex = conn->send_mutex.try_lock();
-						std::lock_guard<std::mutex> lock(conn->send_bytes_mutex);
-						size_t message_written_size = 0;
-						if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
-							auto& msg = conn->outbound_primary_queue.front();
-							assert(msg->size() - conn->primary_writepos > 0);
-							message_written_size = msg->size();
-							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
-							if (count <= 0) {
-								remove_set.insert(e.first);
-								int z = 0;
-								conn->sock_errno.compare_exchange_strong(z, errno);
+						if (e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN) {
+							char garbage = 0;
+							send(conn->sock, &garbage, 1, MSG_NOSIGNAL);
+							remove_set.insert(e.first);
+							int z = 0;
+							conn->sock_errno.compare_exchange_strong(z, errno);
+						} else if (conn->on_connect_called && now >= conn->earliest_next_write) {
+							bool got_send_mutex = conn->send_mutex.try_lock();
+							std::lock_guard<std::mutex> lock(conn->send_bytes_mutex);
+							size_t message_written_size = 0;
+							if (!conn->secondary_writepos && conn->outbound_primary_queue.size()) {
+								auto& msg = conn->outbound_primary_queue.front();
+								assert(msg->size() - conn->primary_writepos > 0);
+								message_written_size = msg->size();
+								ssize_t count = send(conn->sock, (char*) &(*msg)[conn->primary_writepos], msg->size() - conn->primary_writepos, MSG_NOSIGNAL);
+								if (count <= 0) {
+									remove_set.insert(e.first);
+									int z = 0;
+									conn->sock_errno.compare_exchange_strong(z, errno);
+								} else {
+									conn->primary_writepos += count;
+									if (conn->primary_writepos == msg->size()) {
+										conn->primary_writepos = 0;
+										conn->total_waiting_size -= msg->size();
+										conn->outbound_primary_queue.pop_front();
+									}
+								}
 							} else {
-								conn->primary_writepos += count;
-								if (conn->primary_writepos == msg->size()) {
-									conn->primary_writepos = 0;
-									conn->total_waiting_size -= msg->size();
-									conn->outbound_primary_queue.pop_front();
+								assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
+								auto& msg = conn->outbound_secondary_queue.front();
+								assert(msg->size() - conn->secondary_writepos > 0);
+								message_written_size = msg->size();
+								ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
+								if (count <= 0) {
+									remove_set.insert(e.first);
+									int z = 0;
+									conn->sock_errno.compare_exchange_strong(z, errno);
+								} else {
+									conn->secondary_writepos += count;
+									if (conn->secondary_writepos == msg->size()) {
+										conn->secondary_writepos = 0;
+										conn->total_waiting_size -= msg->size();
+										conn->outbound_secondary_queue.pop_front();
+									}
 								}
 							}
-						} else {
-							assert(conn->outbound_secondary_queue.size() && !conn->primary_writepos);
-							auto& msg = conn->outbound_secondary_queue.front();
-							assert(msg->size() - conn->secondary_writepos > 0);
-							message_written_size = msg->size();
-							ssize_t count = send(conn->sock, (char*) &(*msg)[conn->secondary_writepos], msg->size() - conn->secondary_writepos, MSG_NOSIGNAL);
-							if (count <= 0) {
-								remove_set.insert(e.first);
-								int z = 0;
-								conn->sock_errno.compare_exchange_strong(z, errno);
-							} else {
-								conn->secondary_writepos += count;
-								if (conn->secondary_writepos == msg->size()) {
-									conn->secondary_writepos = 0;
-									conn->total_waiting_size -= msg->size();
-									conn->outbound_secondary_queue.pop_front();
-								}
+							if (got_send_mutex) {
+								if (!conn->total_waiting_size)
+									conn->initial_outbound_throttle = false;
+								conn->send_mutex.unlock();
 							}
+							if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
+								conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::microseconds(1000 * message_written_size / OUTBOUND_THROTTLE_BYTES_PER_MS);
+						} else if (!conn->on_connect_called) {
+							conn->on_connect_called = true;
+							lock.unlock();
+							conn->on_connect_done();
+							done = false;
+							break;
 						}
-						if (got_send_mutex) {
-							if (!conn->total_waiting_size)
-								conn->initial_outbound_throttle = false;
-							conn->send_mutex.unlock();
-						}
-						if (!conn->primary_writepos && !conn->secondary_writepos && conn->initial_outbound_throttle)
-							conn->earliest_next_write = std::chrono::steady_clock::now() + std::chrono::microseconds(1000 * message_written_size / OUTBOUND_THROTTLE_BYTES_PER_MS);
 					}
 				}
-			}
+			} while (!done);
 
 			for (const int fd : remove_set) {
 				Connection* conn;
@@ -216,7 +231,7 @@ private:
 				std::lock_guard<std::mutex> lock(me->fd_read_map_mutex);
 				for (const auto& e : me->fd_map_read) {
 					ALWAYS_ASSERT(e.first < FD_SETSIZE);
-					if (e.second->readable() || e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN) {
+					if (e.second->readable() || (e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN)) {
 						FD_SET(e.first, &fd_set_read);
 						max = std::max(e.first, max);
 					}
@@ -365,6 +380,8 @@ void Connection::do_send_bytes(const std::shared_ptr<std::vector<unsigned char> 
 	else
 		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
 
+	assert(bytes->size());
+
 	std::lock_guard<std::mutex> bytes_lock(send_bytes_mutex);
 
 	if (initial_outbound_throttle && send_mutex_token)
@@ -391,6 +408,8 @@ void Connection::maybe_send_bytes(const std::shared_ptr<std::vector<unsigned cha
 			return;
 	} else
 		ALWAYS_ASSERT(send_mutex_token == outside_send_mutex_token);
+
+	assert(bytes->size());
 
 	std::lock_guard<std::mutex> bytes_lock(send_bytes_mutex);
 
