@@ -263,11 +263,12 @@ void test_node(int node) {
 
 
 int main(int argc, char** argv) {
-	bool validPort = false;
-	try { std::stoul(argv[2]); validPort = true; } catch (std::exception& e) {}
-	if ((argc != 3 && argc != 4) || !validPort) {
-		printf("USAGE: %s BITCOIND_ADDRESS BITCOIND_PORT [ server ]\n", argv[0]);
+	if (argc < 2) {
+		printf("USAGE: %s [relay server] [full|pool]:BITCOIND_ADDRESS:BITCOIND_PORT*\n", argv[0]);
 		printf("Relay server is automatically selected by pinging available servers, unless one is specified\n");
+		printf("Each client to connect to should either be a Bitcoin Core instance (and be prefixed with \"full:\")\n");
+		printf(" or be a connection to a pool server using the Bitcoin P2P protocol (and be prefixed with \"pool:\")\n");
+		printf("You should use one relay network client per location/datacenter and connect it to as many servers as neccessary\n");
 		return -1;
 	}
 
@@ -277,9 +278,10 @@ int main(int argc, char** argv) {
 		return -1;
 #endif
 
+	bool pickServer = strlen(argv[1]) < 5 || argv[1][4] == ':';
 	const char* relay = "public.%02d.relay.mattcorallo.com";
-	char host[std::max(argc == 3 ? 0 : strlen(argv[3]), strlen(relay))];
-	if (argc == 3) {
+	char host[pickServer ? strlen(relay) : strlen(argv[1])];
+	if (pickServer) {
 		while (true) {
 			std::list<std::thread> threads;
 			for (int i = 0; i < HOSTNAMES_TO_TEST; i++)
@@ -312,23 +314,43 @@ int main(int argc, char** argv) {
 			break;
 		}
 	} else
-		memcpy(host, argv[3], strlen(argv[3]) + 1);
+		memcpy(host, argv[1], strlen(argv[1]) + 1);
 	STAMPOUT();
 	printf("Using server %s\n", host);
 
 	DECLARE_NON_ATOMIC_PTR(RelayNetworkClient, relayClient);
-	P2PClient p2p(argv[1], std::stoul(argv[2]),
+	std::vector<P2PClient*> fullServers;
+	std::vector<P2PClient*> nonFullServers;
+	for (int i = pickServer ? 1 : 2; i < argc; i++) {
+		std::string cmdline(argv[i]);
+		unsigned long port = std::stoul(cmdline.substr(cmdline.find_last_of(":")+1));
+		argv[i][cmdline.find_last_of(":")] = '\0';
+		P2PClient* client = new P2PClient(argv[i] + 5, port,
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { ((RelayNetworkClient*)relayClient)->receive_block(bytes); },
 					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						//TODO: Re-enable (see issue #11): relayClient->receive_transaction(bytes, true);
+						//TODO: Re-enable (see issue #11): ((RelayNetworkClient*)relayClient)->receive_transaction(bytes);
 					});
-	relayClient = new RelayNetworkClient(host,
-										[&](std::vector<unsigned char>& bytes) { p2p.receive_block(bytes); },
+		if (!strncmp(argv[i], "full:", strlen("full:")))
+			fullServers.push_back(client);
+		else if (!strncmp(argv[i], "pool:", strlen("pool:")))
+			nonFullServers.push_back(client);
+		else {
+			printf("Clients must either be \"full:\" (ie Bitcoin Core) or \"pool:\" (ie a Pool server)\n");
+			return -1;
+		}
+	}
+
+	relayClient = new RelayNetworkClient(argv[1],
+										[&](std::vector<unsigned char>& bytes) {
+											for (P2PClient* r : fullServers)
+												r->receive_block(bytes);
+										},
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-											p2p.receive_transaction(bytes);
+											for (P2PRelayer* r : fullServers)
+												r->receive_transaction(bytes);
 											((RelayNetworkClient*)relayClient)->receive_transaction(bytes, false);
 										},
-										[&]() { return p2p.is_connected(); });
+										[&]() { return fullServers.empty() || fullServers[0]->is_connected(); });
 
 	while (true) { sleep(1000); }
 }
