@@ -20,9 +20,9 @@
 
 
 
-class MempoolClient : public ThreadedConnection {
+class MempoolClient : public Connection {
 public:
-	MempoolClient(int fd_in, std::string hostIn) : ThreadedConnection(fd_in, hostIn, NULL) { construction_done(); }
+	MempoolClient(int fd_in, std::string hostIn) : Connection(fd_in, hostIn) { construction_done(); }
 	void send_pool(std::set<std::vector<unsigned char> >::const_iterator mempool_begin, const std::set<std::vector<unsigned char> >::const_iterator mempool_end, int send_mutex=0) {
 		while (mempool_begin != mempool_end) {
 			assert(mempool_begin->size() == 32);
@@ -31,14 +31,8 @@ public:
 		}
 	}
 private:
-	void net_process(const std::function<void(std::string)>& disconnect) {
-		char buf[42];
-		while (true) {
-			ssize_t res = read_all(buf, 42);
-			if (res != 42)
-				return disconnect("Socket error reading bytes from mempool client");
-		}
-	}
+	bool readable() { return true; }
+	void recv_bytes(char* buf, size_t len) {}
 };
 
 int main(int argc, char** argv) {
