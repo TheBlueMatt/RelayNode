@@ -11,6 +11,15 @@
 
 #include "utils.h"
 
+#ifdef SLOW_TEST
+#define CONNECTION_MAX_READ_BYTES 1
+#elif defined(FOR_TEST)
+#define CONNECTION_MAX_READ_BYTES (sizeof(struct relay_msg_header) - 2)
+#else
+#define CONNECTION_MAX_READ_BYTES 65536
+#endif
+
+
 class Connection {
 private:
 	const int sock;
@@ -98,6 +107,9 @@ protected:
 	virtual void recv_bytes(char* buf, size_t len)=0;
 	// readable must run unlocked
 	virtual bool readable()=0;
+	// after readable() changes from false to true, you must call notify_readable_change()
+	// calls to notify_readable_change() when readable() has not changed are allowed
+	void notify_readable_change();
 	// on_disconnect_done is called just after setting DISCONNECT_GLOBAL_THREADS_DONE
 	virtual void on_disconnect_done() {}
 	// on_connect_done is called before any recv_bytes, just after socket bringup
