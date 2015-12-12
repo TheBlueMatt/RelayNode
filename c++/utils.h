@@ -62,6 +62,7 @@
 struct relay_msg_header {
 	uint32_t magic, type, length;
 };
+static_assert(sizeof(struct relay_msg_header) == 3*4, "relay_msg_header is 12 bytes");
 
 #define RELAY_MAGIC_BYTES htonl(0xF2BEEF42)
 #define VERSION_STRING "what i should have done"

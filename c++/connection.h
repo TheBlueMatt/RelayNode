@@ -101,6 +101,7 @@ protected:
 	// on_disconnect_done is called just after setting DISCONNECT_GLOBAL_THREADS_DONE
 	virtual void on_disconnect_done() {}
 	// on_connect_done is called before any recv_bytes, just after socket bringup
+	// Note that on_disconnect_done may be called without any call to on_connect_done
 	virtual void on_connect_done() {}
 
 private:

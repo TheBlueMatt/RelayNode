@@ -243,7 +243,14 @@ private:
 			else
 				ALWAYS_ASSERT(select(max + 1, &fd_set_read, NULL, NULL, &timeout) >= 0);
 
+#ifdef SLOW_TEST
+			char buf[1];
+#elif defined(FOR_TEST)
+			char buf[sizeof(struct relay_msg_header) - 1];
+#else
 			char buf[65536];
+#endif
+
 			std::set<int> remove_set;
 			bool done;
 			do {

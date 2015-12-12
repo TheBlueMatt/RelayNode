@@ -404,18 +404,18 @@ void double_sha256_init(uint32_t state[8]) {
 
 void double_sha256_step(const unsigned char* input, uint64_t byte_count, uint32_t state[8]) {
 	assert(byte_count % 64 == 0);
-#ifndef SHA256
 	if (byte_count) {
+#ifndef SHA256
 		CSHA256 hash;
 		for (uint8_t i = 0; i < 8; i++)
 			hash.s[i] = state[i];
 		hash.Write(input, byte_count);
 		for (uint8_t i = 0; i < 8; i++)
 			state[i] = hash.s[i];
-	}
 #else
-	SHA256(const_cast<unsigned char*>(input), state, byte_count / 64);
+		SHA256(const_cast<unsigned char*>(input), state, byte_count / 64);
 #endif
+	}
 }
 
 void double_sha256_done(const unsigned char* input, uint64_t byte_count, uint64_t total_byte_count, uint32_t state[8]) {

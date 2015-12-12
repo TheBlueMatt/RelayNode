@@ -35,6 +35,8 @@ ifneq (,$(findstring test,$(variant)))
     COMMON_CXXFLAGS += -DFOR_TEST -DTEST_DATA
     ifeq ($(variant),fasttest)
       COMMON_CXXFLAGS += -O3
+    else
+      COMMON_CXXFLAGS += -DSLOW_TEST
     endif
   endif
 else
