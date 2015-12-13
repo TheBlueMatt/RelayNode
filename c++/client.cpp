@@ -29,6 +29,7 @@
 #include "relayprocess.h"
 #include "utils.h"
 #include "p2pclient.h"
+#include "relayconnection.h"
 
 
 
@@ -37,17 +38,13 @@
 /***********************************************
  **** Relay network client processing class ****
  ***********************************************/
-class RelayNetworkClient : public KeepaliveOutboundPersistentConnection {
+class RelayNetworkClient : public KeepaliveOutboundPersistentConnection, public RelayConnectionProcessor {
 private:
-	RELAY_DECLARE_CLASS_VARS
-
 	const std::function<void (std::vector<unsigned char>&)> provide_block;
 	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
 	const std::function<bool ()> bitcoind_connected;
 
 	DECLARE_ATOMIC(bool, connected);
-
-	RelayNodeCompressor compressor;
 
 public:
 	RelayNetworkClient(const char* serverHostIn,
@@ -55,17 +52,74 @@ public:
 						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 						const std::function<bool ()>& bitcoind_connected_in)
 		// Ping time(out) is 40 seconds (5000000/250*2 msec) - first ping will only happen, at the quickest, at half that
-			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_FAS_TOTAL_SIZE / OUTBOUND_THROTTLE_BYTES_PER_MS * 2), RELAY_DECLARE_CONSTRUCTOR_EXTENDS,
-			provide_block(provide_block_in), provide_transaction(provide_transaction_in), bitcoind_connected(bitcoind_connected_in), connected(false), compressor(false, true) {
+			: KeepaliveOutboundPersistentConnection(serverHostIn, 8336, MAX_FAS_TOTAL_SIZE / OUTBOUND_THROTTLE_BYTES_PER_MS * 2),
+			provide_block(provide_block_in), provide_transaction(provide_transaction_in), bitcoind_connected(bitcoind_connected_in), connected(false) {
 		construction_done();
 	}
 
 private:
 	void on_disconnect() {
 		connected = false;
+		reset_read_state();
 	}
 
-	void net_process(const std::function<void(std::string)>& disconnect) {
+	bool readable() { return true; }
+
+	const char* handle_peer_version(const std::string& peer_version) {
+		if (peer_version != std::string(VERSION_STRING))
+			return "unknown version string";
+		else {
+			STAMPOUT();
+			printf("Connected to relay node with protocol version %s\n", VERSION_STRING);
+		}
+		return NULL;
+	}
+
+	const char* handle_max_version(const std::string& max_version) {
+		if (max_version != std::string(VERSION_STRING))
+			printf("Relay network is using a later version (PLEASE UPGRADE)\n");
+		else
+			return "got MAX_VERSION of same version as us";
+		return NULL;
+	}
+
+	const char* handle_sponsor(const std::string& sponsor) {
+		printf("This node sponsored by: %s\n", sponsor.c_str());
+		return NULL;
+	}
+
+	void handle_pong(uint64_t nonce) {
+		pong_received(nonce);
+	}
+
+	void handle_block(RelayNodeCompressor::DecompressState& block,
+			std::chrono::system_clock::time_point& read_end_time,
+			std::chrono::steady_clock::time_point& read_end,
+			std::chrono::steady_clock::time_point& read_start) {
+		provide_block(*block.get_block_data());
+
+		STAMPOUT();
+		printf(HASH_FORMAT" recv'd, size %u with %u bytes on the wire\n", HASH_PRINT(&(*block.fullhashptr)[0]), block.block_bytes, block.wire_bytes);
+	}
+
+	void handle_transaction(std::shared_ptr<std::vector<unsigned char> >& tx) {
+		if (bitcoind_connected())
+			printf("Received transaction of size %lu from relay server\n", (unsigned long)tx->size());
+		else
+			printf("ERROR: bitcoind is not (yet) connected!\n");
+
+		provide_transaction(tx);
+	}
+
+	void disconnect(const char* reason) {
+		KeepaliveOutboundPersistentConnection::disconnect(reason);
+	}
+
+	void do_send_bytes(const char *buf, size_t nbyte) {
+		maybe_do_send_bytes(buf, nbyte);
+	}
+
+	void on_connect() {
 		compressor.reset();
 
 		relay_msg_header version_header = { RELAY_MAGIC_BYTES, VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
@@ -73,90 +127,10 @@ private:
 		maybe_do_send_bytes(VERSION_STRING, strlen(VERSION_STRING));
 
 		connected = true;
+	}
 
-		while (true) {
-			relay_msg_header header;
-			if (read_all((char*)&header, 4*3) != 4*3)
-				return disconnect("failed to read message header");
-
-			if (header.magic != RELAY_MAGIC_BYTES)
-				return disconnect("invalid magic bytes");
-
-			uint32_t message_size = ntohl(header.length);
-
-			if (message_size > 1000000)
-				return disconnect("got message too large");
-
-			if (header.type == VERSION_TYPE) {
-				char data[message_size];
-				if (read_all(data, message_size) < (int64_t)(message_size))
-					return disconnect("failed to read version message");
-
-				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
-					return disconnect("unknown version string");
-				else {
-					STAMPOUT();
-					printf("Connected to relay node with protocol version %s\n", VERSION_STRING);
-				}
-			} else if (header.type == SPONSOR_TYPE) {
-				char data[message_size];
-				if (read_all(data, message_size) < (int64_t)(message_size))
-					return disconnect("failed to read sponsor string");
-
-				printf("This node sponsored by: %s\n", asciifyString(std::string(data, data + message_size)).c_str());
-			} else if (header.type == MAX_VERSION_TYPE) {
-				char data[message_size];
-				if (read_all(data, message_size) < (int64_t)(message_size))
-					return disconnect("failed to read max_version string");
-
-				if (strncmp(VERSION_STRING, data, std::min(sizeof(VERSION_STRING), size_t(message_size))))
-					printf("Relay network is using a later version (PLEASE UPGRADE)\n");
-				else
-					return disconnect("got MAX_VERSION of same version as us");
-			} else if (header.type == BLOCK_TYPE) {
-				std::function<ssize_t(char*, size_t)> do_read = [&](char* buf, size_t count) { return this->read_all(buf, count); };
-				auto res = compressor.decompress_relay_block(do_read, message_size, false);
-				if (std::get<2>(res))
-					return disconnect(std::get<2>(res));
-
-				provide_block(*std::get<1>(res));
-
-				auto fullhash = *std::get<3>(res).get();
-				STAMPOUT();
-				printf(HASH_FORMAT" recv'd, size %lu with %u bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)std::get<1>(res)->size() - sizeof(bitcoin_msg_header), std::get<0>(res));
-			} else if (header.type == END_BLOCK_TYPE) {
-			} else if (header.type == TRANSACTION_TYPE) {
-				if (!compressor.maybe_recv_tx_of_size(message_size, true))
-					return disconnect("got freely relayed transaction too large");
-
-				auto tx = std::make_shared<std::vector<unsigned char> > (message_size);
-				if (read_all((char*)&(*tx)[0], message_size) < (int64_t)(message_size))
-					return disconnect("failed to read loose transaction data");
-
-				if (bitcoind_connected())
-					printf("Received transaction of size %u from relay server\n", message_size);
-				else
-					printf("ERROR: bitcoind is not (yet) connected!\n");
-
-				compressor.recv_tx(tx);
-				provide_transaction(tx);
-			} else if (header.type == PING_TYPE) {
-				char data[8 + sizeof(relay_msg_header)];
-				if (message_size != 8 || read_all(&data[sizeof(relay_msg_header)], 8) < 8)
-					return disconnect("failed to read 8 byte ping message");
-
-				relay_msg_header pong_msg_header = { RELAY_MAGIC_BYTES, PONG_TYPE, htonl(8) };
-				memcpy(data, &pong_msg_header, sizeof(pong_msg_header));
-				maybe_do_send_bytes(data, 8 + sizeof(relay_msg_header));
-			} else if (header.type == PONG_TYPE) {
-				uint64_t nonce;
-				if (message_size != 8 || read_all((char*)&nonce, 8) < 8)
-					return disconnect("failed to read 8 byte ping message");
-
-				pong_received(nonce);
-			} else
-				return disconnect("got unknown message type");
-		}
+	void recv_bytes(char* buf, size_t len) {
+		RelayConnectionProcessor::recv_bytes(buf, len);
 	}
 
 protected:

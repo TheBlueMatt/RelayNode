@@ -455,98 +455,6 @@ void Connection::notify_readable_change() {
 }
 
 
-
-ThreadedConnection::~ThreadedConnection() {
-	assert(Connection::disconnectComplete());
-	assert(disconnectFlags & DISCONNECT_THREADS_CLOSED);
-	user_thread.load()->join();
-	delete user_thread;
-}
-
-void ThreadedConnection::recv_bytes(char* buf, size_t len) {
-	std::lock_guard<std::mutex> lock(read_mutex);
-	inbound_queue.emplace_back(new std::vector<unsigned char>(buf, buf + len));
-	total_inbound_size += len;
-	read_cv.notify_all();
-}
-
-bool ThreadedConnection::readable() {
-	return total_inbound_size < 65536;
-}
-
-void ThreadedConnection::on_disconnect_done() {
-	std::lock_guard<std::mutex> lock(read_mutex);
-	inbound_queue.emplace_back((std::nullptr_t)NULL);
-	read_cv.notify_all();
-}
-
-void ThreadedConnection::disconnect(std::string reason) {
-	assert(std::this_thread::get_id() == user_thread.load()->get_id());
-
-	if (disconnectFlags.fetch_or(DISCONNECT_STARTED) & DISCONNECT_STARTED)
-		return;
-
-	Connection::disconnect(reason.c_str());
-
-	std::unique_lock<std::mutex> lock(read_mutex);
-	while (!Connection::disconnectComplete())
-		read_cv.wait(lock);
-
-	disconnectFlags |= DISCONNECT_THREADS_CLOSED;
-
-	if (on_disconnect)
-		std::thread(on_disconnect).detach();
-}
-
-void ThreadedConnection::do_setup_and_read(ThreadedConnection* me) {
-	while (me->user_thread.load() == NULL)
-		std::this_thread::yield();
-	try {
-		me->net_process([&](std::string reason) { me->disconnect(reason); });
-	} catch (std::exception& e) {
-		me->disconnect("net_process threw an exception");
-	}
-}
-
-ssize_t ThreadedConnection::read_all(char *buf, size_t nbyte, millis_lu_type max_sleep) {
-	assert(std::this_thread::get_id() == user_thread.load()->get_id());
-
-	size_t total = 0;
-	std::chrono::system_clock::time_point stop_time;
-	if (max_sleep == millis_lu_type::max())
-		stop_time = std::chrono::system_clock::time_point::max();
-	else
-		stop_time = std::chrono::system_clock::now() + max_sleep;
-	while (total < nbyte) {
-		std::unique_lock<std::mutex> lock(read_mutex);
-		while (!inbound_queue.size() && std::chrono::system_clock::now() < stop_time)
-			read_cv.wait_until(lock, stop_time);
-
-		if (std::chrono::system_clock::now() >= stop_time)
-			return total;
-
-		if (!inbound_queue.front())
-			return -1;
-
-		size_t readamt = std::min(nbyte - total, inbound_queue.front()->size() - readpos);
-		memcpy(buf + total, &(*inbound_queue.front())[readpos], readamt);
-		if (readpos + readamt == inbound_queue.front()->size()) {
-			int32_t old_size = total_inbound_size;
-			total_inbound_size -= inbound_queue.front()->size();
-			// If the old size is >= 64k, we may need to wakeup the select thread to get it to read more
-			if (old_size >= 65536)
-				processor.notify_read();
-
-			readpos = 0;
-			inbound_queue.pop_front();
-		} else
-			readpos += readamt;
-		total += readamt;
-	}
-	assert(total == nbyte);
-	return nbyte;
-}
-
 int OutboundPersistentConnection::get_send_mutex() {
 	ReadWriteMutexReader read(&connection_mutex);
 	std::lock_guard<ReadWriteMutexReader> lock(read);
@@ -574,7 +482,7 @@ void OutboundPersistentConnection::reconnect(std::string disconnectReason) {
 	}
 
 	if (old)
-		old->disconnect_from_outside(disconnectReason.c_str());
+		old->disconnect(disconnectReason.c_str());
 
 	mutex_valid = 0;
 
@@ -625,7 +533,7 @@ void KeepaliveOutboundPersistentConnection::schedule() {
 				return;
 
 			if (ping_nonces_waiting.size())
-				return disconnect_from_outside("Remote host failed to respond to ping within required time");
+				return disconnect("Remote host failed to respond to ping within required time");
 
 			next_nonce *= 0xDEADBEEF * (42 + ping_nonces_waiting.size());
 			ping_nonces_waiting.insert(next_nonce);

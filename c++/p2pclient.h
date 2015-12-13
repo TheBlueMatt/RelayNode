@@ -27,6 +27,13 @@ private:
 
 	const bool check_block_msghash;
 
+	struct bitcoin_msg_header read_header;
+	std::shared_ptr<std::vector<unsigned char> > read_msg;
+	uint32_t read_hash[8];
+	size_t read_msg_start_offset;
+	std::chrono::system_clock::time_point read_start;
+	size_t read_pos;
+
 public:
 	P2PRelayer(const char* serverHostIn, uint16_t serverPortIn, uint64_t ping_time_nonce,
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
@@ -35,16 +42,23 @@ public:
 				bool check_block_msghash_in=true)
 			: KeepaliveOutboundPersistentConnection(serverHostIn, serverPortIn, ping_time_nonce),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
-			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100), check_block_msghash(check_block_msghash_in)
+			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100), check_block_msghash(check_block_msghash_in),
+			read_msg_start_offset(0), read_pos(0)
 	{}
+
+private:
+	void on_disconnect();
+	void on_connect();
+	bool readable() { return true; }
+
+	ssize_t read_msg_header(char* buf, size_t len);
+	ssize_t read_msg_contents(char* buf, size_t len);
+	ssize_t process_msg();
+	void recv_bytes(char* buf, size_t len);
 
 protected:
 	virtual std::vector<unsigned char> generate_version() =0;
-
-	void on_disconnect();
-	void net_process(const std::function<void(std::string)>& disconnect);
 	void send_message(const char* command, unsigned char* headerAndData, size_t datalen);
-
 	void send_ping(uint64_t nonce);
 
 public:

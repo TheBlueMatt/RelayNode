@@ -227,18 +227,27 @@ void RelayNetworkCompressor::relay_node_connected(RelayNetworkClient* client, in
 class MempoolClient : public OutboundPersistentConnection {
 private:
 	std::function<void(std::vector<unsigned char>)> on_hash;
+	std::vector<unsigned char> curhash;
+	size_t hashpos;
 public:
 	MempoolClient(std::string serverHostIn, uint16_t serverPortIn, std::function<void(std::vector<unsigned char>)> on_hash_in)
-		: OutboundPersistentConnection(serverHostIn, serverPortIn), on_hash(on_hash_in) { construction_done(); }
+		: OutboundPersistentConnection(serverHostIn, serverPortIn), on_hash(on_hash_in), curhash(32), hashpos(0) { construction_done(); }
 
 	void on_disconnect() {}
+	void on_connect() {}
 
-	void net_process(const std::function<void(std::string)>& disconnect) {
-		while (true) {
-			std::vector<unsigned char> hash(32);
-			if (read_all((char*)&hash[0], 32, std::chrono::seconds(10)) != 32)
-				return disconnect("Failed to read next hash");
-			on_hash(hash);
+	bool readable() { return true; }
+	void recv_bytes(char* buf, size_t len) {
+		while (len) {
+			size_t bytes_read = std::min(32 - hashpos, len);
+			memcpy(&curhash[hashpos], buf, bytes_read);
+			hashpos += bytes_read;
+			if (hashpos == 32) {
+				on_hash(curhash);
+				hashpos = 0;
+				len -= bytes_read;
+				buf += bytes_read;
+			}
 		}
 	}
 
