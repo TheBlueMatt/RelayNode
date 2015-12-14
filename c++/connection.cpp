@@ -636,13 +636,12 @@ void KeepaliveOutboundPersistentConnection::schedule() {
 
 void KeepaliveOutboundPersistentConnection::on_connect_keepalive() {
 	std::lock_guard<std::mutex> lock(ping_mutex);
-	if (scheduled)
-		return;
-
-	scheduled = true;
 	connected = true;
 	ping_nonces_waiting.clear();
 
+	if (scheduled)
+		return;
+	scheduled = true;
 	schedule();
 }
 
