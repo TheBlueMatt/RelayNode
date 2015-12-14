@@ -1,3 +1,10 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#ifndef SLOW_TEST
+#define NDEBUG
+#endif
+
 #include "preinclude.h"
 
 #include "flaggedarrayset.h"
