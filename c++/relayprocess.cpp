@@ -122,7 +122,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 		move_forward(readit, 4, block.end());
 #ifndef TEST_DATA
 		int32_t block_version = ((*(readit-1) << 24) | (*(readit-2) << 16) | (*(readit-3) << 8) | *(readit-4));
-		if (block_version < 3)
+		if (block_version < 4)
 			return std::make_tuple(std::make_shared<std::vector<unsigned char> >(), "SMALL_VERSION");
 #endif
 
@@ -246,8 +246,8 @@ std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, 
 
 #ifndef TEST_DATA
 	int32_t block_version = (((*block)[sizeof(bitcoin_msg_header) + 3] << 24) | ((*block)[sizeof(bitcoin_msg_header) + 2] << 16) | ((*block)[sizeof(bitcoin_msg_header) + 1] << 8) | (*block)[sizeof(bitcoin_msg_header)]);
-	if (block_version < 3)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block had version < 3", std::shared_ptr<std::vector<unsigned char> >(NULL));
+	if (block_version < 4)
+		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "block had version < 4", std::shared_ptr<std::vector<unsigned char> >(NULL));
 #endif
 
 	auto fullhashptr = std::make_shared<std::vector<unsigned char> > (32);
