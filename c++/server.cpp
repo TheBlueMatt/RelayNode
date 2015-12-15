@@ -140,6 +140,9 @@ private:
 		return NULL;
 	}
 
+	const char* handle_sponsor(const std::string& sponsor) { return NULL; }
+	void handle_pong(uint64_t nonce) {}
+
 	void handle_block(RelayNodeCompressor::DecompressState& current_block,
 			std::chrono::system_clock::time_point& read_finish_time,
 			std::chrono::steady_clock::time_point& read_finish,

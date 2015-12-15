@@ -38,6 +38,23 @@ bool RelayConnectionProcessor::process_max_version_message(size_t read_pos) {
 	return true;
 }
 
+bool RelayConnectionProcessor::process_sponsor_message(size_t read_pos) {
+	char data[ntohl(current_msg.length) + 1];
+	memcpy(data, &read_buff[read_pos], ntohl(current_msg.length));
+
+	for (uint32_t i = 0; i < ntohl(current_msg.length); i++)
+		if (data[i] < 0x20 || data[i] > 0x7e)
+			return fail_msg("bogus sponsor string");
+	data[ntohl(current_msg.length)] = 0;
+
+	std::string sponsor(data);
+	const char* err = handle_sponsor(sponsor);
+	if (err)
+		return fail_msg(err);
+
+	return true;
+}
+
 void RelayConnectionProcessor::start_block_message() {
 	current_block_read_start = std::chrono::steady_clock::now();
 	current_block.reset(true, ntohl(current_msg.length));
@@ -107,6 +124,17 @@ bool RelayConnectionProcessor::process_ping_message(size_t read_pos) {
 	return true;
 }
 
+bool RelayConnectionProcessor::process_pong_message(size_t read_pos) {
+	if (ntohl(current_msg.length) != 8)
+		return fail_msg("got pong message of non-8 length");
+
+	uint64_t nonce;
+	memcpy(&nonce, &read_buff[read_pos], 8);
+	handle_pong(nonce);
+
+	return true;
+}
+
 size_t RelayConnectionProcessor::process_messages() {
 	size_t read_pos = 0;
 	while (read_buff.size() > read_pos) {
@@ -144,6 +172,8 @@ size_t RelayConnectionProcessor::process_messages() {
 					if (!process_max_version_message(read_pos))
 						return 0;
 				} else if (current_msg.type == SPONSOR_TYPE) {
+					if (!process_sponsor_message(read_pos))
+						return 0;
 				} else if (current_msg.type == END_BLOCK_TYPE) {
 					if (ntohl(current_msg.length) != 0)
 						return fail_msg("got non-0-length END_BLOCK message");
@@ -155,6 +185,9 @@ size_t RelayConnectionProcessor::process_messages() {
 						return 0;
 				} else if (current_msg.type == PING_TYPE) {
 					if (!process_ping_message(read_pos))
+						return 0;
+				} else if (current_msg.type == PONG_TYPE) {
+					if (!process_pong_message(read_pos))
 						return 0;
 				} else
 					return fail_msg("got unknown message type");
@@ -188,3 +221,11 @@ void RelayConnectionProcessor::recv_bytes(char* buf, size_t len) {
 	}
 }
 
+void RelayConnectionProcessor::reset_read_state() {
+	read_state = READ_STATE_NEW_MESSAGE;
+	have_received_version_msg = false;
+	read_buff.clear();
+	read_buff.shrink_to_fit();
+	current_block.reset(false, 1);
+	current_block_locks.reset(NULL);
+}

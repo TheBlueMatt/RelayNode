@@ -41,15 +41,21 @@ public:
 protected:
 	virtual const char* handle_peer_version(const std::string& peer_version)=0;
 	virtual const char* handle_max_version(const std::string& max_version)=0;
+	virtual const char* handle_sponsor(const std::string& sponsor)=0;
+	virtual void handle_pong(uint64_t nonce)=0;
+
 	virtual void handle_block(RelayNodeCompressor::DecompressState& block,
 			std::chrono::system_clock::time_point& read_end_time,
 			std::chrono::steady_clock::time_point& read_end,
 			std::chrono::steady_clock::time_point& read_start)=0;
 	virtual void handle_transaction(std::shared_ptr<std::vector<unsigned char> >& tx)=0;
+
 	virtual void disconnect(const char* reason)=0;
 	virtual void do_send_bytes(const char *buf, size_t nbyte)=0;
 
 	void recv_bytes(char* buf, size_t len);
+
+	void reset_read_state();
 
 private:
 	inline size_t fail_msg(const char* reason) {
@@ -60,10 +66,12 @@ private:
 
 	bool process_version_message(size_t read_pos);
 	bool process_max_version_message(size_t read_pos);
+	bool process_sponsor_message(size_t read_pos);
 	void start_block_message();
 	ssize_t process_block_message(size_t read_pos);
 	bool process_transaction_message(size_t read_pos, bool outOfBand);
 	bool process_ping_message(size_t read_pos);
+	bool process_pong_message(size_t read_pos);
 	size_t process_messages();
 };
 
