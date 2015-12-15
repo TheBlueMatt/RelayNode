@@ -17,7 +17,7 @@
 #endif
 
 #define RELAY_DECLARE_CLASS_VARS \
-private: \
+protected: \
 	const uint32_t VERSION_TYPE, BLOCK_TYPE, TRANSACTION_TYPE, END_BLOCK_TYPE, MAX_VERSION_TYPE, \
 					OOB_TRANSACTION_TYPE, SPONSOR_TYPE, PING_TYPE, PONG_TYPE;
 
@@ -27,6 +27,7 @@ private: \
 
 class DecompressState;
 
+//TODO: Split into compressor/decompressor
 class RelayNodeCompressor {
 	RELAY_DECLARE_CLASS_VARS
 
