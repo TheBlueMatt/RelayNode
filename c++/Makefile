@@ -1,5 +1,5 @@
 # all common objects that need to be build for all targets except for windows version
-common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o connection.o ./crypto/sha2.o
+common_objs := flaggedarrayset.o utils.o relayprocess.o p2pclient.o connection.o relayconnection.o ./crypto/sha2.o
 native_objs :=
 
 MINGW_PREFIX := i686-w64-mingw32
