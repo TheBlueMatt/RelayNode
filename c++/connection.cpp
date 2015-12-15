@@ -535,7 +535,7 @@ void KeepaliveOutboundPersistentConnection::schedule() {
 			if (ping_nonces_waiting.size())
 				return disconnect("Remote host failed to respond to ping within required time");
 
-			next_nonce *= 0xDEADBEEF * (42 + ping_nonces_waiting.size());
+			next_nonce *= 0xDEADBEEF;
 			ping_nonces_waiting.insert(next_nonce);
 		}
 		send_ping(next_nonce);
