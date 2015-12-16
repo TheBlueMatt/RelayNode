@@ -48,10 +48,6 @@ private:
 		bool merkleRootMatches(const unsigned char* match);
 	};
 
-	struct IndexVector {
-		uint32_t size;
-		unsigned char* data;
-	};
 	struct IndexPtr {
 		uint16_t index;
 		size_t pos;
@@ -60,6 +56,11 @@ private:
 	};
 
 public:
+	struct IndexVector {
+		uint32_t size;
+		unsigned char* data;
+	};
+
 	class DecompressState {
 		bool check_merkle;
 		uint32_t tx_count;
@@ -150,7 +151,10 @@ public:
 	std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle);
 
 	const char* do_partial_decompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all);
+
+	// recompress_block never checks merkle (decompress already did that for version 1, if you set check_merkle)
 	std::shared_ptr<std::vector<unsigned char> > recompress_block(DecompressState& state);
+	std::shared_ptr<std::vector<unsigned char> > recompress_block(unsigned char* header, std::vector<IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash);
 
 	bool block_sent(std::vector<unsigned char>& hash);
 	uint32_t blocks_sent();

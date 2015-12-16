@@ -209,11 +209,15 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 }
 
 std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::recompress_block(DecompressState& state) {
+	return recompress_block(state.block_header, state.txn_data, state.block_bytes, *state.fullhashptr);
+}
+
+std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::recompress_block(unsigned char* block_header, std::vector<IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash) {
 	std::lock_guard<std::mutex> lock(mutex);
 	FASLockHint faslock(send_tx_cache);
 
 	auto res = std::make_shared<std::vector<unsigned char> >(sizeof(struct relay_msg_header) + 80);
-	if (!blocksAlreadySeen.insert(*state.fullhashptr).second) {
+	if (!blocksAlreadySeen.insert(block_hash).second) {
 		res->resize(strlen("SEEN") + 1);
 		memcpy(&(*res)[0], "SEEN", strlen("SEEN") + 1);
 		return res;
@@ -222,19 +226,19 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::recompress_blo
 	struct relay_msg_header header;
 	header.magic = RELAY_MAGIC_BYTES;
 	header.type = BLOCK_TYPE;
-	header.length = htonl(state.tx_count);
+	header.length = htonl(txn_data.size());
 
-	res->reserve(state.block_bytes * 11 / 10);
+	res->reserve(block_size_estimate * 11 / 10);
 	memcpy(&(*res)[0], (unsigned char*)&header, sizeof(header));
-	memcpy(&(*res)[sizeof(struct relay_msg_header)], state.block_header, 80);
+	memcpy(&(*res)[sizeof(header)], block_header, 80);
 
 	std::vector<int> indexes_removed;
 	if (freezeIndexesDuringBlock)
-		indexes_removed.reserve(state.tx_count - 1);
+		indexes_removed.reserve(txn_data.size() - 1);
 
-	for (uint32_t j = 0; j < state.tx_count; j++) {
-		const unsigned char* txstart = state.txn_data[j].data;
-		const unsigned char* txend = txstart + state.txn_data[j].size;
+	for (uint32_t j = 0; j < txn_data.size(); j++) {
+		const unsigned char* txstart = txn_data[j].data;
+		const unsigned char* txend = txstart + txn_data[j].size;
 
 		int index;
 		if (freezeIndexesDuringBlock) {
