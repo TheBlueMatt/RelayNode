@@ -167,10 +167,13 @@ void double_sha256_done(const unsigned char* input, uint64_t byte_count, uint64_
  *** Random stuff ***
  ********************/
 #define HASH_FORMAT "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
-#define HASH_PRINT(var) (var)[31], (var)[30], \
-						(var)[29], (var)[28], (var)[27], (var)[26], (var)[25], (var)[24], (var)[23], (var)[22], (var)[21], (var)[20], \
-						(var)[19], (var)[18], (var)[17], (var)[16], (var)[15], (var)[14], (var)[13], (var)[12], (var)[11], (var)[10], \
-						(var)[ 9], (var)[ 8], (var)[ 7], (var)[ 6], (var)[ 5], (var)[ 4], (var)[ 3], (var)[ 2], (var)[ 1], (var)[ 0]
+#define HASH_PRINT(var) (unsigned char)(var)[31], (unsigned char)(var)[30], \
+						(unsigned char)(var)[29], (unsigned char)(var)[28], (unsigned char)(var)[27], (unsigned char)(var)[26], (unsigned char)(var)[25], \
+						(unsigned char)(var)[24], (unsigned char)(var)[23], (unsigned char)(var)[22], (unsigned char)(var)[21], (unsigned char)(var)[20], \
+						(unsigned char)(var)[19], (unsigned char)(var)[18], (unsigned char)(var)[17], (unsigned char)(var)[16], (unsigned char)(var)[15], \
+						(unsigned char)(var)[14], (unsigned char)(var)[13], (unsigned char)(var)[12], (unsigned char)(var)[11], (unsigned char)(var)[10], \
+						(unsigned char)(var)[ 9], (unsigned char)(var)[ 8], (unsigned char)(var)[ 7], (unsigned char)(var)[ 6], (unsigned char)(var)[ 5], \
+						(unsigned char)(var)[ 4], (unsigned char)(var)[ 3], (unsigned char)(var)[ 2], (unsigned char)(var)[ 1], (unsigned char)(var)[ 0]
 bool hex_str_to_reverse_vector(const std::string& str, std::vector<unsigned char>& vec);
 std::string asciifyString(const std::string& str);
 
