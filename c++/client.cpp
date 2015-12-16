@@ -186,7 +186,325 @@ public:
 		STAMPOUT();
 		printf(HASH_FORMAT" sent, size %lu with %lu bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)block.size(), (unsigned long)compressed_block->size());
 	}
+
+	void receive_block_to_recompress(unsigned char* header, std::vector<RelayNodeCompressor::IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash) {
+		if (!connected)
+			return;
+
+		auto compressed_block = compressor.recompress_block(header, txn_data, block_size_estimate, block_hash);
+		if (compressed_block->size() < 80) {
+			printf("Failed to process block from WCPSClient (%s)\n", (const char*)&(*compressed_block)[0]);
+			return;
+		}
+		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
+
+		struct relay_msg_header msg_header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
+		maybe_do_send_bytes((char*)&msg_header, sizeof(msg_header));
+
+		STAMPOUT();
+		printf(HASH_FORMAT" sent, with %lu bytes on the wire\n", HASH_PRINT(&block_hash[0]), (unsigned long)compressed_block->size());
+	}
 };
+
+
+class WCPSClient : public OutboundPersistentConnection {
+private:
+	const std::function<void (unsigned char* header, std::vector<RelayNodeCompressor::IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash)> provide_block;
+	const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)> provide_transaction;
+
+	DECLARE_ATOMIC(bool, connected);
+
+	std::unordered_map<uint16_t, std::pair<std::vector<RelayNodeCompressor::IndexVector>, std::vector<std::shared_ptr<std::vector<unsigned char> > > > > job_to_tx_map;
+	std::map<std::vector<unsigned char>, std::tuple<std::set<std::pair<uint16_t, size_t> >, std::shared_ptr<std::vector<unsigned char> >, std::chrono::steady_clock::time_point > > txid_to_txn_map;
+
+	enum ReadState {
+		READ_NEW_MESSAGE,
+		READ_JOB,
+		READ_TX,
+		READ_BLOCK,
+	};
+	ReadState read_state;
+	char read_buff[100000]; // This could probably be smaller, but...meh
+	std::shared_ptr<std::vector<unsigned char> > read_obj;
+	uint16_t obj_id;
+	uint32_t read_pos, obj_len;
+
+public:
+	WCPSClient(const char* serverHostIn, uint16_t serverPortIn,
+						const std::function<void (unsigned char* header, std::vector<RelayNodeCompressor::IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash)>& provide_block_in,
+						const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in)
+			: OutboundPersistentConnection(serverHostIn, serverPortIn), provide_block(provide_block_in), provide_transaction(provide_transaction_in), connected(false),
+			  read_state(READ_NEW_MESSAGE), read_pos(0), obj_len(0) {
+		construction_done();
+	}
+
+private:
+	void on_disconnect() {
+		connected = false;
+		read_state = READ_NEW_MESSAGE;
+
+		auto job_it = job_to_tx_map.begin();
+		while (job_it != job_to_tx_map.end()) {
+			bool useful = true;
+			for (const auto& tx : job_it->second.first) {
+				if (!tx.data) {
+					useful = false;
+					break;
+				}
+			}
+			auto it2 = job_it++;
+			if (!useful)
+				job_to_tx_map.erase(it2);
+		}
+
+		auto it = txid_to_txn_map.begin();
+		while (it != txid_to_txn_map.end()) {
+			auto it2 = it++;
+			if (std::get<1>(it2->second).unique() || !std::get<1>(it->second))
+				txid_to_txn_map.erase(it2);
+		}
+	}
+
+	bool readable() { return true; }
+
+	void on_connect() {
+		read_state = READ_NEW_MESSAGE;
+		char proto = 0x20;
+		maybe_do_send_bytes(&proto, 1);
+
+		connected = true;
+	}
+
+	void cleanup_loose_txn_data() {
+		// Clean up useless memory
+		std::chrono::steady_clock::time_point target(std::chrono::steady_clock::now() - millis_lu_type(10*1000));
+		auto it = txid_to_txn_map.begin();
+		while (it != txid_to_txn_map.end()) {
+			auto it2 = it++;
+			if (std::get<1>(it2->second).unique())
+				txid_to_txn_map.erase(it2);
+			else if (!std::get<1>(it2->second) && std::get<2>(it2->second) < target) {
+				for (const auto& job : std::get<0>(it2->second)) {
+					if (job_to_tx_map.find(job.first) != job_to_tx_map.end()) {
+						STAMPOUT();
+						printf("%s:%u: WARNING: Discarding job %u because we did not receive all required txn in 10 seconds\n", serverHost.c_str(), (unsigned)serverPort, (unsigned)job.first);
+						job_to_tx_map.erase(job.first);
+					}
+				}
+				txid_to_txn_map.erase(it2);
+			}
+		}
+	}
+
+	void recv_bytes(char* buf, size_t len) {
+		while (len) {
+			switch (read_state) {
+			case READ_NEW_MESSAGE:
+				read_pos = 0;
+				switch ((unsigned char)buf[0]) {
+				case 0x7f:
+					read_state = READ_JOB;
+					break;
+				case 0x20:
+					read_state = READ_TX;
+					break;
+				case 0x80:
+					read_state = READ_BLOCK;
+					break;
+				default:
+					return disconnect("Got unknown message type");
+				}
+				buf += 1;
+				len -= 1;
+				break;
+			case READ_JOB:
+			{
+				ssize_t read_len = std::min(ssize_t(len), 2 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(((char*)&obj_id) + read_pos, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					break;
+				}
+
+				read_len = std::min(ssize_t(len), 2 + 4 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(((char*)&obj_len) + read_pos - 2, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					if (read_pos == 2 + 4) {
+						//TODO: endian-swap obj_len?
+						if (obj_len > 500000)
+							return disconnect("got insane tx count for job");
+						job_to_tx_map.emplace(obj_id, std::make_pair(
+									std::vector<RelayNodeCompressor::IndexVector>(obj_len + 1),
+									std::vector<std::shared_ptr<std::vector<unsigned char> > >(obj_len + 1)));
+						if (obj_len == 0)
+							read_state = READ_NEW_MESSAGE;
+					}
+					break;
+				}
+
+				size_t tx_pos = (read_pos - 2 - 4) / 32;
+				ssize_t tx_read_pos = read_pos - 2 - 4 - tx_pos*32;
+				read_len = std::min(ssize_t(len), 32 - tx_read_pos);
+				assert(read_len > 0);
+
+				memcpy(read_buff + tx_read_pos, buf, read_len);
+				read_pos += read_len;
+				buf += read_len;
+				len -= read_len;
+
+				if (tx_read_pos + read_len == 32) {
+					auto it = txid_to_txn_map.find(std::vector<unsigned char>((unsigned char*)read_buff, (unsigned char*)read_buff + 32));
+					if (it == txid_to_txn_map.end()) {
+						txid_to_txn_map.emplace(std::vector<unsigned char>((unsigned char*)read_buff, (unsigned char*)read_buff + 32),
+									std::make_tuple(std::set<std::pair<uint16_t, size_t> >({std::make_pair(obj_id, tx_pos + 1)}),
+										std::shared_ptr<std::vector<unsigned char> >(), std::chrono::steady_clock::now()));
+						maybe_do_send_bytes(read_buff, 32);
+					} else {
+						if (std::get<1>(it->second)) {
+							auto& tx_entry = job_to_tx_map[obj_id];
+							assert(!tx_entry.second[tx_pos + 1]);
+							tx_entry.second[tx_pos + 1] = std::get<1>(it->second);
+							tx_entry.first[tx_pos + 1].size = std::get<1>(it->second)->size();
+							tx_entry.first[tx_pos + 1].data = &(*std::get<1>(it->second))[0];
+							provide_transaction(std::get<1>(it->second));
+						} else {
+							std::get<0>(it->second).insert(std::make_pair(obj_id, tx_pos + 1));
+						}
+					}
+
+					if (tx_pos == obj_len - 1) {
+						STAMPOUT();
+						printf("%s:%u: Finished reading job %u with %lu txn, requesting missing txn now\n", serverHost.c_str(), (unsigned)serverPort, (unsigned)obj_id, (unsigned long)obj_len);
+						cleanup_loose_txn_data();
+						read_state = READ_NEW_MESSAGE;
+					}
+				}
+
+			}
+			break;
+			case READ_TX:
+			{
+				ssize_t read_len = std::min(ssize_t(len), 32 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(read_buff + read_pos, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					break;
+				}
+
+				read_len = std::min(ssize_t(len), 32 + 4 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(((char*)&obj_len) + read_pos - 32, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					if (read_pos == 32 + 4) {
+						//TODO: endian-swap obj_len?
+						if (!obj_len)
+							return disconnect("got 0-length transaction");
+						if (!obj_len || obj_len > 1000000)
+							return disconnect("got insane length for a transaction");
+
+						auto it = txid_to_txn_map.find(std::vector<unsigned char>((unsigned char*)read_buff, (unsigned char*)read_buff + 32));
+						if (it == txid_to_txn_map.end())
+							return disconnect("Got loose tx we didn't ask for");
+						read_obj = std::make_shared<std::vector<unsigned char> >(obj_len);
+						std::get<1>(it->second) = read_obj;
+
+						for (const auto& job : std::get<0>(it->second)) {
+							auto jobit = job_to_tx_map.find(job.first);
+							if (jobit == job_to_tx_map.end())
+								continue;
+							auto& tx_entry = jobit->second;
+							assert(!tx_entry.second[job.second]);
+							tx_entry.second[job.second] = read_obj;
+							tx_entry.first[job.second].size = obj_len;
+							tx_entry.first[job.second].data = &(*read_obj)[0];
+						}
+					}
+					break;
+				}
+
+				read_len = std::min(ssize_t(len), 32 + 4 + ssize_t(obj_len) - ssize_t(read_pos));
+				assert(read_len > 0);
+				memcpy(&(*read_obj)[read_pos - 32 - 4], buf, read_len);
+				read_pos += read_len;
+				buf += read_len;
+				len -= read_len;
+				if (read_pos == 32 + 4 + obj_len) {
+					provide_transaction(read_obj);
+					cleanup_loose_txn_data();
+					read_obj = NULL;
+					read_state = READ_NEW_MESSAGE;
+				}
+			}
+			break;
+			case READ_BLOCK:
+				ssize_t read_len = std::min(ssize_t(len), 2 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(((char*)&obj_id) + read_pos, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					break;
+				}
+
+				read_len = std::min(ssize_t(len), 2 + 80 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(read_buff + read_pos - 2, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					break;
+				}
+
+				read_len = std::min(ssize_t(len), 2 + 80 + 4 - ssize_t(read_pos));
+				if (read_len > 0) {
+					memcpy(((char*)&obj_len) + read_pos - 2 - 80, buf, read_len);
+					read_pos += read_len;
+					buf += read_len;
+					len -= read_len;
+					if (read_pos == 2 + 80 + 4) {
+						//TODO: endian-swap obj_len?
+					}
+					break;
+				}
+
+				read_len = std::min(ssize_t(len), 2 + 80 + 4 + ssize_t(obj_len) - ssize_t(read_pos));
+				assert(read_len > 0);
+				memcpy(read_buff + 80 + read_pos - 2 - 80 - 4, buf, read_len);
+				read_pos += read_len;
+				buf += read_len;
+				len -= read_len;
+
+				if (read_pos == 2 + 80 + 4 + obj_len) {
+					auto it = job_to_tx_map.find(obj_id);
+					if (it == job_to_tx_map.end())
+						return disconnect("got block for unknown job id");
+					auto& txn = it->second.first;
+					txn[0].size = obj_len;
+					txn[0].data = (unsigned char*)read_buff + 80;
+					for (const RelayNodeCompressor::IndexVector& tx : txn)
+						if (!tx.data || !tx.size)
+							return disconnect("hit annoying block-decompress race"); //TODO: Really shouldn't drop a block...lets cache it instead
+					std::vector<unsigned char> block_hash(32);
+					getblockhash(block_hash, (unsigned char*)read_buff);
+					provide_block((unsigned char*)read_buff, txn, 1000000, block_hash); //TODO: Keep track of block size to replace 1M default here
+					read_state = READ_NEW_MESSAGE;
+				}
+				break;
+			}
+		}
+	}
+};
+
+
 
 class P2PClient : public P2PRelayer {
 public:
@@ -240,7 +558,7 @@ void test_node(int node) {
 
 int main(int argc, char** argv) {
 	if (argc < 2) {
-		printf("USAGE: %s [relay server] [full|pool]:BITCOIND_ADDRESS:BITCOIND_PORT*\n", argv[0]);
+		printf("USAGE: %s [relay server] [full|pool|wcps]:BITCOIND_ADDRESS:BITCOIND_PORT*\n", argv[0]);
 		printf("Relay server is automatically selected by pinging available servers, unless one is specified\n");
 		printf("Each client to connect to should either be a Bitcoin Core instance (and be prefixed with \"full:\")\n");
 		printf(" or be a connection to a pool server using the Bitcoin P2P protocol (and be prefixed with \"pool:\")\n");
@@ -297,24 +615,38 @@ int main(int argc, char** argv) {
 	DECLARE_NON_ATOMIC_PTR(RelayNetworkClient, relayClient);
 	std::vector<P2PClient*> fullServers;
 	std::vector<P2PClient*> nonFullServers;
+	bool haveWCPS = false;
 	for (int i = pickServer ? 1 : 2; i < argc; i++) {
 		std::string cmdline(argv[i]);
 		unsigned long port = std::stoul(cmdline.substr(cmdline.find_last_of(":")+1));
 		if (port == 8332)
 			printf("You specified port 8332, which is generally bitcoind RPC, you probably meant 8333\n");
 		argv[i][cmdline.find_last_of(":")] = '\0';
-		P2PClient* client = new P2PClient(argv[i] + 5, port,
-					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { ((RelayNetworkClient*)relayClient)->receive_block(bytes); },
-					[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
-						//TODO: Re-enable (see issue #11): ((RelayNetworkClient*)relayClient)->receive_transaction(bytes);
-					});
-		if (!strncmp(argv[i], "full:", strlen("full:")))
-			fullServers.push_back(client);
-		else if (!strncmp(argv[i], "pool:", strlen("pool:")))
-			nonFullServers.push_back(client);
-		else {
-			printf("Clients must either be \"full:\" (ie Bitcoin Core) or \"pool:\" (ie a Pool server)\n");
-			return -1;
+
+		if (!strncmp(argv[i], "wcps:", strlen("wcps:"))) {
+			// WCPSClients don't get any messages relayed to them, so we just create and forget
+			new WCPSClient(argv[i] + 5, port,
+						[&](unsigned char* header, std::vector<RelayNodeCompressor::IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash) {
+							((RelayNetworkClient*)relayClient)->receive_block_to_recompress(header, txn_data, block_size_estimate, block_hash);
+						},
+						[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+							((RelayNetworkClient*)relayClient)->receive_transaction(bytes, false);
+						});
+			haveWCPS = true;
+		} else {
+			P2PClient* client = new P2PClient(argv[i] + 5, port,
+						[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { ((RelayNetworkClient*)relayClient)->receive_block(bytes); },
+						[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
+							//TODO: Re-enable (see issue #11): ((RelayNetworkClient*)relayClient)->receive_transaction(bytes);
+						});
+			if (!strncmp(argv[i], "full:", strlen("full:")))
+				fullServers.push_back(client);
+			else if (!strncmp(argv[i], "pool:", strlen("pool:")))
+				nonFullServers.push_back(client);
+			else {
+				printf("Clients must either be \"full:\" (ie Bitcoin Core) or \"pool:\" (ie a Pool server)\n");
+				return -1;
+			}
 		}
 	}
 
@@ -326,7 +658,8 @@ int main(int argc, char** argv) {
 										[&](std::shared_ptr<std::vector<unsigned char> >& bytes) {
 											for (P2PRelayer* r : fullServers)
 												r->receive_transaction(bytes);
-											((RelayNetworkClient*)relayClient)->receive_transaction(bytes, false);
+											if (!haveWCPS)
+												((RelayNetworkClient*)relayClient)->receive_transaction(bytes, false);
 										},
 										[&]() { return fullServers.empty() || fullServers[0]->is_connected(); });
 
