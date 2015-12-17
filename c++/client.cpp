@@ -174,12 +174,14 @@ public:
 			printf("Failed to process block from bitcoind (%s)\n", std::get<1>(tuple));
 			return;
 		}
+
+		int token = get_send_mutex();
 		auto compressed_block = std::get<0>(tuple);
+		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size(), token);
 
 		struct relay_msg_header header = { RELAY_MAGIC_BYTES, END_BLOCK_TYPE, 0 };
-		compressed_block->resize(compressed_block->size() + sizeof(header));
-		memcpy(&(*compressed_block)[compressed_block->size() - sizeof(header)], &header, sizeof(header));
-		maybe_do_send_bytes((char*)&(*compressed_block)[0], compressed_block->size());
+		maybe_do_send_bytes((char*)&header, sizeof(header), token);
+		release_send_mutex(token);
 
 		STAMPOUT();
 		printf(HASH_FORMAT" sent, size %lu with %lu bytes on the wire\n", HASH_PRINT(&fullhash[0]), (unsigned long)block.size(), (unsigned long)compressed_block->size());
