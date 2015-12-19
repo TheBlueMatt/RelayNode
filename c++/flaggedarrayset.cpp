@@ -169,7 +169,7 @@ FlaggedArraySet& FlaggedArraySet::operator=(const FlaggedArraySet& o) {
 
 
 ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemIn, uint32_t flagIn, bool setHash) :
-	flag(flagIn), elem(elemIn)
+	flag(flagIn), elem(elemIn), elemBegin(NULL), elemEnd(NULL)
 {
 	if (setHash) {
 		elemHash = std::make_shared<std::vector<unsigned char> >(32);
@@ -177,7 +177,7 @@ ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& ele
 	}
 }
 ElemAndFlag::ElemAndFlag(const std::shared_ptr<std::vector<unsigned char> >& elemHashIn, std::nullptr_t) :
-	elemHash(elemHashIn) {}
+	elemHash(elemHashIn), elemBegin(NULL), elemEnd(NULL) {}
 ElemAndFlag::ElemAndFlag(const unsigned char* elemBeginIn, const unsigned char* elemEndIn, uint32_t flagIn) :
 	flag(flagIn), elemBegin(elemBeginIn), elemEnd(elemEndIn) {}
 
@@ -213,6 +213,7 @@ size_t std::hash<ElemAndFlag>::operator()(const ElemAndFlag& e) const {
 		it = &(*e.elem)[0];
 		end = &(*e.elem->end());
 	} else {
+		assert(e.elemBegin);
 		it = e.elemBegin;
 		end = e.elemEnd;
 	}
@@ -221,12 +222,12 @@ size_t std::hash<ElemAndFlag>::operator()(const ElemAndFlag& e) const {
 		assert(0);
 		return 42; // WAT?
 	}
-	it += 5 + 32 + 4 - 8;
+	it += 5 + 32 + 4 - 16;
 	size_t res = 0;
 	static_assert(sizeof(size_t) == 4 || sizeof(size_t) == 8, "Your size_t is neither 32-bit nor 64-bit?");
-	for (unsigned int i = 0; i < 8; i += sizeof(size_t)) {
+	for (unsigned int i = 0; i < 16; i += sizeof(size_t)) {
 		for (unsigned int j = 0; j < sizeof(size_t); j++)
-			res ^= *(it + i + j) << 8*j;
+			res ^= size_t(*(it + i + j)) << 8*j;
 	}
 	return res;
 }
@@ -242,6 +243,10 @@ bool FlaggedArraySet::sanity_check() const {
 	size_t size = indexMap.size();
 	assert(backingMap.size() == size);
 	assert(this->size() == size - to_be_removed.size());
+
+	assert(backingMap.max_load_factor() == 1);
+	assert(backingMap.bucket_count() >= backingMap.size());
+	assert(backingMap.load_factor() < backingMap.max_load_factor());
 
 	uint64_t expected_flag_count = 0;
 	for (uint64_t i = 0; i < size; i++) {
@@ -288,7 +293,6 @@ void FlaggedArraySet::remove_(size_t index) {
 }
 
 void FlaggedArraySet::cleanup_late_remove(bool allowSortedToRemain) const {
-	assert(sanity_check());
 	if (!allowSortedToRemain && to_be_removed.size()) {
 		for (unsigned int i = 0; i < to_be_removed.size(); i++) {
 			assert((unsigned int)to_be_removed[i] < indexMap.size());
@@ -297,6 +301,7 @@ void FlaggedArraySet::cleanup_late_remove(bool allowSortedToRemain) const {
 		to_be_removed.clear();
 		flags_to_remove = 0;
 		max_remove = 0;
+		assert(sanity_check());
 	} else if (unsorted_to_remove.size()) {
 #ifndef NDEBUG
 		std::vector<std::shared_ptr<std::vector<unsigned char> > > to_remove;
@@ -317,8 +322,8 @@ void FlaggedArraySet::cleanup_late_remove(bool allowSortedToRemain) const {
 		for (const auto& v : to_remove)
 			assert(backingMap.find(ElemAndFlag(&(*v->begin()), &(*v->end()), 0)) == backingMap.end());
 #endif
+		assert(sanity_check());
 	}
-	assert(sanity_check());
 }
 
 bool FlaggedArraySet::contains(const std::shared_ptr<std::vector<unsigned char> >& e) const {
@@ -386,7 +391,6 @@ int FlaggedArraySet::get_index(const unsigned char* start, const unsigned char* 
 		return -1;
 
 	int res = it->second - offset;
-	assert(sanity_check());
 	assert(res >= 0);
 	return res;
 }
