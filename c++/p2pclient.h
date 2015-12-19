@@ -39,8 +39,8 @@ public:
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)> provide_headers_in = std::function<void (std::vector<unsigned char>&)>(),
-				bool check_block_msghash_in=true)
-			: KeepaliveOutboundPersistentConnection(serverHostIn, serverPortIn, ping_time_nonce),
+				bool check_block_msghash_in=true, uint32_t max_outbound_buffer_size=10000000)
+			: KeepaliveOutboundPersistentConnection(serverHostIn, serverPortIn, ping_time_nonce, max_outbound_buffer_size),
 			provide_block(provide_block_in), provide_transaction(provide_transaction_in), provide_headers(provide_headers_in),
 			connected(0), txnAlreadySeen(2000), blocksAlreadySeen(100), check_block_msghash(check_block_msghash_in),
 			read_msg_start_offset(0), read_pos(0)

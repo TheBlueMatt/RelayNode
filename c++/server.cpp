@@ -202,8 +202,8 @@ public:
 				const std::function<void (std::vector<unsigned char>&, const std::chrono::system_clock::time_point&)>& provide_block_in,
 				const std::function<void (std::shared_ptr<std::vector<unsigned char> >&)>& provide_transaction_in,
 				const std::function<void (std::vector<unsigned char>&)>& provide_headers_in,
-				bool check_block_msghash_in) :
-			P2PRelayer(serverHostIn, serverPortIn, 10000, provide_block_in, provide_transaction_in, provide_headers_in, check_block_msghash_in)
+				bool check_block_msghash_in, uint32_t max_outbound_buffer_size) :
+			P2PRelayer(serverHostIn, serverPortIn, 30000, provide_block_in, provide_transaction_in, provide_headers_in, check_block_msghash_in, max_outbound_buffer_size)
 		{ construction_done(); }
 
 private:
@@ -226,11 +226,11 @@ void RelayNetworkCompressor::relay_node_connected(RelayNetworkClient* client, in
 
 class MempoolClient : public OutboundPersistentConnection {
 private:
-	std::function<void(std::vector<unsigned char>)> on_hash;
+	std::function<void(std::vector<std::vector<unsigned char> >&)> on_hash;
 	std::vector<unsigned char> curhash;
 	size_t hashpos;
 public:
-	MempoolClient(std::string serverHostIn, uint16_t serverPortIn, std::function<void(std::vector<unsigned char>)> on_hash_in)
+	MempoolClient(std::string serverHostIn, uint16_t serverPortIn, std::function<void(std::vector<std::vector<unsigned char> >&)> on_hash_in)
 		: OutboundPersistentConnection(serverHostIn, serverPortIn), on_hash(on_hash_in), curhash(32), hashpos(0) { construction_done(); }
 
 	void on_disconnect() {}
@@ -238,17 +238,19 @@ public:
 
 	bool readable() { return true; }
 	void recv_bytes(char* buf, size_t len) {
+		std::vector<std::vector<unsigned char> > txn;
 		while (len) {
 			size_t bytes_read = std::min(32 - hashpos, len);
 			memcpy(&curhash[hashpos], buf, bytes_read);
 			hashpos += bytes_read;
 			if (hashpos == 32) {
-				on_hash(curhash);
+				txn.push_back(curhash);
 				hashpos = 0;
 				len -= bytes_read;
 				buf += bytes_read;
 			}
 		}
+		on_hash(txn);
 	}
 
 	void keep_alive_ping() {
@@ -380,16 +382,17 @@ int main(const int argc, const char** argv) {
 
 							printf("Added headers from trusted peers, seen %u blocks\n", compressors[0].blocks_sent());
 						} catch (read_exception) { }
-					}, true);
+					}, true, 100000000);
 
 	MempoolClient mempoolClient(argv[1], std::stoul(argv[3]),
-					[&](std::vector<unsigned char> txn) {
+					[&](std::vector<std::vector<unsigned char> >& txn) {
 						std::lock_guard<std::mutex> lock(map_mutex);
-						if (!compressors[0].was_tx_sent(&txn[0])) {
-							std::lock_guard<std::mutex> lock(txn_mutex);
-							txnWaitingToBroadcast.insert(txn);
-							((P2PClient*)trustedP2P)->request_transaction(txn);
-						}
+						for (const auto& tx : txn)
+							if (!compressors[0].was_tx_sent(&tx[0])) {
+								std::lock_guard<std::mutex> lock(txn_mutex);
+								txnWaitingToBroadcast.insert(tx);
+								((P2PClient*)trustedP2P)->request_transaction(tx);
+							}
 					});
 
 	std::function<std::tuple<uint64_t, std::chrono::steady_clock::time_point> (RelayNetworkClient*, RelayNodeCompressor::DecompressState&)> relayBlock =
