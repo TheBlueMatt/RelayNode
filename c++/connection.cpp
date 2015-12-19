@@ -190,6 +190,8 @@ private:
 				int newFlags = (conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_WRITE_THREAD_DONE);
 				if (newFlags & Connection::DISCONNECT_GLOBAL_READ_THREAD_DONE)
 					conn->on_disconnect_done();
+				else
+					conn->disconnect("Remote host closed connection");
 			}
 #ifndef WIN32
 			char buf[1024];
@@ -257,7 +259,7 @@ private:
 
 						ssize_t count = recv(conn->sock, buf, sizeof(buf), 0);
 
-						if (count <= 0) {
+						if (count <= 0 || (e.second->disconnectFlags & Connection::DISCONNECT_SOCK_DOWN)) {
 							remove_set.insert(e.first);
 							int z = 0;
 							conn->sock_errno.compare_exchange_strong(z, errno);
@@ -283,6 +285,8 @@ private:
 				int newFlags = (conn->disconnectFlags |= Connection::DISCONNECT_GLOBAL_READ_THREAD_DONE);
 				if (newFlags & Connection::DISCONNECT_GLOBAL_WRITE_THREAD_DONE)
 					conn->on_disconnect_done();
+				else
+					conn->disconnect("Remote host closed connection");
 			}
 #ifndef WIN32
 			if (FD_ISSET(pipefd[0], &fd_set_read))

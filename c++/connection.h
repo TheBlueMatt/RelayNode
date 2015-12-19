@@ -133,7 +133,7 @@ private:
 
 	public:
 		OutboundConnection(int sockIn, OutboundPersistentConnection* parentIn) :
-				Connection(sockIn, parentIn->serverHost, parentIn->max_outbound_buffer_size),
+				Connection(sockIn, parentIn->serverHost + ":" + std::to_string(parentIn->serverPort), parentIn->max_outbound_buffer_size),
 				parent(parentIn)
 			{ }
 
