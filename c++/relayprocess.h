@@ -34,8 +34,8 @@ class RelayNodeCompressor {
 private:
 	bool useOldFlags, freezeIndexesDuringBlock; // "version" flags
 	FlaggedArraySet send_tx_cache, recv_tx_cache;
-	mruset<std::vector<unsigned char> > blocksAlreadySeen;
-	std::mutex mutex;
+	mruset<std::vector<unsigned char> > blocksAlreadySeen; // protected by send_mutex
+	std::mutex send_mutex, recv_mutex;
 
 	class MerkleTreeBuilder {
 	private:
@@ -109,7 +109,7 @@ public:
 		FASLockHint faslock;
 	public:
 		const RelayNodeCompressor* compressor;
-		DecompressLocks(RelayNodeCompressor* compressor_in) : lock(compressor_in->mutex), faslock(compressor_in->recv_tx_cache), compressor(compressor_in) {}
+		DecompressLocks(RelayNodeCompressor* compressor_in) : lock(compressor_in->recv_mutex), faslock(compressor_in->recv_tx_cache), compressor(compressor_in) {}
 	};
 
 	RelayNodeCompressor(bool useOldFlagsIn, bool freezeIndexesDuringBlockIn)

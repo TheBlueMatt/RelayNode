@@ -7,7 +7,7 @@
 #include <string.h>
 
 std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::get_relay_transaction(const std::shared_ptr<std::vector<unsigned char> >& tx) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 
 	if (send_tx_cache.contains(tx))
 		return std::shared_ptr<std::vector<unsigned char> >();
@@ -30,10 +30,15 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::get_relay_tran
 }
 
 void RelayNodeCompressor::reset() {
-	std::lock_guard<std::mutex> lock(mutex);
+	{
+		std::lock_guard<std::mutex> lock(send_mutex);
+		send_tx_cache.clear();
+	}
 
-	recv_tx_cache.clear();
-	send_tx_cache.clear();
+	{
+		std::lock_guard<std::mutex> lock(recv_mutex);
+		recv_tx_cache.clear();
+	}
 }
 
 bool RelayNodeCompressor::check_recv_tx(uint32_t tx_size) {
@@ -42,7 +47,7 @@ bool RelayNodeCompressor::check_recv_tx(uint32_t tx_size) {
 }
 
 bool RelayNodeCompressor::maybe_recv_tx_of_size(uint32_t tx_size, bool debug_print) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(recv_mutex);
 
 	if (!check_recv_tx(tx_size)) {
 		if (debug_print)
@@ -53,7 +58,7 @@ bool RelayNodeCompressor::maybe_recv_tx_of_size(uint32_t tx_size, bool debug_pri
 }
 
 void RelayNodeCompressor::recv_tx(std::shared_ptr<std::vector<unsigned char > > tx) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(recv_mutex);
 
 	uint32_t tx_size = tx.get()->size();
 	assert(check_recv_tx(tx_size));
@@ -61,22 +66,22 @@ void RelayNodeCompressor::recv_tx(std::shared_ptr<std::vector<unsigned char > > 
 }
 
 void RelayNodeCompressor::for_each_sent_tx(const std::function<void (const std::shared_ptr<std::vector<unsigned char> >&)> callback) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 	send_tx_cache.for_all_txn(callback);
 }
 
 bool RelayNodeCompressor::block_sent(std::vector<unsigned char>& hash) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 	return blocksAlreadySeen.insert(hash).second;
 }
 
 uint32_t RelayNodeCompressor::blocks_sent() {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 	return blocksAlreadySeen.size();
 }
 
 bool RelayNodeCompressor::was_tx_sent(const unsigned char* txhash) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 	return send_tx_cache.contains(txhash);
 }
 
@@ -98,7 +103,7 @@ bool RelayNodeCompressor::MerkleTreeBuilder::merkleRootMatches(const unsigned ch
 }
 
 std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeCompressor::maybe_compress_block(const std::vector<unsigned char>& hash, const std::vector<unsigned char>& block, bool check_merkle) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 	FASLockHint faslock(send_tx_cache);
 
 	if (check_merkle && (hash[31] != 0 || hash[30] != 0 || hash[29] != 0 || hash[28] != 0 || hash[27] != 0 || hash[26] != 0 || hash[25] != 0))
@@ -213,7 +218,7 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::recompress_blo
 }
 
 std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::recompress_block(unsigned char* block_header, std::vector<IndexVector>& txn_data, uint32_t block_size_estimate, std::vector<unsigned char>& block_hash) {
-	std::lock_guard<std::mutex> lock(mutex);
+	std::lock_guard<std::mutex> lock(send_mutex);
 	FASLockHint faslock(send_tx_cache);
 
 	auto res = std::make_shared<std::vector<unsigned char> >(sizeof(struct relay_msg_header) + 80);
@@ -378,7 +383,10 @@ inline const char* RelayNodeCompressor::read_block_header(DecompressState& state
 #endif
 
 	getblockhash(*state.fullhashptr.get(), state.block_header);
-	blocksAlreadySeen.insert(*state.fullhashptr.get());
+	{
+		std::lock_guard<std::mutex> lock(send_mutex);
+		blocksAlreadySeen.insert(*state.fullhashptr.get());
+	}
 
 	if (state.check_merkle && ((*state.fullhashptr)[31] != 0 || (*state.fullhashptr)[30] != 0 || (*state.fullhashptr)[29] != 0 || (*state.fullhashptr)[28] != 0 || (*state.fullhashptr)[27] != 0 || (*state.fullhashptr)[26] != 0 || (*state.fullhashptr)[25] != 0))
 		return "block hash did not meet minimum difficulty target";
