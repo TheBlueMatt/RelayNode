@@ -300,6 +300,8 @@ int main(int argc, char** argv) {
 	for (int i = pickServer ? 1 : 2; i < argc; i++) {
 		std::string cmdline(argv[i]);
 		unsigned long port = std::stoul(cmdline.substr(cmdline.find_last_of(":")+1));
+		if (port == 8332)
+			printf("You specified port 8332, which is generally bitcoind RPC, you probably meant 8333\n");
 		argv[i][cmdline.find_last_of(":")] = '\0';
 		P2PClient* client = new P2PClient(argv[i] + 5, port,
 					[&](std::vector<unsigned char>& bytes, const std::chrono::system_clock::time_point&) { ((RelayNetworkClient*)relayClient)->receive_block(bytes); },
