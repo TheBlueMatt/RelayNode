@@ -95,7 +95,7 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS) $(CUSTOM_CXXFLAGS)
 LDFLAGS += -pthread -lresolv $(CUSTOM_LDFLAGS)
 
 # list of all targets
-NATIVE_TARGETS = $(addprefix relaynetwork,client proxy server mempoolserver test)
+NATIVE_TARGETS = $(addprefix relaynetwork,client proxy server mempoolserver test nettest)
 WINDOWS_TARGETS = relaynetworkclient.exe
 
 %.a: %.asm
@@ -120,6 +120,8 @@ relaynetworkproxy: $(native_objs) $(common_objs) relayproxy.o
 
 relaynetworktest: $(native_objs) $(common_objs) test.o
 
+relaynetworknettest: $(native_objs) $(common_objs) net_test.o
+
 relaynetwork%:
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
@@ -129,3 +131,6 @@ install: relaynetworkclient relaynetworkclient.exe
 
 clean:
 	rm -f *.o crypto/*.o crypto/sha256_code_release/*.a crypto/*~ *~ *.exe $(NATIVE_TARGETS) $(WINDOWS_TARGETS)
+
+check: relaynetworktest relaynetworknettest
+	./relaynetworknettest && ./relaynetworktest
