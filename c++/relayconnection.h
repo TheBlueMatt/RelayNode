@@ -15,7 +15,6 @@ private:
 	enum ReadState {
 		READ_STATE_NEW_MESSAGE,
 		READ_STATE_IN_SIZED_MESSAGE,
-		READ_STATE_START_BLOCK_MESSAGE,
 		READ_STATE_IN_BLOCK_MESSAGE,
 		READ_STATE_DISCONNECTED,
 	};
@@ -65,15 +64,15 @@ private:
 		return 0;
 	}
 
-	bool process_version_message(size_t read_pos);
-	bool process_max_version_message(size_t read_pos);
-	bool process_sponsor_message(size_t read_pos);
+	bool check_message_header();
+	bool process_version_message();
+	bool process_max_version_message();
+	bool process_sponsor_message();
 	void start_block_message();
-	ssize_t process_block_message(size_t read_pos);
-	bool process_transaction_message(size_t read_pos, bool outOfBand);
-	bool process_ping_message(size_t read_pos);
-	bool process_pong_message(size_t read_pos);
-	size_t process_messages();
+	ssize_t process_block_message(char* this_read_buf, size_t read_buf_len);
+	bool process_transaction_message(bool outOfBand);
+	bool process_ping_message();
+	bool process_pong_message();
 };
 
 #endif
