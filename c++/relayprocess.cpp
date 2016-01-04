@@ -348,25 +348,6 @@ std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::DecompressStat
 	return res;
 }
 
-std::tuple<uint32_t, std::shared_ptr<std::vector<unsigned char> >, const char*, std::shared_ptr<std::vector<unsigned char> > > RelayNodeCompressor::decompress_relay_block(std::function<ssize_t(char*, size_t)>& read_all, uint32_t message_size, bool check_merkle) {
-	DecompressLocks locks(this);
-
-	DecompressState state(check_merkle, message_size);
-	bool read_failed = false;
-	std::function<bool(char* buf, size_t len)> read_fun =
-			[&] (char* buf, size_t len) {
-				if (read_all(buf, len) != ssize_t(len))
-					read_failed = true;
-				return !read_failed;
-			};
-	const char* err = do_partial_decompress(locks, state, read_fun);
-	if (err)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), err, std::shared_ptr<std::vector<unsigned char> >(NULL));
-	if (read_failed)
-		return std::make_tuple(0, std::shared_ptr<std::vector<unsigned char> >(NULL), "failed to read compressed block data", std::shared_ptr<std::vector<unsigned char> >(NULL));
-	return std::make_tuple(state.wire_bytes, state.get_block_data(), (const char*) NULL, state.fullhashptr);
-}
-
 inline const char* RelayNodeCompressor::read_block_header(DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
 	if (state.tx_count > 100000)
 		return "got a BLOCK message with far too many transactions";
