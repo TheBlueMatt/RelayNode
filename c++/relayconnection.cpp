@@ -57,7 +57,7 @@ bool RelayConnectionProcessor::process_sponsor_message(size_t read_pos) {
 
 void RelayConnectionProcessor::start_block_message() {
 	current_block_read_start = std::chrono::steady_clock::now();
-	current_block.reset(true, ntohl(current_msg.length));
+	current_block.init(true, ntohl(current_msg.length));
 	current_block_locks.reset(new RelayNodeCompressor::DecompressLocks(&compressor));
 	read_state = READ_STATE_IN_BLOCK_MESSAGE;
 }
@@ -226,6 +226,6 @@ void RelayConnectionProcessor::reset_read_state() {
 	have_received_version_msg = false;
 	read_buff.clear();
 	read_buff.shrink_to_fit();
-	current_block.reset(false, 1);
+	current_block.clear();
 	current_block_locks.reset(NULL);
 }

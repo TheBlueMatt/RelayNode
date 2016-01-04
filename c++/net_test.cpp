@@ -32,6 +32,8 @@ public:
 			std::chrono::system_clock::time_point& read_end_time,
 			std::chrono::steady_clock::time_point& read_end,
 			std::chrono::steady_clock::time_point& read_start) {
+		assert(block.is_finished());
+
 		std::shared_ptr<std::vector<unsigned char> > block_data = block.get_block_data();
 		assert(block_data);
 

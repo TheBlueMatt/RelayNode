@@ -73,7 +73,8 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) recv_bloc
 
 	auto init = std::chrono::steady_clock::now();
 
-	RelayNodeCompressor::DecompressState state(true, block_tx_count);
+	RelayNodeCompressor::DecompressState state;
+	state.init(true, block_tx_count);
 	RelayNodeCompressor::DecompressLocks locks(&receiver);
 
 	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
@@ -121,7 +122,8 @@ std::shared_ptr<std::vector<unsigned char> > __attribute__((noinline)) do_recomp
 
 	auto init = std::chrono::steady_clock::now();
 
-	RelayNodeCompressor::DecompressState state(true, block_tx_count);
+	RelayNodeCompressor::DecompressState state;
+	state.init(true, block_tx_count);
 
 	std::function<bool(char*, size_t)> do_read = [&](char* buf, size_t count) {
 		memcpy(buf, &data[readpos], count);

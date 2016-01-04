@@ -36,7 +36,7 @@ protected:
 
 public:
 	RelayConnectionProcessor() : read_state(READ_STATE_NEW_MESSAGE), have_received_version_msg(false),
-			current_block(false, 1), RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false, true) {}
+			 RELAY_DECLARE_CONSTRUCTOR_EXTENDS, compressor(false, true) {}
 			// The compressor options above are used by the cilent for "current version" connections
 
 protected:

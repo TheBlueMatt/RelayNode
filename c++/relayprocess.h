@@ -63,7 +63,7 @@ public:
 
 	class DecompressState {
 		bool check_merkle;
-		uint32_t tx_count;
+		uint32_t tx_count = 0;
 
 	public:
 		uint32_t wire_bytes = 4*3;
@@ -90,15 +90,15 @@ public:
 			READ_STATE_TX_READ_DONE,
 			READ_STATE_DONE,
 		};
-		ReadState state;
+		ReadState state = READ_STATE_INVALID;
 		uint32_t txn_read;
 
 		friend class RelayNodeCompressor;
 
 	public:
-		DecompressState(bool check_merkle_in, uint32_t tx_count_in) { reset(check_merkle_in, tx_count_in); }
+		DecompressState() {}
 		void clear();
-		void reset(bool check_merkle_in, uint32_t tx_count_in);
+		void init(bool check_merkle_in, uint32_t tx_count_in);
 		bool is_finished();
 		std::shared_ptr<std::vector<unsigned char> > get_block_data();
 	};

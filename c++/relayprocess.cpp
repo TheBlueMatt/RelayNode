@@ -214,6 +214,7 @@ std::tuple<std::shared_ptr<std::vector<unsigned char> >, const char*> RelayNodeC
 }
 
 std::shared_ptr<std::vector<unsigned char> > RelayNodeCompressor::recompress_block(DecompressState& state) {
+	assert(state.is_finished());
 	return recompress_block(state.block_header, state.txn_data, state.block_bytes, *state.fullhashptr);
 }
 
@@ -311,18 +312,21 @@ void RelayNodeCompressor::DecompressState::clear() {
 	state = READ_STATE_INVALID;
 }
 
-void RelayNodeCompressor::DecompressState::reset(bool check_merkle_in, uint32_t tx_count_in) {
+void RelayNodeCompressor::DecompressState::init(bool check_merkle_in, uint32_t tx_count_in) {
+	assert(state == READ_STATE_INVALID);
 	check_merkle = check_merkle_in;
 	tx_count = tx_count_in > 100000 ? 100001 : tx_count_in;
 	wire_bytes = 4*3;
 	block_bytes = 0;
 	fullhashptr = std::make_shared<std::vector<unsigned char> >(32);
+	state = READ_STATE_START;
+	txn_read = 0;
+	if (tx_count_in > 100000)
+		return; // We just return error in read_block_header
 	merkleTree.resize(check_merkle ? tx_count : 1);
 	txn_data.resize(tx_count);
 	txn_data_block.reset(new unsigned char[1000000]);
 	txn_data_block_use = 0;
-	state = READ_STATE_START;
-	txn_read = 0;
 	txn_ptrs.reserve(tx_count);
 	txn_data_holds.reserve(tx_count);
 	txn_to_remove.reserve(tx_count);
@@ -475,6 +479,7 @@ inline const char* RelayNodeCompressor::decompress_block_finish(DecompressState&
 
 const char* RelayNodeCompressor::do_partial_decompress(DecompressLocks& locks, DecompressState& state, std::function<bool(char*, size_t)>& read_all) {
 	assert(locks.compressor == this);
+	assert(state.state != DecompressState::READ_STATE_DONE);
 	while (state.state != DecompressState::READ_STATE_DONE) {
 		const char* res;
 		size_t start_bytes = state.wire_bytes;
@@ -510,11 +515,11 @@ const char* RelayNodeCompressor::do_partial_decompress(DecompressLocks& locks, D
 			case DecompressState::READ_STATE_TX_READ_DONE:
 				res = decompress_block_finish(state);
 				return res;
-			case DecompressState::READ_STATE_DONE:
-				return NULL;
 			case DecompressState::READ_STATE_INVALID:
 				assert(0);
 				return "Called do_partial_decompress after state.clear() without state.reset()";
+			case DecompressState::READ_STATE_DONE:
+				ALWAYS_ASSERT("C++ compiler failed" == NULL);
 		}
 	}
 	return NULL;
