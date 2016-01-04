@@ -182,7 +182,7 @@ void RPCClient::net_process() {
 		// These are values/flags about the current status of the parser
 		int32_t stringStart = -1, fieldValueStart = -1;
 		std::string txHash, fieldString;
-		long tx_size = -1; uint64_t tx_fee = -1; double tx_prio = -1;
+		long tx_size = -1; int64_t tx_fee = -1; double tx_prio = -1;
 		bool inTx = false, inFieldString = false, inFieldValue = false;
 		std::unordered_set<std::string> txDeps;
 
@@ -226,7 +226,7 @@ void RPCClient::net_process() {
 						}
 					} else if (fieldString == "fee") {
 						try {
-							tx_fee = uint64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
+							tx_fee = int64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
 						} catch (std::exception& e) {
 							return disconnect("transaction value could not be parsed");
 						}
@@ -279,7 +279,7 @@ void RPCClient::net_process() {
 							}
 						} else if (fieldString == "fee") {
 							try {
-								tx_fee = uint64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
+								tx_fee = int64_t(std::stod(std::string(resp.begin() + fieldValueStart, it)) * 100000000);
 							} catch (std::exception& e) {
 								return disconnect("transaction value could not be parsed");
 							}
