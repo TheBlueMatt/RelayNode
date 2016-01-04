@@ -41,6 +41,7 @@ public:
 	void relay_node_connected(RelayNetworkClient* client, int token);
 };
 
+// The "current version" must always be 0 (see send_sponsor())
 static_assert(COMPRESSOR_TYPES == 3, "There are two compressor types init'd in server");
 static const std::map<std::string, int16_t> compressor_types = {{std::string("sponsor printer"), 2}, {std::string("spammy memeater"), 1}, {std::string("the blocksize"), 2}, {std::string("what i should have done"), 0}};
 static RelayNetworkCompressor compressors[COMPRESSOR_TYPES];
@@ -83,12 +84,22 @@ public:
 	{ construction_done(); }
 
 private:
-	void send_sponsor(int token=0) {
-		if (!sendSponsor || tx_sent != 0)
+	void send_sponsor() {
+		if (tx_sent != 0)
 			return;
-		relay_msg_header sponsor_header = { RELAY_MAGIC_BYTES, SPONSOR_TYPE, htonl(strlen(HOST_SPONSOR)) };
-		Connection::do_send_bytes((char*)&sponsor_header, sizeof(sponsor_header), token);
-		Connection::do_send_bytes(HOST_SPONSOR, strlen(HOST_SPONSOR), token);
+
+		int token = get_send_mutex();
+		if (compressor_type != 0) {
+			relay_msg_header version_header = { RELAY_MAGIC_BYTES, MAX_VERSION_TYPE, htonl(strlen(VERSION_STRING)) };
+			Connection::do_send_bytes((char*)&version_header, sizeof(version_header), token);
+			Connection::do_send_bytes(VERSION_STRING, strlen(VERSION_STRING), token);
+		}
+		if (sendSponsor) {
+			relay_msg_header sponsor_header = { RELAY_MAGIC_BYTES, SPONSOR_TYPE, htonl(strlen(HOST_SPONSOR)) };
+			Connection::do_send_bytes((char*)&sponsor_header, sizeof(sponsor_header), token);
+			Connection::do_send_bytes(HOST_SPONSOR, strlen(HOST_SPONSOR), token);
+		}
+		release_send_mutex(token);
 	}
 
 	bool readable() { return true; }
@@ -181,7 +192,7 @@ public:
 		Connection::do_send_bytes(tx, token);
 		tx_sent++;
 		if (!token)
-			send_sponsor(token);
+			send_sponsor();
 	}
 
 	void receive_block(const std::shared_ptr<std::vector<unsigned char> >& block) {
