@@ -242,7 +242,7 @@ uint64_t FlaggedArraySet::flagCount() const {
 bool FlaggedArraySet::sanity_check() const {
 	size_t size = indexMap.size();
 	assert(backingMap.size() == size);
-	assert(this->size() == size - to_be_removed.size());
+	assert(this->size() == size - to_be_removed.size() - unsorted_to_remove.size());
 
 	assert(backingMap.max_load_factor() == 1);
 	assert(backingMap.bucket_count() >= backingMap.size());
@@ -266,12 +266,21 @@ bool FlaggedArraySet::sanity_check() const {
 	}
 	assert(expected_flags_removed == flags_to_remove);
 
+	std::set<int> to_remove_set;
+	for (int to_remove : unsorted_to_remove) {
+		assert(to_remove >= 0);
+		assert(to_remove < ssize_t(size));
+		assert(to_remove_set.insert(to_remove).second);
+	}
+	assert(to_remove_set.size() == unsorted_to_remove.size());
+
 	assert(this->size() <= maxSize);
-	assert(flagCount() <= maxFlagCount);
+	assert(flag_count - flags_to_remove <= maxFlagCount);
 
 	assert((to_be_removed.empty() && max_remove == 0 && flags_to_remove == 0) || unsorted_to_remove.empty());
 
-	return expected_flags_removed == flags_to_remove && expected_flag_count == flag_count;
+	return expected_flags_removed == flags_to_remove && expected_flag_count == flag_count &&
+		to_remove_set.size() == unsorted_to_remove.size();
 }
 
 void FlaggedArraySet::remove_(size_t index) {
