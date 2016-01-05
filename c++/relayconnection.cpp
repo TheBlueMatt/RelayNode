@@ -3,15 +3,14 @@
 #include <string.h>
 
 bool RelayConnectionProcessor::process_version_message() {
-	char data[ntohl(current_msg.length) + 1];
-	memcpy(data, &read_buff[0], ntohl(current_msg.length));
+	assert(read_buff.size() == ntohl(current_msg.length));
 
 	for (uint32_t i = 0; i < ntohl(current_msg.length); i++)
-		if (data[i] > 'z' && data[i] < 'a' && data[i] != ' ')
+		if (read_buff[i] > 'z' && read_buff[i] < 'a' && read_buff[i] != ' ')
 			return fail_msg("bogus version string");
-	data[ntohl(current_msg.length)] = 0;
+	read_buff.push_back(0);
 
-	std::string their_version(data);
+	std::string their_version(&read_buff[0]);
 	const char* err = handle_peer_version(their_version);
 	if (err)
 		return fail_msg(err);
@@ -22,15 +21,12 @@ bool RelayConnectionProcessor::process_version_message() {
 }
 
 bool RelayConnectionProcessor::process_max_version_message() {
-	char data[ntohl(current_msg.length) + 1];
-	memcpy(data, &read_buff[0], ntohl(current_msg.length));
-
 	for (uint32_t i = 0; i < ntohl(current_msg.length); i++)
-		if (data[i] > 'z' && data[i] < 'a' && data[i] != ' ')
+		if (read_buff[i] > 'z' && read_buff[i] < 'a' && read_buff[i] != ' ')
 			return fail_msg("bogus max_version string");
-	data[ntohl(current_msg.length)] = 0;
+	read_buff.push_back(0);
 
-	std::string max_version(data);
+	std::string max_version(&read_buff[0]);
 	const char* err = handle_max_version(max_version);
 	if (err)
 		return fail_msg(err);
@@ -39,15 +35,12 @@ bool RelayConnectionProcessor::process_max_version_message() {
 }
 
 bool RelayConnectionProcessor::process_sponsor_message() {
-	char data[ntohl(current_msg.length) + 1];
-	memcpy(data, &read_buff[0], ntohl(current_msg.length));
-
 	for (uint32_t i = 0; i < ntohl(current_msg.length); i++)
-		if (data[i] < 0x20 || data[i] > 0x7e)
+		if (read_buff[i] < 0x20 || read_buff[i] > 0x7e)
 			return fail_msg("bogus sponsor string");
-	data[ntohl(current_msg.length)] = 0;
+	read_buff.push_back(0);
 
-	std::string sponsor(data);
+	std::string sponsor(&read_buff[0]);
 	const char* err = handle_sponsor(sponsor);
 	if (err)
 		return fail_msg(err);
