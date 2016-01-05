@@ -5,6 +5,7 @@
 #include <tuple>
 #include <thread>
 #include <mutex>
+#include <string.h>
 
 #include "mruset.h"
 #include "flaggedarrayset.h"
@@ -128,14 +129,15 @@ public:
 	void reset();
 
 	inline std::shared_ptr<std::vector<unsigned char> > tx_to_msg(const std::shared_ptr<std::vector<unsigned char> >& tx, bool send_oob=false, bool include_data=true) const {
-		auto msg = std::make_shared<std::vector<unsigned char> > (sizeof(struct relay_msg_header));
-		struct relay_msg_header *header = (struct relay_msg_header*)&(*msg)[0];
-		header->magic = RELAY_MAGIC_BYTES;
+		struct relay_msg_header header;
+		header.magic = RELAY_MAGIC_BYTES;
 		if (send_oob)
-			header->type = OOB_TRANSACTION_TYPE;
+			header.type = OOB_TRANSACTION_TYPE;
 		else
-			header->type = TRANSACTION_TYPE;
-		header->length = htonl(tx->size());
+			header.type = TRANSACTION_TYPE;
+		header.length = htonl(tx->size());
+		auto msg = std::make_shared<std::vector<unsigned char> > (sizeof(struct relay_msg_header));
+		memcpy(&(*msg)[0], &header, sizeof(header));
 		if (include_data)
 			msg->insert(msg->end(), tx->begin(), tx->end());
 		return msg;
