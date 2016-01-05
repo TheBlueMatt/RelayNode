@@ -55,20 +55,33 @@ public:
 	void recv_bytes(char* buf, size_t size) { RelayConnectionProcessor::recv_bytes(buf, size); }
 };
 
-int main(int argc, char **argv) {
+void test(int size) {
 	ConnectionTest tester;
 
 	FILE* f = fopen("conn_recv.dump", "r");
 	while (true) {
-		char buf[CONNECTION_MAX_READ_BYTES];
+		char buf[size];
 		size_t read = fread(buf, 1, sizeof(buf), f);
 		if (read == 0) {
 			assert(feof(f));
 			assert(tester.blocks_recvd.size() == 6);
-			return 0;
+			fclose(f);
+			return;
 		}
 		tester.recv_bytes(buf, read);
 	}
+}
 
+int main(int argc, char **argv) {
+	// We test reading various numbers of bytes at a time to tickle various partial-read bugs
+	test(1);
+	test(2);
+	test(3);
+	test(4);
+	test(7);
+	test(11);
+	test(12);
+	test(13);
+	test(65536);
 	return 0;
 }
