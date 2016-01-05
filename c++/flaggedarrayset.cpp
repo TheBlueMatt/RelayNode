@@ -270,7 +270,10 @@ bool FlaggedArraySet::sanity_check() const {
 	for (int to_remove : unsorted_to_remove) {
 		assert(to_remove >= 0);
 		assert(to_remove < ssize_t(size));
-		assert(to_remove_set.insert(to_remove).second);
+		bool added = to_remove_set.insert(to_remove).second;
+		assert(added);
+		if (!added)
+			return false;
 	}
 	assert(to_remove_set.size() == unsorted_to_remove.size());
 
