@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
 
 	bool pickServer = strlen(argv[1]) < 5 || argv[1][4] == ':';
 	const char* relay = "public.%02d.relay.mattcorallo.com";
-	char host[pickServer ? strlen(relay) : strlen(argv[1])];
+	char host[(pickServer ? strlen(relay) : strlen(argv[1])) + 1];
 	if (pickServer) {
 		while (true) {
 			std::list<std::thread> threads;
