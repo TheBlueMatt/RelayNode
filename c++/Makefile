@@ -95,19 +95,21 @@ CXXFLAGS += $(COMMON_CXXFLAGS) $(NATIVE_CXXFLAGS) $(CUSTOM_CXXFLAGS)
 LDFLAGS += -pthread -lresolv $(CUSTOM_LDFLAGS)
 
 # list of all targets
-NATIVE_TARGETS = $(addprefix relaynetwork,client proxy server mempoolserver test nettest)
+NATIVE_TARGETS = fibrenetworkclient $(addprefix relaynetwork,client proxy server mempoolserver test nettest)
 WINDOWS_TARGETS = relaynetworkclient.exe
 
 %.a: %.asm
 	yasm -f x64 -f elf64 -X gnu -g dwarf2 -D LINUX -o $@ $<
 
-all: relaynetworkclient
+all: relaynetworkclient fibrenetworkclient
 
 all-targets: $(NATIVE_TARGETS) $(WINDOWS_TARGETS)
 
 server-targets: $(NATIVE_TARGETS)
 
 relaynetworkclient: $(native_objs) $(common_objs) client.o
+
+fibrenetworkclient: $(native_objs) $(common_objs) p2ppipe.o p2p-bent-pipe.o
 
 relaynetworkclient.exe: $(patsubst %.o,%.cpp,$(common_objs) client.o)
 	$(MINGW_PREFIX)-g++ $(COMMON_CXXFLAGS) -DWIN32 -DFD_SETSIZE=1024 -mno-ms-bitfields -static -static-libgcc $^ -lwsock32 -lmingwthrd -lws2_32 -o $@
@@ -123,6 +125,9 @@ relaynetworktest: $(native_objs) $(common_objs) test.o
 relaynetworknettest: $(native_objs) $(common_objs) net_test.o
 
 relaynetwork%:
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
+
+fibrenetwork%:
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
 install: relaynetworkclient relaynetworkclient.exe
