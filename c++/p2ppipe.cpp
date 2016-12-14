@@ -160,8 +160,13 @@ void P2PPipe::net_process(const std::function<void(std::string)>& disconnect) {
 			connected = 2;
 
 			for (auto& p : statefulMessagesSent)
-				if (p.first != "version")
-					send_message(p.first.c_str(), p.second.data(), p.second.size() - sizeof(struct bitcoin_msg_header));
+				if (p.first != "version") {
+					std::string cmpct("sendcmpct");
+					if (!p.first.compare(0, cmpct.length(), cmpct))
+						send_message("sendcmpct", p.second.data(), p.second.size() - sizeof(struct bitcoin_msg_header));
+					else
+						send_message(p.first.c_str(), p.second.data(), p.second.size() - sizeof(struct bitcoin_msg_header));
+				}
 
 			continue;
 		}
