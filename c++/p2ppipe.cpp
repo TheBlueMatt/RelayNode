@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <stdio.h>
+#include <cstddef>
 
 #ifdef WIN32
 	#include <winsock2.h>
@@ -85,8 +86,17 @@ void P2PPipe::net_process(const std::function<void(std::string)>& disconnect) {
 	connected = 0;
 
 	if (statefulMessagesSent.count("version")) {
-		//Rehash the message because send_hashed_message has special processing for version messages
-		send_message("version", statefulMessagesSent["version"].data(), statefulMessagesSent["version"].size() - sizeof(struct bitcoin_msg_header));
+		// Postpend Bent Pipe info to version
+		std::vector<unsigned char> message(statefulMessagesSent["version"]);
+		if (message.size() >= sizeof(struct bitcoin_version_start) + sizeof(struct bitcoin_msg_header)) {
+			uint8_t ua_length = message[sizeof(struct bitcoin_msg_header) + offsetof(struct bitcoin_version_start, user_agent_length)];
+			if (ua_length <= 100 && message.size() > sizeof(struct bitcoin_version_start) + sizeof(struct bitcoin_msg_header) + ua_length) {
+				const char* ua_postpend = "FIBREBentPipe:42/";
+				message.insert(message.begin() + sizeof(struct bitcoin_msg_header) + sizeof(struct bitcoin_version_start) + ua_length, (unsigned char*)ua_postpend, (unsigned char*) ua_postpend + 17);
+				message[sizeof(struct bitcoin_msg_header) + offsetof(struct bitcoin_version_start, user_agent_length)] = ua_length + 17;
+			}
+		}
+		send_message("version", message.data(), message.size() - sizeof(struct bitcoin_msg_header));
 	} else {
 		std::vector<unsigned char> version_msg(generate_version());
 		send_message("version", &version_msg[0], version_msg.size() - sizeof(struct bitcoin_msg_header));
