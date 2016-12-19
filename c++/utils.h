@@ -186,7 +186,9 @@ void do_assert(bool flag, const char* file, unsigned long line);
 		gettimeofday(&now_tv, NULL); \
 		ms = (int)(now_tv.tv_usec / 1000); \
 		gmtime_r(&(now_tv.tv_sec), &tm); \
-		printf("[%d-%02d-%02d %02d:%02d:%02d.%03d+00] ", \
+		printf("%ld.%06ld [%d-%02d-%02d %02d:%02d:%02d.%03d+00] ", \
+			now_tv.tv_sec, \
+			now_tv.tv_usec, \
 			tm.tm_year + 1900, \
 			tm.tm_mon + 1, \
 			tm.tm_mday, \
