@@ -4,6 +4,7 @@
 #include <string>
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <thread>
 #include <list>
 #include <vector>

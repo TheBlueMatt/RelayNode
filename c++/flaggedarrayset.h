@@ -1,6 +1,7 @@
 #ifndef _RELAY_FLAGGEDARRAYSET_H
 #define _RELAY_FLAGGEDARRAYSET_H
 
+#include <functional>
 #include <vector>
 #include <thread>
 #include <map>

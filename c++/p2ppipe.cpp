@@ -169,7 +169,8 @@ void P2PPipe::net_process(const std::function<void(std::string)>& disconnect) {
 			printf("Finished connect handshake with bitcoind\n");
 			connected = 2;
 
-			for (auto& p : statefulMessagesSent)
+			for (auto it = statefulMessagesSent.rbegin(); it != statefulMessagesSent.rend(); it++) {
+				auto &p = *it;
 				if (p.first != "version") {
 					std::string cmpct("sendcmpct");
 					if (!p.first.compare(0, cmpct.length(), cmpct))
@@ -177,6 +178,7 @@ void P2PPipe::net_process(const std::function<void(std::string)>& disconnect) {
 					else
 						send_message(p.first.c_str(), p.second.data(), p.second.size() - sizeof(struct bitcoin_msg_header));
 				}
+			}
 
 			continue;
 		}
