@@ -91,7 +91,7 @@ void P2PPipe::net_process(const std::function<void(std::string)>& disconnect) {
 		if (message.size() >= sizeof(struct bitcoin_version_start) + sizeof(struct bitcoin_msg_header)) {
 			uint8_t ua_length = message[sizeof(struct bitcoin_msg_header) + offsetof(struct bitcoin_version_start, user_agent_length)];
 			if (ua_length <= 100 && message.size() > sizeof(struct bitcoin_version_start) + sizeof(struct bitcoin_msg_header) + ua_length) {
-				const char* ua_postpend = "FIBREBentPipe:42/";
+				const char* ua_postpend = "FIBREBentPipe:43/";
 				message.insert(message.begin() + sizeof(struct bitcoin_msg_header) + sizeof(struct bitcoin_version_start) + ua_length, (unsigned char*)ua_postpend, (unsigned char*) ua_postpend + 17);
 				message[sizeof(struct bitcoin_msg_header) + offsetof(struct bitcoin_version_start, user_agent_length)] = ua_length + 17;
 			}
